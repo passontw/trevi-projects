@@ -1,0 +1,17 @@
+{
+  "serviceEndpoints": {
+    "user-service": {
+      "name": "user-service",
+      "baseUrl": "http://localhost:8081/api"
+    },
+    "payment-service": {
+      "name": "payment-service",
+      "baseUrl": "http://localhost:8082/api"
+    },
+    "notification-service": {
+      "name": "notification-service",
+      "baseUrl": "http://localhost:8083/api"
+    }
+  },
+  "defaultTimeout": 30
+} 

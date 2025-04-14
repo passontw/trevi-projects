@@ -1,0 +1,58 @@
+# .air.toml 配置檔案
+
+# 工作目錄
+# . 或絕對路徑，請注意以下目錄必須在 root 目錄下
+root = "."
+tmp_dir = "tmp"
+
+# 監聽設置
+[build]
+# 只需要監聽 .go 文件的變化
+include_ext = ["go"]
+# 忽略這些檔案
+exclude_dir = ["assets", "tmp", "vendor", ".git", "redis_data", "migrations"]
+# 監聽檔案變更後執行的命令
+cmd = "go build -o ./tmp/main ."
+# 二進位執行文件，必須與 cmd 的編譯輸出一致
+bin = "tmp/main"
+# 清理檔案
+clean_on_exit = true
+# 發送中斷信號，重新啟動程序（適用於無法正常關閉的情況）
+send_interrupt = true
+# 延遲多少秒才重新啟動
+delay = 1000 # ms
+# 檔案變更時顯示通知
+notify = true
+
+# 微服務特定配置
+# 認證服務配置
+[auth-service]
+cmd = "cp .env.auth-service .env && go run main.go"
+delay = 1000
+exclude_dir = ["tmp", "vendor", "testdata"]
+exclude_file = []
+
+# 遊戲服務配置
+[game-service]
+cmd = "cp .env.game-service .env && go run main.go"
+delay = 1000
+exclude_dir = ["tmp", "vendor", "testdata"]
+exclude_file = []
+
+# 日誌設置
+[log]
+# 顯示日誌時間
+time = true
+
+# 顏色設置
+[color]
+# 自定義各個部分的顏色
+main = "magenta"
+watcher = "cyan"
+build = "yellow"
+runner = "green"
+
+# 其他設置
+[misc]
+# 在終端中刪除先前的輸出
+clean_on_exit = true
