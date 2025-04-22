@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"g38_lottery_service/internal/config"
 	"g38_lottery_service/internal/service"
@@ -17,25 +19,65 @@ import (
 // DatabaseModule 數據庫模組
 var DatabaseModule = fx.Options(
 	fx.Provide(
-		// 基於 Config 轉換為 PostgresConfig
+		// 基於 Config 轉換為 MySQLConfig
 		fx.Annotate(
-			func(cfg *config.Config) *databaseManager.PostgresConfig {
-				return &databaseManager.PostgresConfig{
-					Host:     cfg.Database.Host,
-					Port:     cfg.Database.Port,
-					User:     cfg.Database.User,
-					Password: cfg.Database.Password,
-					Name:     cfg.Database.Name,
+			func(cfg *config.Config) *databaseManager.MySQLConfig {
+				// 檢查端口是否有效，如果無效則使用默認值
+				port := cfg.Database.Port
+				if port <= 0 || port > 65535 {
+					port = 3306 // 使用默認的MySQL端口
+				}
+
+				// 從環境變量獲取配置
+				host := os.Getenv("MYSQL_HOST")
+				if host == "" {
+					host = cfg.Database.Host
+				}
+
+				user := os.Getenv("MYSQL_USER")
+				if user == "" {
+					user = cfg.Database.User
+				}
+
+				password := os.Getenv("MYSQL_PASSWORD")
+				if password == "" {
+					password = cfg.Database.Password
+				}
+
+				dbName := os.Getenv("MYSQL_DATABASE")
+				if dbName == "" {
+					dbName = cfg.Database.Name
+				}
+
+				// 記錄最終使用的數據庫配置
+				fmt.Printf("最終的MySQL配置: Host=%s, Port=%d, User=%s, DB=%s, 密碼%s\n",
+					host, port, user, dbName,
+					func(pwd string) string {
+						if pwd == "" {
+							return "未設置"
+						}
+						return "已設置"
+					}(password))
+
+				return &databaseManager.MySQLConfig{
+					Host:      host,
+					Port:      port,
+					User:      user,
+					Password:  password,
+					Name:      dbName,
+					Charset:   "utf8mb4",
+					ParseTime: true,
+					Loc:       "Local",
 				}
 			},
-			fx.ResultTags(`name:"postgresConfig"`),
+			fx.ResultTags(`name:"mysqlConfig"`),
 		),
 		// 提供 DatabaseManager 實例
 		fx.Annotate(
-			func(lc fx.Lifecycle, config *databaseManager.PostgresConfig) (databaseManager.DatabaseManager, error) {
-				return databaseManager.ProvideDatabaseManager(lc, config)
+			func(lc fx.Lifecycle, config *databaseManager.MySQLConfig) (databaseManager.DatabaseManager, error) {
+				return databaseManager.ProvideMySQLDatabaseManager(lc, config)
 			},
-			fx.ParamTags(``, `name:"postgresConfig"`),
+			fx.ParamTags(``, `name:"mysqlConfig"`),
 		),
 	),
 )

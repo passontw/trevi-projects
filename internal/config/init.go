@@ -27,11 +27,11 @@ func initializeConfig() *Config {
 	cfg.Server.APIHost = getEnv("API_HOST", "localhost:8080")
 	cfg.Server.Version = getEnv("VERSION", "1.0.0")
 
-	cfg.Database.Host = getEnv("DB_HOST", "localhost")
-	cfg.Database.Port = getEnvAsInt("DB_PORT", 5432)
-	cfg.Database.User = getEnv("DB_USER", "postgres")
-	cfg.Database.Password = getEnv("DB_PASSWORD", "postgres")
-	cfg.Database.Name = getEnv("DB_NAME", "postgres")
+	cfg.Database.Host = getEnvWithAlternative("MYSQL_HOST", "DB_HOST", "localhost")
+	cfg.Database.Port = getEnvAsIntWithAlternative("MYSQL_PORT", "DB_PORT", 3306)
+	cfg.Database.User = getEnvWithAlternative("MYSQL_USER", "DB_USER", "root")
+	cfg.Database.Password = getEnvWithAlternative("MYSQL_PASSWORD", "DB_PASSWORD", "")
+	cfg.Database.Name = getEnvWithAlternative("MYSQL_DATABASE", "DB_NAME", "lottery_service")
 
 	redisHost := getEnv("REDIS_HOST", "localhost")
 	redisPort := getEnv("REDIS_PORT", "6379")
@@ -85,4 +85,20 @@ func getEnvAsBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+func getEnvWithAlternative(preferredKey, alternativeKey string, defaultValue string) string {
+	if value := os.Getenv(preferredKey); value != "" {
+		return value
+	}
+	return getEnv(alternativeKey, defaultValue)
+}
+
+func getEnvAsIntWithAlternative(preferredKey, alternativeKey string, defaultValue int) int {
+	if value := os.Getenv(preferredKey); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return getEnvAsInt(alternativeKey, defaultValue)
 }
