@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"g38_lottery_servic/internal/service"
+	"g38_lottery_service/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

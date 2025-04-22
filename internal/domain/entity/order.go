@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"g38_lottery_servic/pkg/utils"
+	"g38_lottery_service/pkg/utils"
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"

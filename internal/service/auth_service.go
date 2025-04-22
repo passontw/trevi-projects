@@ -4,9 +4,9 @@ import (
 	"errors"
 	"time"
 
-	"g38_lottery_servic/internal/config"
-	"g38_lottery_servic/internal/interfaces"
-	redis "g38_lottery_servic/pkg/redisManager"
+	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/interfaces"
+	"g38_lottery_service/pkg/redisManager" // 更新為正確的模組名
 
 	"context"
 
@@ -22,10 +22,10 @@ type AuthService interface {
 type authService struct {
 	userService UserService
 	config      *config.Config
-	redisClient redis.RedisManager
+	redisClient redisManager.RedisManager // 使用新的 RedisManager 類型
 }
 
-func NewAuthService(userService UserService, config *config.Config, redisClient redis.RedisManager) AuthService {
+func NewAuthService(userService UserService, config *config.Config, redisClient redisManager.RedisManager) AuthService {
 	return &authService{
 		userService: userService,
 		config:      config,

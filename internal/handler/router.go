@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"net/http"
 
-	"g38_lottery_servic/internal/config"
-	"g38_lottery_servic/internal/interfaces"
-	"g38_lottery_servic/internal/middleware"
-	"g38_lottery_servic/internal/service"
-	"g38_lottery_servic/pkg/websocketManager"
+	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/interfaces"
+	"g38_lottery_service/internal/middleware"
+	"g38_lottery_service/internal/service"
+	"g38_lottery_service/pkg/websocketManager"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"

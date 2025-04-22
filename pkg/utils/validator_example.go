@@ -3,7 +3,7 @@ package utils
 import (
 	"fmt"
 
-	"g38_lottery_servic/internal/interfaces/types"
+	"g38_lottery_service/internal/interfaces/types"
 )
 
 // 示例請求結構體

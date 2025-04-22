@@ -1,7 +1,7 @@
 package service
 
 import (
-	"g38_lottery_servic/pkg/databaseManager"
+	"g38_lottery_service/pkg/databaseManager"
 
 	"gorm.io/gorm"
 )

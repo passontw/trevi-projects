@@ -1,11 +1,10 @@
-package redis
+package redisManager
 
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
-
-	"g38_lottery_servic/internal/config"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/fx"
@@ -25,6 +24,17 @@ type RedisConfig struct {
 	Username string
 	Password string
 	DB       int
+	// 自定義連接超時設定
+	DialTimeout  time.Duration
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+	PoolSize     int
+	MinIdleConns int
+}
+
+// RedisAddr 返回格式化後的 Redis 地址
+func (c *RedisConfig) RedisAddr() string {
+	return c.Addr
 }
 
 // RedisManager 提供 Redis 操作的介面
@@ -65,6 +75,9 @@ type RedisManager interface {
 	// 連接管理
 	Close() error
 	Ping(ctx context.Context) error
+	
+	// 獲取原始客戶端
+	GetClient() *redis.Client
 }
 
 // redisManagerImpl 是 RedisManager 介面的實作
@@ -72,37 +85,71 @@ type redisManagerImpl struct {
 	client *redis.Client
 }
 
+// NewRedisClient 初始化 Redis 客戶端 (從 databaseManager/redis.go 整合)
+func NewRedisClient(cfg *RedisConfig) *redis.Client {
+	options := &redis.Options{
+		Addr:     cfg.RedisAddr(),
+		Username: cfg.Username,
+		Password: cfg.Password,
+		DB:       cfg.DB,
+	}
+	
+	// 加入自定義連接參數，如果有設定的話
+	if cfg.DialTimeout > 0 {
+		options.DialTimeout = cfg.DialTimeout
+	} else {
+		options.DialTimeout = 5 * time.Second
+	}
+	
+	if cfg.ReadTimeout > 0 {
+		options.ReadTimeout = cfg.ReadTimeout
+	} else {
+		options.ReadTimeout = 3 * time.Second
+	}
+	
+	if cfg.WriteTimeout > 0 {
+		options.WriteTimeout = cfg.WriteTimeout
+	} else {
+		options.WriteTimeout = 3 * time.Second
+	}
+	
+	if cfg.PoolSize > 0 {
+		options.PoolSize = cfg.PoolSize
+	} else {
+		options.PoolSize = 20
+	}
+	
+	if cfg.MinIdleConns > 0 {
+		options.MinIdleConns = cfg.MinIdleConns
+	} else {
+		options.MinIdleConns = 10
+	}
+
+	client := redis.NewClient(options)
+
+	// 測試連接
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := client.Ping(ctx).Result(); err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+
+	log.Println("Redis connection established")
+	return client
+}
+
 // NewRedisManager 創建一個新的 Redis 管理器
 func NewRedisManager(config *RedisConfig) RedisManager {
-	client := redis.NewClient(&redis.Options{
-		Addr:     config.Addr,
-		Username: config.Username,
-		Password: config.Password,
-		DB:       config.DB,
-	})
-
+	client := NewRedisClient(config)
 	return &redisManagerImpl{
 		client: client,
 	}
 }
 
-func ProvideRedisConfig(cfg *config.Config) *RedisConfig {
-	return &RedisConfig{
-		Addr:     cfg.Redis.Addr,
-		Username: cfg.Redis.Username,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	}
-}
-
 // ProvideRedisClient 提供 Redis 客戶端實例，用於 fx
 func ProvideRedisClient(lc fx.Lifecycle, config *RedisConfig) *redis.Client {
-	client := redis.NewClient(&redis.Options{
-		Addr:     config.Addr,
-		Username: config.Username,
-		Password: config.Password,
-		DB:       config.DB,
-	})
+	client := NewRedisClient(config)
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
@@ -132,13 +179,7 @@ func ProvideRedisManager(client *redis.Client) RedisManager {
 }
 
 // 創建 fx 模組，包含所有 Redis 相關組件
-var Module = fx.Module("redis",
-	fx.Provide(
-		ProvideRedisConfig,
-		ProvideRedisClient,
-		ProvideRedisManager,
-	),
-)
+// 移除模块定义，它会在 core 包和主程序中使用
 
 // 實作基本操作
 
@@ -244,4 +285,9 @@ func (r *redisManagerImpl) Close() error {
 
 func (r *redisManagerImpl) Ping(ctx context.Context) error {
 	return r.client.Ping(ctx).Err()
+}
+
+// GetClient 獲取原始的 Redis 客戶端
+func (r *redisManagerImpl) GetClient() *redis.Client {
+	return r.client
 }

@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"g38_lottery_servic/internal/model"
+	"g38_lottery_service/internal/model"
+
 	"gorm.io/gorm"
 )
 

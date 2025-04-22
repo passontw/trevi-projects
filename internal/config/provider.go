@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"g38_lottery_servic/pkg/logger"
-	"g38_lottery_servic/pkg/nacosManager"
+	"g38_lottery_service/pkg/logger"
+	"g38_lottery_service/pkg/nacosManager"
 
 	"go.uber.org/fx"
 	"gopkg.in/yaml.v3"

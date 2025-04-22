@@ -5,9 +5,10 @@ import (
 	"errors"
 	"time"
 
+	"g38_lottery_service/internal/model"
+	userRepo "g38_lottery_service/internal/repository/user"
+
 	"github.com/go-redis/redis/v8"
-	"g38_lottery_servic/internal/model"
-	userRepo "g38_lottery_servic/internal/repository/user"
 	"golang.org/x/crypto/bcrypt"
 )
 

@@ -3,13 +3,13 @@ package core
 import (
 	"context"
 
-	"g38_lottery_servic/internal/config"
-	"g38_lottery_servic/internal/service"
-	"g38_lottery_servic/pkg/databaseManager"
-	"g38_lottery_servic/pkg/logger"
-	"g38_lottery_servic/pkg/nacosManager"
-	redis "g38_lottery_servic/pkg/redisManager"
-	"g38_lottery_servic/pkg/websocketManager"
+	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/service"
+	"g38_lottery_service/pkg/databaseManager"
+	"g38_lottery_service/pkg/logger"
+	"g38_lottery_service/pkg/nacosManager"
+	"g38_lottery_service/pkg/redisManager"
+	"g38_lottery_service/pkg/websocketManager"
 
 	"go.uber.org/fx"
 )
@@ -44,8 +44,8 @@ var DatabaseModule = fx.Options(
 var RedisModule = fx.Options(
 	fx.Provide(
 		// 提供 Redis 配置
-		func(cfg *config.Config) *redis.RedisConfig {
-			return &redis.RedisConfig{
+		func(cfg *config.Config) *redisManager.RedisConfig {
+			return &redisManager.RedisConfig{
 				Addr:     cfg.Redis.Addr,
 				Username: cfg.Redis.Username,
 				Password: cfg.Redis.Password,
@@ -53,8 +53,8 @@ var RedisModule = fx.Options(
 			}
 		},
 		// 提供 Redis 客戶端和管理器
-		redis.ProvideRedisClient,
-		redis.ProvideRedisManager,
+		redisManager.ProvideRedisClient,
+		redisManager.ProvideRedisManager,
 	),
 )
 

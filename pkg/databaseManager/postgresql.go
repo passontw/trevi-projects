@@ -134,10 +134,4 @@ func ProvideDatabaseManager(lc fx.Lifecycle, config *PostgresConfig) (DatabaseMa
 	return manager, nil
 }
 
-// Module 創建 fx 模組，包含所有數據庫相關組件
-var Module = fx.Module("database",
-	fx.Provide(
-		ProvidePostgresConfig,
-		ProvideDatabaseManager,
-	),
-)
+// 移除了 Module 变量，因为它已经在 core/module.go 中的 DatabaseModule 提供了

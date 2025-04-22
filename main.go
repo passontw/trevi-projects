@@ -3,13 +3,13 @@ package main
 import (
 	"log"
 
-	"g38_lottery_servic/internal/config"
-	"g38_lottery_servic/internal/handler"
-	"g38_lottery_servic/internal/service"
+	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/handler"
+	"g38_lottery_service/internal/service"
 
-	_ "g38_lottery_servic/docs"
-	"g38_lottery_servic/pkg/core"
-	"g38_lottery_servic/pkg/utils"
+	_ "g38_lottery_service/docs"
+	"g38_lottery_service/pkg/core"
+	"g38_lottery_service/pkg/utils"
 
 	"go.uber.org/fx"
 )
@@ -37,7 +37,7 @@ func main() {
 	}
 
 	app := fx.New(
-		core.Module,
+		core.Module, // 核心模块已经包含了所有必要的组件
 
 		config.Module,
 		service.Module,

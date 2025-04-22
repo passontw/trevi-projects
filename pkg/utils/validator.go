@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"g38_lottery_servic/internal/interfaces/types"
+	"g38_lottery_service/internal/interfaces/types"
 
 	"github.com/go-playground/validator/v10"
 )

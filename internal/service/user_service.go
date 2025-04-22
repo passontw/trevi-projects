@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"g38_lottery_servic/internal/config"
-	"g38_lottery_servic/internal/interfaces"
+	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/interfaces"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
