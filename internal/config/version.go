@@ -36,7 +36,7 @@ func init() {
 	// 優先使用編譯時注入的版本信息
 	appVersion := AppVersion
 	if appVersion == "" {
-		appVersion = getEnv("APP_VERSION", "0.1.0")
+		appVersion = getEnv("APP_VERSION", "1.0.0")
 	}
 
 	// 預設使用 "v1" 作為 API 版本

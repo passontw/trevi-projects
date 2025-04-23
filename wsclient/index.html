@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>樂透抽獎遊戲 - 玩家客戶端</title>
+    <style>
+        :root {
+            --primary-color: #4a6bdf;
+            --secondary-color: #6c757d;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+            --info-color: #17a2b8;
+            --background-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --border-color: #dee2e6;
+            --text-color: #343a40;
+            --light-text: #6c757d;
+            --radius: 8px;
+        }
+
+        body {
+            font-family: 'Microsoft JhengHei', Arial, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        h1, h2, h3 {
+            color: var(--primary-color);
+            margin-top: 0;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: var(--radius);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+        }
+
+        .card-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .panel {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .panel-left {
+            flex: 1;
+            min-width: 300px;
+        }
+
+        .panel-right {
+            flex: 2;
+            min-width: 400px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #3a59c7;
+        }
+
+        button:disabled {
+            background-color: var(--secondary-color);
+            cursor: not-allowed;
+        }
+
+        .btn-disconnect {
+            background-color: var(--danger-color);
+        }
+
+        .btn-disconnect:hover {
+            background-color: #bd2130;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            margin-right: 8px;
+        }
+
+        .status-connected {
+            background-color: var(--success-color);
+        }
+
+        .status-disconnected {
+            background-color: var(--danger-color);
+        }
+
+        .status-initial {
+            background-color: var(--info-color);
+        }
+
+        .status-betting {
+            background-color: var(--primary-color);
+        }
+
+        .status-drawing {
+            background-color: var(--warning-color);
+            color: black;
+        }
+
+        .status-ended {
+            background-color: var(--secondary-color);
+        }
+
+        .connection-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+            font-size: 12px;
+            color: var(--light-text);
+        }
+
+        .connection-info div {
+            background-color: rgba(0, 0, 0, 0.05);
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .log-container {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            background-color: #f5f5f5;
+        }
+
+        .log-entry {
+            margin-bottom: 3px;
+            padding: 3px 0;
+            border-bottom: 1px dashed #e9e9e9;
+        }
+
+        .log-time {
+            color: var(--secondary-color);
+            margin-right: 6px;
+        }
+
+        .log-system {
+            color: var(--info-color);
+        }
+
+        .log-sent {
+            color: var(--primary-color);
+        }
+
+        .log-received {
+            color: var(--success-color);
+        }
+
+        .log-error {
+            color: var(--danger-color);
+        }
+
+        .game-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .countdown {
+            font-weight: bold;
+            font-size: 1.2rem;
+            min-width: 80px;
+            text-align: center;
+        }
+
+        .bet-info {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .ball-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .ball {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background-color: var(--primary-color);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .result {
+            background-color: rgba(40, 167, 69, 0.1);
+            border: 1px solid var(--success-color);
+            padding: 15px;
+            border-radius: var(--radius);
+            margin: 15px 0;
+        }
+
+        .result h3 {
+            color: var(--success-color);
+            margin-top: 0;
+        }
+
+        .user-info {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .balance {
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>樂透抽獎遊戲 - 玩家客戶端</h1>
+        
+        <div class="panel">
+            <div class="panel-left">
+                <div class="card">
+                    <div class="card-title">連線控制</div>
+                    <div class="form-group">
+                        <label for="serverUrl">伺服器地址：</label>
+                        <input type="text" id="serverUrl" value="ws://localhost:8080/ws" placeholder="例如：ws://localhost:8080/ws">
+                    </div>
+                    <div class="form-group">
+                        <label for="userId">玩家 ID：</label>
+                        <input type="text" id="userId" placeholder="請輸入玩家 ID">
+                    </div>
+                    <div class="form-group">
+                        <label for="token">認證 Token：</label>
+                        <input type="text" id="token" placeholder="請輸入認證 Token（可選）">
+                    </div>
+                    <div class="form-group">
+                        <button id="connectBtn">連線到伺服器</button>
+                        <button id="disconnectBtn" class="btn-disconnect" disabled>斷開連線</button>
+                    </div>
+                    <div>
+                        <span>連線狀態：</span>
+                        <span class="status-badge status-disconnected" id="connectionStatus">未連線</span>
+                    </div>
+                    <div>
+                        <span>遊戲狀態：</span>
+                        <span class="status-badge" id="gameStatus">--</span>
+                    </div>
+                    <div class="connection-info">
+                        <div>最後心跳：<span id="lastHeartbeat">--</span></div>
+                        <div>連線時間：<span id="connectionTime">--</span></div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-title">玩家資訊</div>
+                    <div class="user-info">
+                        <div>餘額：</div>
+                        <div class="balance" id="userBalance">-- 元</div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-title">投注歷史</div>
+                    <div id="betHistory">
+                        尚無投注歷史
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel-right">
+                <div class="card">
+                    <div class="card-title">遊戲狀態</div>
+                    <div class="game-info">
+                        <div>距離結束時間：</div>
+                        <div class="countdown" id="countdown">--</div>
+                    </div>
+                    
+                    <div id="resultContainer" style="display: none;" class="result">
+                        <h3>開獎結果</h3>
+                        <div class="ball-container" id="drawnBalls"></div>
+                        <div id="winningInfo"></div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-title">訊息日誌</div>
+                    <div class="log-container" id="logContainer"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="ws-common.js"></script>
+    <script>
+        // DOM 元素
+        const serverUrlInput = document.getElementById('serverUrl');
+        const userIdInput = document.getElementById('userId');
+        const tokenInput = document.getElementById('token');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const connectionStatusEl = document.getElementById('connectionStatus');
+        const gameStatusEl = document.getElementById('gameStatus');
+        const lastHeartbeatEl = document.getElementById('lastHeartbeat');
+        const connectionTimeEl = document.getElementById('connectionTime');
+        const countdownEl = document.getElementById('countdown');
+        const userBalanceEl = document.getElementById('userBalance');
+        const betHistoryEl = document.getElementById('betHistory');
+        const resultContainerEl = document.getElementById('resultContainer');
+        const drawnBallsEl = document.getElementById('drawnBalls');
+        const winningInfoEl = document.getElementById('winningInfo');
+        const logContainerEl = document.getElementById('logContainer');
+        
+        // 倒數計時器
+        let countdownTimer = null;
+        let countdownEndTime = null;
+        
+        // 遊戲資料
+        let drawnBalls = [];
+        let betHistory = [];
+        let userBalance = 0;
+        
+        // 創建 WebSocketManager 實例
+        const wsManager = new WebSocketManager({
+            heartbeatInterval: 10000,
+            onConnectionStatusChange: updateConnectionStatus,
+            onMessage: handleMessage,
+            onGameStateChange: handleGameStateChange,
+            onLog: addLog
+        });
+        
+        // 初始化
+        function init() {
+            // 設置事件監聽器
+            connectBtn.addEventListener('click', connectToServer);
+            disconnectBtn.addEventListener('click', disconnectFromServer);
+            
+            // 檢查本地儲存的設定
+            const savedServerUrl = localStorage.getItem('serverUrl');
+            const savedUserId = localStorage.getItem('userId');
+            
+            if (savedServerUrl) {
+                serverUrlInput.value = savedServerUrl;
+            }
+            
+            if (savedUserId) {
+                userIdInput.value = savedUserId;
+            }
+        }
+        
+        // 連線到伺服器
+        function connectToServer() {
+            const serverUrl = serverUrlInput.value.trim();
+            const userId = userIdInput.value.trim();
+            const token = tokenInput.value.trim();
+            
+            if (!serverUrl) {
+                addLog('請輸入伺服器地址', 'error');
+                return;
+            }
+            
+            if (!userId) {
+                addLog('請輸入玩家 ID', 'error');
+                return;
+            }
+            
+            // 保存設定到本地儲存
+            localStorage.setItem('serverUrl', serverUrl);
+            localStorage.setItem('userId', userId);
+            
+            // 準備認證參數
+            const authParams = {
+                client_type: 'player',
+                player_id: userId
+            };
+            
+            // 如果提供了 token，則添加到參數中
+            if (token) {
+                authParams.token = token;
+            }
+            
+            // 連線到伺服器
+            wsManager.connect(serverUrl, authParams);
+            
+            // 更新按鈕狀態
+            connectBtn.disabled = true;
+            disconnectBtn.disabled = false;
+        }
+        
+        // 斷開與伺服器的連線
+        function disconnectFromServer() {
+            wsManager.disconnect();
+            
+            // 重置 UI
+            resetUI();
+            
+            // 更新按鈕狀態
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+        }
+        
+        // 更新連線狀態
+        function updateConnectionStatus(status) {
+            // 更新連線狀態
+            connectionStatusEl.textContent = status.connected ? '已連線' : '未連線';
+            connectionStatusEl.className = `status-badge ${status.connected ? 'status-connected' : 'status-disconnected'}`;
+            
+            // 更新心跳和連線時間
+            lastHeartbeatEl.textContent = status.heartbeat;
+            connectionTimeEl.textContent = status.connTime;
+            
+            // 更新按鈕狀態
+            connectBtn.disabled = status.connected;
+            disconnectBtn.disabled = !status.connected;
+        }
+        
+        // 處理接收到的訊息
+        function handleMessage(message) {
+            // 處理餘額更新
+            if (message.command === 'balanceUpdate' && message.balance !== undefined) {
+                userBalance = message.balance;
+                updateBalanceDisplay();
+            }
+            
+            // 處理投注確認
+            if (message.command === 'betConfirm') {
+                const betInfo = {
+                    time: new Date(),
+                    numbers: message.numbers || [],
+                    amount: message.amount || 0
+                };
+                
+                betHistory.unshift(betInfo);
+                updateBetHistory();
+                addLog(`投注已確認: ${betInfo.numbers.join(',')} 金額: ${betInfo.amount}元`, 'system');
+            }
+            
+            // 處理倒數計時
+            if (message.command === 'countdown' && message.seconds !== undefined) {
+                startCountdown(message.seconds);
+            }
+            
+            // 處理球號抽出
+            if (message.command === 'ballDrawn' && message.number !== undefined) {
+                addBall(message.number);
+            }
+            
+            // 處理中獎結果
+            if (message.command === 'winResult') {
+                showWinningResult(message);
+            }
+        }
+        
+        // 處理遊戲狀態變更
+        function handleGameStateChange(state, stateData) {
+            // 更新遊戲狀態顯示
+            gameStatusEl.textContent = WebSocketManager.getGameStateText(state);
+            gameStatusEl.className = `status-badge status-${state}`;
+            
+            // 根據狀態更新 UI
+            switch (state) {
+                case WS_STATE.INITIAL:
+                    resetGameUI();
+                    stopCountdown();
+                    hideResultContainer();
+                    break;
+                    
+                case WS_STATE.BETTING:
+                    resetGameUI();
+                    hideResultContainer();
+                    // 如果有倒數時間，開始倒數
+                    if (stateData.timeLeft) {
+                        startCountdown(stateData.timeLeft);
+                    }
+                    break;
+                    
+                case WS_STATE.DRAWING:
+                    stopCountdown();
+                    countdownEl.textContent = '開獎中';
+                    break;
+                    
+                case WS_STATE.ENDED:
+                    stopCountdown();
+                    countdownEl.textContent = '已結束';
+                    break;
+            }
+        }
+        
+        // 開始倒數計時
+        function startCountdown(seconds) {
+            // 停止現有的計時器
+            stopCountdown();
+            
+            // 設置結束時間
+            countdownEndTime = Date.now() + (seconds * 1000);
+            
+            // 更新倒數顯示
+            updateCountdown();
+            
+            // 啟動計時器
+            countdownTimer = setInterval(updateCountdown, 1000);
+        }
+        
+        // 更新倒數顯示
+        function updateCountdown() {
+            if (!countdownEndTime) return;
+            
+            const now = Date.now();
+            const diff = countdownEndTime - now;
+            
+            if (diff <= 0) {
+                stopCountdown();
+                countdownEl.textContent = '時間到';
+                return;
+            }
+            
+            const seconds = Math.floor(diff / 1000);
+            countdownEl.textContent = `${seconds} 秒`;
+        }
+        
+        // 停止倒數計時
+        function stopCountdown() {
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+            countdownEndTime = null;
+        }
+        
+        // 添加球號
+        function addBall(number) {
+            // 添加到已抽出的球號列表
+            drawnBalls.push(number);
+            
+            // 顯示結果容器
+            showResultContainer();
+            
+            // 創建新的球元素
+            const ballEl = document.createElement('div');
+            ballEl.className = 'ball';
+            ballEl.textContent = number;
+            
+            // 添加到容器中
+            drawnBallsEl.appendChild(ballEl);
+        }
+        
+        // 顯示中獎結果
+        function showWinningResult(result) {
+            // 顯示結果容器
+            showResultContainer();
+            
+            // 更新中獎信息
+            let winInfoText = '';
+            
+            if (result.won) {
+                winInfoText = `<h3>恭喜中獎！</h3>`;
+                winInfoText += `<p>中獎金額：${result.amount} 元</p>`;
+                if (result.matchedNumbers && result.matchedNumbers.length > 0) {
+                    winInfoText += `<p>中獎號碼：${result.matchedNumbers.join(', ')}</p>`;
+                }
+            } else {
+                winInfoText = `<p>未中獎，再接再厲！</p>`;
+            }
+            
+            winningInfoEl.innerHTML = winInfoText;
+        }
+        
+        // 顯示結果容器
+        function showResultContainer() {
+            resultContainerEl.style.display = 'block';
+        }
+        
+        // 隱藏結果容器
+        function hideResultContainer() {
+            resultContainerEl.style.display = 'none';
+        }
+        
+        // 更新餘額顯示
+        function updateBalanceDisplay() {
+            userBalanceEl.textContent = `${userBalance} 元`;
+        }
+        
+        // 更新投注歷史顯示
+        function updateBetHistory() {
+            if (betHistory.length === 0) {
+                betHistoryEl.innerHTML = '尚無投注歷史';
+                return;
+            }
+            
+            let html = '';
+            
+            for (let i = 0; i < Math.min(betHistory.length, 5); i++) {
+                const bet = betHistory[i];
+                const time = bet.time.toLocaleTimeString();
+                
+                html += `<div class="bet-info">`;
+                html += `<div>${time}</div>`;
+                html += `<div>號碼：${bet.numbers.join(',')}</div>`;
+                html += `<div>金額：${bet.amount} 元</div>`;
+                html += `</div>`;
+            }
+            
+            betHistoryEl.innerHTML = html;
+        }
+        
+        // 重置遊戲 UI
+        function resetGameUI() {
+            drawnBalls = [];
+            drawnBallsEl.innerHTML = '';
+            winningInfoEl.innerHTML = '';
+        }
+        
+        // 重置整個 UI
+        function resetUI() {
+            resetGameUI();
+            hideResultContainer();
+            stopCountdown();
+            countdownEl.textContent = '--';
+            gameStatusEl.textContent = '--';
+            gameStatusEl.className = 'status-badge';
+            userBalance = 0;
+            updateBalanceDisplay();
+            betHistory = [];
+            updateBetHistory();
+        }
+        
+        // 添加日誌
+        function addLog(message, type = 'system', skipDisplay = false) {
+            if (skipDisplay) return;
+            
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString();
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.innerHTML = `<span class="log-time">[${timeStr}]</span> ${message}`;
+            
+            logContainerEl.appendChild(logEntry);
+            logContainerEl.scrollTop = logContainerEl.scrollHeight;
+            
+            // 限制日誌數量
+            while (logContainerEl.children.length > 100) {
+                logContainerEl.removeChild(logContainerEl.firstChild);
+            }
+        }
+        
+        // 初始化
+        init();
+    </script>
+</body>
+</html> 
