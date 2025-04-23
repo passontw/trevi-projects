@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # TiDB 服務 - MySQL 兼容的分佈式數據庫
+  tidb:
+    image: pingcap/tidb:latest
+    ports:
+      - "4000:4000"  # MySQL 客戶端連接端口
+      - "10080:10080"  # Status API 端口
+    environment:
+      - TZ=Asia/Taipei
+    volumes:
+      - ${SQL_DIR:-./}:/sql  # 掛載 SQL 目錄，用於執行初始化腳本
+    command: ["--store=unistore", "--path=/tmp/tidb", "--status=10080"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "4000", "-u", "root"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - test-network
+
+  # Redis 服務 - 用於快取和 JWT 黑名單
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis-test-data:/data
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  redis-test-data: 

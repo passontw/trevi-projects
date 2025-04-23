@@ -138,3 +138,272 @@ project/
 ## 許可證
 
 [MIT](LICENSE)
+
+## 測試
+
+本專案採用完善的測試策略，包括單元測試、整合測試和覆蓋率報告。
+
+### 執行測試
+
+1. 執行所有測試：
+   ```bash
+   make test
+   ```
+
+2. 生成測試覆蓋率報告：
+   ```bash
+   make test-coverage
+   ```
+   覆蓋率報告將保存在 `coverage/coverage.html` 中。
+
+3. 測試特定包：
+   ```bash
+   make test-package-coverage PKG=./internal/service
+   ```
+
+4. 執行服務層測試：
+   ```bash
+   make test-services
+   ```
+
+5. 執行處理器層測試：
+   ```bash
+   make test-handlers
+   ```
+
+6. 執行完整測試流程（包括覆蓋率、JUnit 報告等）：
+   ```bash
+   make test-full
+   ```
+
+### 測試結構
+
+每個測試文件應遵循以下結構：
+
+1. 使用 `_test.go` 後綴
+2. 為測試建立獨立的測試套件
+3. 使用 `testify/suite` 進行組織
+4. 使用 `mock` 對外部依賴進行模擬
+
+以下是測試文件的範例結構：
+
+```go
+package service_test
+
+import (
+	"testing"
+	// 引入必要的包
+	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+)
+
+// 定義測試套件
+type MyServiceTestSuite struct {
+	suite.Suite
+	// 測試所需的依賴和被測對象
+}
+
+// 測試前設置
+func (suite *MyServiceTestSuite) SetupTest() {
+	// 初始化測試環境
+}
+
+// 具體測試案例
+func (suite *MyServiceTestSuite) TestSomeFunction() {
+	// 準備測試數據
+	// 執行測試
+	// 驗證結果
+}
+
+// 執行測試套件
+func TestMyServiceSuite(t *testing.T) {
+	suite.Run(t, new(MyServiceTestSuite))
+}
+```
+
+## CI/CD 環境與測試流程
+
+本專案支援在 CI/CD 環境中進行測試和部署。以下是在 CI/CD 中從頭到尾建立 Docker 環境並執行單元測試的步驟：
+
+### 1. 準備 Docker 測試環境
+
+在 CI/CD 流程中，我們使用專門的 Docker 容器來進行測試，確保測試環境的一致性和隔離性。
+
+#### 測試環境 Docker Compose 配置
+
+在 `internal/testing/docker-compose-test.yaml` 中配置測試所需的依賴服務，如數據庫和 Redis：
+
+```yaml
+version: '3.8'
+
+services:
+  tidb:
+    image: pingcap/tidb:latest
+    ports:
+      - "4000:4000"
+    environment:
+      - MYSQL_ROOT_PASSWORD=
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+```
+
+### 2. CI/CD 測試流程
+
+以下是在 CI/CD 流水線中執行測試的步驟：
+
+1. **建立測試環境**：
+
+   ```bash
+   # 啟動測試用的 Docker 容器
+   docker-compose -f internal/testing/docker-compose-test.yaml up -d
+   
+   # 等待服務就緒
+   docker-compose -f internal/testing/docker-compose-test.yaml healthcheck
+   ```
+
+2. **初始化測試數據庫**：
+
+   ```bash
+   # 執行測試數據庫初始化腳本
+   mysql -h localhost -P 4000 -u root < internal/testing/init_test_db.sql
+   ```
+
+3. **執行測試並生成報告**：
+
+   ```bash
+   # 執行測試並生成覆蓋率報告
+   make test-full
+   
+   # 或僅運行測試
+   make test
+   ```
+
+4. **處理測試報告**：
+
+   ```bash
+   # 生成 CI 相容的 Cobertura 格式報告
+   make test-cobertura
+   
+   # 生成 GitLab CI 覆蓋率報告
+   make test-gitlab
+   ```
+
+5. **清理測試環境**：
+
+   ```bash
+   # 停止並移除測試容器
+   docker-compose -f internal/testing/docker-compose-test.yaml down -v
+   ```
+
+### 3. GitLab CI 配置範例
+
+在 `.gitlab-ci.yml` 中配置自動化測試流程：
+
+```yaml
+stages:
+  - test
+  - build
+  - deploy
+
+test:
+  stage: test
+  image: golang:latest
+  services:
+    - name: pingcap/tidb:latest
+      alias: tidb
+    - name: redis:latest
+      alias: redis
+  variables:
+    MYSQL_ROOT_PASSWORD: ""
+  before_script:
+    - go mod download
+    - apt-get update && apt-get install -y mysql-client
+    - mysql -h tidb -P 4000 -u root < internal/testing/init_test_db.sql
+  script:
+    - make test-coverage
+    - make test-cobertura
+  artifacts:
+    reports:
+      cobertura: coverage/cobertura.xml
+    paths:
+      - coverage/
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+\%)$/'
+```
+
+### 4. GitHub Actions 配置範例
+
+在 `.github/workflows/test.yml` 中配置自動化測試流程：
+
+```yaml
+name: Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      tidb:
+        image: pingcap/tidb:latest
+        ports:
+          - 4000:4000
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.20'
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Initialize test database
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mysql-client
+        mysql -h localhost -P 4000 -u root < internal/testing/init_test_db.sql
+
+    - name: Run tests
+      run: make test-full
+
+    - name: Upload test coverage
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: coverage/
+```
+
+## 測試最佳實踐
+
+1. **模擬外部依賴**：使用 mock 對象模擬數據庫、Redis 等外部依賴。
+2. **遵循 AAA 模式**：測試程序遵循 Arrange（準備）、Act（執行）、Assert（驗證）模式。
+3. **測試覆蓋率**：定期監控測試覆蓋率，目標保持在 70% 以上。
+4. **獨立性**：確保測試之間互不影響，可以單獨或以任意順序運行。
+5. **速度**：盡量保持單元測試運行速度，避免不必要的 I/O 操作。
+
+參考 Makefile 中的其他測試相關命令以獲取更多測試功能。 
