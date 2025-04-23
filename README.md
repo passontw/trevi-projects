@@ -66,9 +66,22 @@
    go run ./main.go
    ```
 
-3. 使用 Air 進行熱重載開發 (如果已安裝):
+3. 使用 Air 進行熱重載開發:
    ```bash
-   air
+   # 首次使用，安裝 Air 工具
+   make install-air
+   
+   # 使用 Air 啟動，支持熱重載
+   make dev
+   ```
+
+4. 生成 Swagger API 文檔:
+   ```bash
+   # 生成 Swagger 文檔
+   make swagger
+   
+   # 啟動應用後，可以通過瀏覽器訪問 Swagger UI
+   # http://localhost:<port>/api-docs/index.html
    ```
 
 ## 項目結構

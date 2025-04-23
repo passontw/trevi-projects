@@ -7,7 +7,7 @@
 .env.development.local
 .env.production.local
 
-docs
+docs 
 
 .DS_Store
 
@@ -20,4 +20,10 @@ deployments/tidb/data
 deployments/tidb/logs
 
 deployments/tidb/nacos
+
+# Air 熱重載臨時目錄
+tmp/
+
+# 確保 .airignore 不被忽略
+!.airignore
 

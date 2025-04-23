@@ -7,21 +7,34 @@ import (
 	"time"
 )
 
+// 在 package 級別初始化隨機數生成器
+func init() {
+	// 在 Go 1.20+ 中不需要手動設置種子，但為了向後兼容
+	rand.Seed(time.Now().UnixNano())
+}
+
 // GameState 代表遊戲的不同狀態
 type GameState string
 
 const (
 	StateInitial         GameState = "INITIAL"           // 初始狀態
+	StateStandby         GameState = "STANDBY"           // 待機狀態
 	StateReady           GameState = "READY"             // 待機狀態 對到 GAME_READY 等待開局
 	StateShowLuckyNums   GameState = "SHOW_LUCKYNUMS"    // 開七個幸運球的狀態
 	StateBetting         GameState = "BETTING"           // 投注狀態
+	StateDrawing         GameState = "DRAWING"           // 抽球狀態
 	StateShowBalls       GameState = "SHOW_BALLS"        // 開獎狀態
+	StateExtraBet        GameState = "EXTRA_BET"         // 額外球投注狀態
+	StateExtraDraw       GameState = "EXTRA_DRAW"        // 額外球抽取狀態
 	StateChooseExtraBall GameState = "CHOOSE_EXTRA_BALL" // 額外球投注狀態 對到GAME_CHOOSE_EXTRA_BALL
 	StateShowExtraBalls  GameState = "SHOW_EXTRA_BALLS"  // 額外球開獎狀態
-	StateResult          GameState = "MG_CONCLUDE"       // 結算狀態
-	StateJPReady         GameState = "JP_READY"          // JP待機狀態
+	StateResult          GameState = "RESULT"            // 結算狀態
+	StateJPStandby       GameState = "JP_STANDBY"        // JP待機狀態
+	StateJPBetting       GameState = "JP_BETTING"        // JP投注狀態
+	StateJPDrawing       GameState = "JP_DRAWING"        // JP抽球狀態
+	StateJPResult        GameState = "JP_RESULT"         // JP結算狀態
 	StateJPShowBalls     GameState = "JP_SHOW_BALLS"     // JP開獎狀態
-	StateJPConclude      GameState = "JP_CONCLUDE"       // JP結算狀態
+	StateCompleted       GameState = "COMPLETED"         // 遊戲完成狀態
 )
 
 // DrawResult 代表抽球的結果
@@ -141,9 +154,7 @@ func (dfc *DataFlowController) DrawBall() (*DrawResult, error) {
 	}
 
 	// 隨機抽一顆球
-	rand.Seed(time.Now().UnixNano())
-	randomIndex := rand.Intn(len(remainingBalls))
-	selectedBall := remainingBalls[randomIndex]
+	selectedBall := remainingBalls[rand.Intn(len(remainingBalls))]
 
 	// 創建抽球結果
 	result := DrawResult{
@@ -198,9 +209,7 @@ func (dfc *DataFlowController) DrawExtraBall() (*DrawResult, error) {
 	}
 
 	// 隨機抽一顆額外球
-	rand.Seed(time.Now().UnixNano())
-	randomIndex := rand.Intn(len(remainingBalls))
-	selectedBall := remainingBalls[randomIndex]
+	selectedBall := remainingBalls[rand.Intn(len(remainingBalls))]
 
 	// 創建額外球結果
 	result := DrawResult{

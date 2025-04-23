@@ -1,0 +1,13 @@
+# 忽略下列目錄和文件
+.git/
+.github/
+.idea/
+.vscode/
+tmp/
+bin/
+node_modules/
+docs/
+vendor/
+deployments/tidb/
+deployments/docker/
+deployments/kubernetes/ 
