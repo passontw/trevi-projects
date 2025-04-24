@@ -171,37 +171,3 @@ func (h *DualWebSocketHandler) HandleDealerAuthRequest(c *gin.Context) {
 		},
 	})
 }
-
-// HandlePlayerAuthRequest 處理遊戲端 WebSocket 認證請求
-func (h *DualWebSocketHandler) HandlePlayerAuthRequest(c *gin.Context) {
-	token := c.GetHeader("Authorization")
-
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "缺少認證令牌",
-		})
-		return
-	}
-
-	// 驗證令牌
-	userID, err := h.service.GetPlayerManager().auth(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "玩家認證失敗: " + err.Error(),
-		})
-		return
-	}
-
-	// 返回 WebSocket 連接 URL 和用戶信息
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "玩家認證成功",
-		"data": gin.H{
-			"wsURL":  "/player/ws",
-			"userID": userID,
-			"token":  token,
-		},
-	})
-}

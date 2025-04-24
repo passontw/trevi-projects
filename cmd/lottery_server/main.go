@@ -36,7 +36,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
-	_ "g38_lottery_service/docs" // 導入swagger文檔
+	_ "g38_lottery_service/docs/swagger" // 導入swagger文檔
 
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -334,12 +334,43 @@ func setupPlayerRouter(wsHandler *websocketManager.DualWebSocketHandler, gameSer
 	// WebSocket 連接端點
 	router.GET("/ws", wsHandler.HandlePlayerConnection)
 
-	// 認證端點
-	router.POST("/auth", wsHandler.HandlePlayerAuthRequest)
+	// 認證端點 - 臨時實現
+	router.POST("/auth", func(c *gin.Context) {
+		token := c.GetHeader("Authorization")
+
+		if token == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": "缺少認證令牌",
+			})
+			return
+		}
+
+		// 使用與初始化DualWebSocketService相同的認證函數
+		userID, err := authenticateToken(token)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": "玩家認證失敗: " + err.Error(),
+			})
+			return
+		}
+
+		// 返回 WebSocket 連接 URL 和用戶信息
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "玩家認證成功",
+			"data": gin.H{
+				"wsURL":  "/ws",
+				"userID": userID,
+				"token":  token,
+			},
+		})
+	})
 
 	// 提供Swagger靜態文件
-	router.StaticFile("/swagger.json", "./docs/swagger.json")
-	router.StaticFile("/swagger.yaml", "./docs/swagger.yaml")
+	router.StaticFile("/swagger.json", "./docs/swagger/swagger.json")
+	router.StaticFile("/swagger.yaml", "./docs/swagger/swagger.yaml")
 
 	// Swagger UI - 玩家端
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler,
@@ -385,8 +416,8 @@ func setupDealerRouter(wsHandler *websocketManager.DualWebSocketHandler, gameSer
 	router.POST("/auth", wsHandler.HandleDealerAuthRequest)
 
 	// 提供Swagger靜態文件
-	router.StaticFile("/swagger.json", "./docs/swagger.json")
-	router.StaticFile("/swagger.yaml", "./docs/swagger.yaml")
+	router.StaticFile("/swagger.json", "./docs/swagger/swagger.json")
+	router.StaticFile("/swagger.yaml", "./docs/swagger/swagger.yaml")
 
 	// Swagger UI - 荷官端
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler,
