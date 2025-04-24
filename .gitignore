@@ -31,3 +31,7 @@ tmp/
 # 確保 .airignore 不被忽略
 !.airignore
 
+# 忽略所有 .pb.go 文件
+*.pb.go
+
+
