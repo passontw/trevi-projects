@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 
@@ -8,6 +9,11 @@ import (
 )
 
 func updateConfigFromNacos(cfg *Config, nacosConfig *NacosAppConfig) {
+	// 記錄原始值用於對比
+	originalDBHost := cfg.Database.Host
+	originalDBPort := cfg.Database.Port
+	originalDBName := cfg.Database.Name
+
 	if nacosConfig.Port != "" {
 		portInt, err := strconv.Atoi(nacosConfig.Port)
 		if err == nil {
@@ -35,6 +41,17 @@ func updateConfigFromNacos(cfg *Config, nacosConfig *NacosAppConfig) {
 	}
 	if nacosConfig.DBPassword != "" {
 		cfg.Database.Password = nacosConfig.DBPassword
+	}
+
+	// 記錄數據庫配置變化
+	if originalDBHost != cfg.Database.Host || originalDBPort != cfg.Database.Port || originalDBName != cfg.Database.Name {
+		fmt.Printf("數據庫配置已更新：\n")
+		fmt.Printf("Host: %s → %s\n", originalDBHost, cfg.Database.Host)
+		fmt.Printf("Port: %d → %d\n", originalDBPort, cfg.Database.Port)
+		fmt.Printf("DB名: %s → %s\n", originalDBName, cfg.Database.Name)
+	} else {
+		fmt.Printf("數據庫配置未變更: Host=%s, Port=%d, DB=%s\n",
+			cfg.Database.Host, cfg.Database.Port, cfg.Database.Name)
 	}
 
 	if nacosConfig.RedisHost != "" || nacosConfig.RedisPort != "" {

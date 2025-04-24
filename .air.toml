@@ -6,7 +6,7 @@ tmp_dir = "tmp"
 # 只需在文件更改時才全面重建
 full_bin = ""
 # 應用入口文件
-cmd = "go build -o ./tmp/main ."
+cmd = "go build -o ./tmp/main ./cmd/lottery_server"
 # 二進制執行文件
 bin = "./tmp/main"
 # 監控文件變動后延遲
@@ -35,7 +35,7 @@ include_dir = []
 # 使用 .airignore 忽略文件
 ignore_path = [".airignore"]
 # 啟動構建前執行的命令
-pre_cmd = ["make swagger"]
+pre_cmd = ["cd cmd/lottery_server && make -C ../.. swagger || true"]
 
 [log]
 # 顯示日誌時間

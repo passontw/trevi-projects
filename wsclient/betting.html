@@ -316,8 +316,12 @@
         
         .connection-info {
             font-size: 12px;
-            color: #7f8c8d;
-            margin-top: 5px;
+            margin-top: 10px;
+            color: #666;
+        }
+        
+        .connection-info span {
+            margin-right: 15px;
         }
         
         @media (max-width: 768px) {
@@ -348,14 +352,14 @@
                     <input type="text" id="dealerId" placeholder="輸入莊家 ID">
                 </div>
                 
+                <div class="connection-info">
+                    <span id="connectionTimeInfo">連接時長: 未連接</span>
+                    <span id="heartbeatInfo">上次心跳: 無</span>
+                </div>
+                
                 <div class="btn-group">
                     <button id="connectBtn" class="btn btn-primary">連線</button>
                     <button id="disconnectBtn" class="btn btn-danger" disabled>斷開連線</button>
-                </div>
-                
-                <div id="connectionInfo" class="connection-info">
-                    上次心跳: --<br>
-                    連線時間: --
                 </div>
             </div>
             
@@ -430,7 +434,8 @@
         const serverAddress = document.getElementById('serverAddress');
         const dealerId = document.getElementById('dealerId');
         const connectionStatus = document.getElementById('connectionStatus');
-        const connectionInfo = document.getElementById('connectionInfo');
+        const connectionTimeInfo = document.getElementById('connectionTimeInfo');
+        const heartbeatInfo = document.getElementById('heartbeatInfo');
         const logContainer = document.getElementById('logContainer');
         const clearLogBtn = document.getElementById('clearLogBtn');
         const gameStatus = document.getElementById('gameStatus');
@@ -455,16 +460,7 @@
         let players = new Map();
         let countdownTimer = null;
         let countdownValue = 0;
-        
-        // 初始化 WebSocket 管理器
-        const wsManager = new WebSocketManager({
-            autoReconnect: true,
-            reconnectDelay: 3000,
-            onConnectionStatusChange: updateConnectionDisplay,
-            onMessage: handleIncomingMessage,
-            onGameStateChange: updateGameState,
-            onLog: addLogEntry
-        });
+        let wsManager = null;
         
         // 註冊事件處理程序
         connectBtn.addEventListener('click', connect);
@@ -482,6 +478,10 @@
         
         // 初始化函數
         function init() {
+            // 自動填充伺服器地址
+            const defaultServerAddress = window.location.hostname + ':8080';
+            serverAddress.value = defaultServerAddress;
+            
             addLogEntry('莊家控制台已載入，請輸入連線資訊並點擊「連線」按鈕', 'system');
             updateButtonStatus(false);
         }
@@ -501,26 +501,56 @@
                 return;
             }
             
+            // 構建WebSocket URL
+            let wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            let wsUrl = `${wsProtocol}//${serverUrl}/ws/dealer`;
+            
             // 構建認證參數 (身份為 dealer)
             const authParams = {
                 dealerId: dealerIdValue,
                 type: 'dealer'
             };
             
+            // 建立WebSocket管理器
+            wsManager = new WebSocketManager({
+                autoReconnect: true,
+                reconnectDelay: 3000,
+                connectionTimeout: 8000,
+                heartbeatInterval: 10000,
+                onConnectionStatusChange: updateConnectionDisplay,
+                onMessage: handleIncomingMessage,
+                onGameStateChange: updateGameState,
+                onLog: addLogEntry
+            });
+            
             // 連接到服務器
-            wsManager.connect(serverUrl, authParams);
-            updateButtonStatus(true);
+            wsManager.connect(wsUrl, authParams);
+            
+            // 禁用輸入和連接按鈕
+            serverAddress.disabled = true;
+            dealerId.disabled = true;
+            connectBtn.disabled = true;
         }
         
         // 斷開連線函數
         function disconnect() {
-            stopCountdown();
-            wsManager.disconnect();
-            updateButtonStatus(false);
-            updateGameButtons(null);
-            drawingControls.style.display = 'none';
-            playerListPanel.style.display = 'none';
-            updateGameStatusDisplay('未連線');
+            if (wsManager) {
+                stopCountdown();
+                wsManager.disconnect();
+                wsManager = null;
+                
+                // 重置 UI
+                updateButtonStatus(false);
+                updateGameButtons(null);
+                drawingControls.style.display = 'none';
+                playerListPanel.style.display = 'none';
+                updateGameStatusDisplay('未連線');
+                
+                // 啟用輸入
+                serverAddress.disabled = false;
+                dealerId.disabled = false;
+                connectBtn.disabled = false;
+            }
         }
         
         // 更新按鈕狀態
@@ -536,13 +566,22 @@
             if (info.connected) {
                 connectionStatus.textContent = '已連線';
                 connectionStatus.className = 'status-badge connected';
+                disconnectBtn.disabled = false;
+                updateButtonStatus(true);
             } else {
                 connectionStatus.textContent = '未連線';
                 connectionStatus.className = 'status-badge disconnected';
-                updateButtonStatus(false);
+                disconnectBtn.disabled = true;
+                
+                // 恢復輸入和按鈕
+                serverAddress.disabled = false;
+                dealerId.disabled = false;
+                connectBtn.disabled = false;
             }
             
-            connectionInfo.innerHTML = `上次心跳: ${info.heartbeat}<br>連線時間: ${info.connTime}`;
+            // 更新連接信息顯示
+            connectionTimeInfo.textContent = `連接時長: ${info.connTime}`;
+            heartbeatInfo.textContent = `上次心跳: ${info.heartbeat}`;
         }
         
         // 處理接收到的訊息
@@ -562,6 +601,10 @@
             // 處理倒數計時更新
             else if (message.command === 'countdown' && message.time !== undefined) {
                 updateCountdown(message.time);
+            }
+            // 處理抽出的球號
+            else if (message.command === 'ballDrawn' && message.number !== undefined) {
+                addDrawnBall(message.number);
             }
         }
         
@@ -688,7 +731,7 @@
             endGameBtn.disabled = true;
             
             // 根據狀態啟用相應按鈕
-            if (!wsManager.isConnected) {
+            if (!wsManager || !wsManager.isConnected) {
                 return;
             }
             
@@ -715,7 +758,10 @@
         
         // 初始化遊戲
         function initializeGame() {
-            if (!wsManager.isConnected) return;
+            if (!wsManager || !wsManager.isConnected) {
+                addLogEntry('未連接到服務器', 'error');
+                return;
+            }
             
             wsManager.sendMessage({
                 command: 'initGame'
@@ -724,7 +770,10 @@
         
         // 開始下注
         function startBetting() {
-            if (!wsManager.isConnected) return;
+            if (!wsManager || !wsManager.isConnected) {
+                addLogEntry('未連接到服務器', 'error');
+                return;
+            }
             
             const bettingTimeValue = parseInt(bettingTime.value) || 60;
             wsManager.sendMessage({
@@ -735,7 +784,10 @@
         
         // 停止下注
         function stopBetting() {
-            if (!wsManager.isConnected) return;
+            if (!wsManager || !wsManager.isConnected) {
+                addLogEntry('未連接到服務器', 'error');
+                return;
+            }
             
             wsManager.sendMessage({
                 command: 'stopBetting'
@@ -744,7 +796,10 @@
         
         // 更新下注時間
         function updateBettingTime() {
-            if (!wsManager.isConnected) return;
+            if (!wsManager || !wsManager.isConnected) {
+                addLogEntry('未連接到服務器', 'error');
+                return;
+            }
             
             const bettingTimeValue = parseInt(bettingTime.value) || 60;
             wsManager.sendMessage({
@@ -757,7 +812,10 @@
         
         // 抽選下一個號碼球
         function drawBall() {
-            if (!wsManager.isConnected || currentGameState !== WS_STATE.DRAWING) return;
+            if (!wsManager || !wsManager.isConnected || currentGameState !== WS_STATE.DRAWING) {
+                addLogEntry('無法抽選，請確認連接狀態和遊戲階段', 'error');
+                return;
+            }
             
             wsManager.sendMessage({
                 command: 'drawBall'
@@ -766,7 +824,10 @@
         
         // 結束遊戲
         function endGame() {
-            if (!wsManager.isConnected) return;
+            if (!wsManager || !wsManager.isConnected) {
+                addLogEntry('未連接到服務器', 'error');
+                return;
+            }
             
             wsManager.sendMessage({
                 command: 'endGame'
@@ -783,10 +844,10 @@
         }
         
         // 添加日誌條目
-        function addLogEntry(message, type = 'system', timestamp = null) {
-            if (!timestamp) {
-                timestamp = new Date().toLocaleTimeString();
-            }
+        function addLogEntry(message, type = 'system', skipDisplay = false) {
+            if (skipDisplay) return;
+            
+            const timestamp = new Date().toLocaleTimeString();
             
             const entry = document.createElement('div');
             entry.className = `log-entry log-${type}`;
@@ -800,6 +861,11 @@
             
             logContainer.appendChild(entry);
             logContainer.scrollTop = logContainer.scrollHeight;
+            
+            // 限制日誌數量
+            while (logContainer.children.length > 100) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
         }
         
         // 清除日誌
@@ -807,6 +873,9 @@
             logContainer.innerHTML = '';
             addLogEntry('已清除日誌', 'system');
         }
+        
+        // 添加到全局作用域(用於從WebSocketManager中調用)
+        window.addDrawnBall = addDrawnBall;
     </script>
 </body>
 </html> 

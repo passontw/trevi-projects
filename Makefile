@@ -14,7 +14,7 @@ LDFLAGS := -X g38_lottery_service/internal/config.AppVersion=$(VERSION) \
 
 # 二進制名稱
 BINARY_NAME := g38_lottery_service
-MAIN_PKG := ./main.go
+MAIN_PKG := ./cmd/lottery_server
 
 # 腳本目標
 build:
@@ -44,13 +44,13 @@ install-air:
 swagger:
 	@echo "Generating Swagger documentation..."
 	@if command -v swag > /dev/null 2>&1 ; then \
-		swag init ; \
+		cd $(MAIN_PKG) && swag init -g main.go -o ../../docs/swagger ; \
 	else \
 		echo "Swag not found. Installing swag..." ; \
 		go install github.com/swaggo/swag/cmd/swag@latest ; \
-		swag init ; \
+		cd $(MAIN_PKG) && swag init -g main.go -o ../../docs/swagger ; \
 	fi
-	@echo "Swagger documentation generated in ./docs directory"
+	@echo "Swagger documentation generated in ./docs/swagger directory"
 
 # 運行單元測試
 test:

@@ -72,7 +72,7 @@ func NewMySQLManager(config *MySQLConfig) (DatabaseManager, error) {
 	var dsn string
 	if config.Password == "" {
 		// 無密碼連接格式: username@tcp(host:port)/database?charset=utf8mb4&parseTime=True&loc=Local
-		dsn = fmt.Sprintf("%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s",
+		dsn = fmt.Sprintf("%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s&allowNativePasswords=true",
 			config.User,
 			config.Host,
 			port,
@@ -83,7 +83,7 @@ func NewMySQLManager(config *MySQLConfig) (DatabaseManager, error) {
 		)
 	} else {
 		// 有密碼連接格式: username:password@tcp(host:port)/database?charset=utf8mb4&parseTime=True&loc=Local
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s",
+		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s&allowNativePasswords=true",
 			config.User,
 			config.Password,
 			config.Host,
@@ -101,15 +101,51 @@ func NewMySQLManager(config *MySQLConfig) (DatabaseManager, error) {
 	if err != nil {
 		fmt.Printf("數據庫連接失敗: %v\n", err)
 		fmt.Printf("嘗試診斷問題: \n")
-		fmt.Printf("- 請確認 MySQL 服務器正在運行\n")
-		fmt.Printf("- 請確認 MySQL 用戶 '%s' 存在且有權限訪問數據庫 '%s'\n", config.User, config.Name)
+		fmt.Printf("- 請確認 TiDB/MySQL 服務器正在運行於 %s:%d\n", config.Host, port)
+		fmt.Printf("- 請確認 TiDB/MySQL 用戶 '%s' 存在且有權限訪問數據庫 '%s'\n", config.User, config.Name)
 		fmt.Printf("- 請確認密碼設置正確\n")
-		fmt.Printf("- 請確認 MySQL 服務器允許來自 %s 的連接\n", config.Host)
+		fmt.Printf("- 請確認 TiDB/MySQL 服務器允許來自 %s 的連接\n", config.Host)
+
+		// 嘗試不使用數據庫名稱連接
+		fmt.Printf("嘗試不指定數據庫名稱連接...\n")
+		dsnWithoutDB := fmt.Sprintf("%s@tcp(%s:%d)/?charset=%s&parseTime=%t&loc=%s&allowNativePasswords=true",
+			config.User,
+			config.Host,
+			port,
+			config.Charset,
+			config.ParseTime,
+			config.Loc,
+		)
+		db, testErr := gorm.Open(mysql.Open(dsnWithoutDB), &gorm.Config{})
+		if testErr == nil {
+			fmt.Printf("不指定數據庫名稱連接成功! 嘗試創建數據庫 '%s'...\n", config.Name)
+
+			// 創建數據庫
+			result := db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", config.Name))
+			if result.Error != nil {
+				fmt.Printf("創建數據庫失敗: %v\n", result.Error)
+			} else {
+				fmt.Printf("數據庫創建成功或已存在，嘗試重新連接...\n")
+
+				// 重新嘗試原始連接
+				db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+				if err == nil {
+					fmt.Printf("連接成功！\n")
+					sqlDB, _ := db.DB()
+					sqlDB.SetMaxOpenConns(10)
+					sqlDB.SetMaxIdleConns(5)
+					sqlDB.SetConnMaxLifetime(time.Hour)
+					return &mysqlManagerImpl{db: db}, nil
+				}
+			}
+		} else {
+			fmt.Printf("不指定數據庫名稱連接也失敗: %v\n", testErr)
+		}
 
 		// 嘗試不帶密碼連接
 		if config.Password != "" {
 			fmt.Printf("嘗試不帶密碼連接...\n")
-			dsnWithoutPassword := fmt.Sprintf("%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s",
+			dsnWithoutPassword := fmt.Sprintf("%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s&allowNativePasswords=true",
 				config.User,
 				config.Host,
 				port,
@@ -164,7 +200,7 @@ func ProvideMySQLConfig(cfg interface{}) *MySQLConfig {
 	if !ok {
 		// 如果無法轉換，返回默認配置
 		return &MySQLConfig{
-			Host:      "localhost",
+			Host:      "127.0.0.1",
 			Port:      3306,
 			User:      "root",
 			Password:  "",
@@ -175,8 +211,14 @@ func ProvideMySQLConfig(cfg interface{}) *MySQLConfig {
 		}
 	}
 
+	// 如果主機名是 localhost，替換為 127.0.0.1 以強制使用 IPv4
+	host := config.GetDatabaseHost()
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
+
 	return &MySQLConfig{
-		Host:      config.GetDatabaseHost(),
+		Host:      host,
 		Port:      config.GetDatabasePort(),
 		User:      config.GetDatabaseUser(),
 		Password:  config.GetDatabasePassword(),

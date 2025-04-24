@@ -248,6 +248,18 @@
             animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
 
+        .ball.won {
+            background-color: var(--success-color);
+            box-shadow: 0 0 15px rgba(40, 167, 69, 0.7);
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275), pulse 2s infinite;
+        }
+        
+        .ball.highlight {
+            transform: scale(1.15);
+            border: 2px solid gold;
+            background-color: #ff9800;
+        }
+
         @keyframes popIn {
             0% { transform: scale(0); opacity: 0; }
             100% { transform: scale(1); opacity: 1; }
@@ -277,440 +289,1669 @@
             font-weight: bold;
             font-size: 1.1rem;
         }
+
+        /* 新增的樣式 */
+        .status-reconnecting {
+            background-color: #ff9800;
+            color: white;
+        }
+
+        .status-error {
+            background-color: #f44336;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+
+        .error-detail {
+            color: #f44336;
+            font-size: 0.9em;
+            margin-top: 5px;
+            border-left: 3px solid #f44336;
+            padding-left: 5px;
+        }
+
+        .stats {
+            margin-top: 10px;
+            font-size: 0.85em;
+            color: #666;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .mini-btn {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            font-size: 0.85em;
+            cursor: pointer;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .mini-btn:hover {
+            background-color: #367c39;
+        }
+
+        /* 模態對話框 */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 80%;
+            max-height: 80%;
+            overflow: auto;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .history-list {
+            max-height: 400px;
+            overflow-y: auto;
+            margin: 10px 0;
+            border: 1px solid #eee;
+            padding: 10px;
+        }
+
+        .history-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .history-item:last-child {
+            border-bottom: none;
+        }
+
+        .history-time {
+            color: #888;
+            font-size: 0.85em;
+            white-space: nowrap;
+        }
+
+        .history-type {
+            font-weight: bold;
+            color: #444;
+        }
+
+        .history-detail {
+            color: #666;
+            font-style: italic;
+        }
+
+        .history-item.error {
+            background-color: rgba(244, 67, 54, 0.1);
+        }
+
+        .history-item.connected {
+            background-color: rgba(76, 175, 80, 0.1);
+        }
+
+        .history-item.disconnected {
+            background-color: rgba(255, 152, 0, 0.1);
+        }
+
+        .history-item.game_state_change {
+            background-color: rgba(33, 150, 243, 0.1);
+        }
+
+        /* 脈動動畫 */
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+
+        /* 動畫效果 */
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        @keyframes glowEffect {
+            0% { box-shadow: 0 0 5px rgba(255, 215, 0, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(255, 215, 0, 0.8); }
+            100% { box-shadow: 0 0 5px rgba(255, 215, 0, 0.5); }
+        }
+        
+        /* 應用動畫的元素 */
+        .game-title {
+            animation: slideIn 0.8s ease forwards;
+        }
+        
+        .connection-status {
+            transition: all 0.3s ease;
+        }
+        
+        .connection-status.connected {
+            animation: pulse 1.5s infinite;
+        }
+        
+        .loading-indicator {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s infinite linear;
+            margin-right: 10px;
+        }
+        
+        .btn:active {
+            transform: scale(0.98);
+        }
+        
+        .drawn-number {
+            animation: fadeIn 0.5s forwards;
+            transition: all 0.3s ease;
+        }
+        
+        .drawn-number.highlight {
+            animation: bounce 0.5s ease, glowEffect 2s infinite;
+        }
+        
+        .winning-bet {
+            animation: pulse 1s ease;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.7);
+        }
+        
+        .bet-prize {
+            animation: glowEffect 2s infinite;
+            font-weight: bold;
+        }
+        
+        .number-btn.drawn {
+            animation: pulse 1.5s infinite;
+        }
+        
+        .number-btn.selected {
+            transition: all 0.2s ease;
+        }
+        
+        .game-state-indicator {
+            transition: all 0.5s ease;
+        }
+        
+        .log-entry {
+            animation: fadeIn 0.3s forwards;
+        }
+        
+        .log-win {
+            animation: pulse 1s ease;
+        }
+        
+        /* 游戲狀態指示器樣式 */
+        .game-state-indicator {
+            position: relative;
+            padding: 10px 15px;
+            border-radius: 20px;
+            margin: 10px 0;
+            text-align: center;
+            font-weight: bold;
+            color: white;
+            background-color: #555;
+        }
+        
+        .game-state-indicator.betting {
+            background-color: #28a745;
+        }
+        
+        .game-state-indicator.drawing {
+            background-color: #ffc107;
+            color: #333;
+        }
+        
+        .game-state-indicator.showing_results {
+            background-color: #17a2b8;
+        }
+        
+        /* 抽獎動畫容器 */
+        .drawing-animation {
+            display: none;
+            position: relative;
+            height: 150px;
+            margin: 20px 0;
+            overflow: hidden;
+            background-color: rgba(0,0,0,0.1);
+            border-radius: 10px;
+        }
+        
+        .drawing-animation.active {
+            display: block;
+        }
+        
+        .number-roll {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .rolling-number {
+            width: 60px;
+            height: 80px;
+            background-color: white;
+            color: #333;
+            margin: 0 5px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2em;
+            font-weight: bold;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        /* 聲音控制按鈕 */
+        .sound-controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .sound-toggle {
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .sound-toggle:hover {
+            background-color: #e9ecef;
+        }
+        
+        .sound-toggle.active {
+            background-color: #007bff;
+            color: white;
+        }
+        
+        .sound-toggle i {
+            font-size: 1.2rem;
+        }
+        
+        /* 贏錢通知 */
+        .win-notification {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(40, 167, 69, 0.9);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 10px;
+            font-size: 24px;
+            font-weight: bold;
+            z-index: 1000;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            animation: fadeInOut 3s ease forwards;
+            text-align: center;
+        }
+        
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+            20% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+            30% { transform: translate(-50%, -50%) scale(1); }
+            80% { opacity: 1; }
+            100% { opacity: 0; }
+        }
     </style>
+    <script src="ws-common.js"></script>
+    <script>
+        // 全局變量
+        let wsManager = null;
+        let gameState = 'initial';
+        let bettingCountdown = 0;
+        let drawnNumbers = [];
+        let playerId = null;
+        let playerBalance = 0;
+        let selectedNumbers = [];
+        let currentBets = [];
+        let connectionInfoTimer = null;
+        
+        // DOM 元素引用
+        const elements = {};
+        
+        // 文檔加載完成時執行
+        window.addEventListener('DOMContentLoaded', () => {
+            // 初始化元素引用
+            initElements();
+            
+            // 設置事件監聽器
+            setupEventListeners();
+            
+            // 初始化介面
+            updateGameState('initial');
+            updateConnectionStatus({connected: false});
+            
+            // 自動填充服務器地址
+            const defaultServerAddress = window.location.hostname + ':8080';
+            elements.serverAddress.value = defaultServerAddress;
+            
+            // 初始化日誌區域
+            addLogEntry('系統已初始化，請連接到服務器', 'system');
+            
+            // 測試並預載聲音
+            setTimeout(() => {
+                // 創建臨時WebSocketManager用於預載聲音
+                const testManager = new WebSocketManager({
+                    enableSounds: true,
+                    debug: false
+                });
+                
+                // 載入音效
+                testManager.loadSounds({
+                    message: 'sounds/message.mp3',
+                    notification: 'sounds/notification.mp3'
+                });
+                
+                // 預載所有音效
+                testManager.preloadAllSounds();
+                
+                // 只有當聲音已開啟時才播放測試音效
+                if (elements.toggleSound.classList.contains('active')) {
+                    setTimeout(() => {
+                        testManager.playSound('notification', 0.2);
+                    }, 500);
+                }
+                
+                // 添加日誌記錄
+                addLogEntry('聲音效果已準備就緒', 'system');
+            }, 1000);
+        });
+        
+        // 初始化元素引用
+        function initElements() {
+            elements.connectBtn = document.getElementById('connectBtn');
+            elements.disconnectBtn = document.getElementById('disconnectBtn');
+            elements.serverAddress = document.getElementById('serverAddress');
+            elements.playerId = document.getElementById('playerId');
+            elements.statusIndicator = document.getElementById('statusIndicator');
+            elements.gameStateIndicator = document.getElementById('gameStateIndicator');
+            elements.connectionInfo = document.getElementById('connectionInfo');
+            elements.logContainer = document.getElementById('logContainer');
+            elements.countdown = document.getElementById('countdown');
+            elements.ballContainer = document.getElementById('ballContainer');
+            elements.playerBalance = document.getElementById('playerBalance');
+            elements.betAmount = document.getElementById('betAmount');
+            elements.placeBetBtn = document.getElementById('placeBetBtn');
+            elements.selectedNumbersContainer = document.getElementById('selectedNumbers');
+            elements.numberPad = document.getElementById('numberPad');
+            elements.betsContainer = document.getElementById('betsContainer');
+            elements.clearSelectionBtn = document.getElementById('clearSelectionBtn');
+            elements.toggleSound = document.getElementById('toggleSound');
+        }
+        
+        // 設置事件監聽器
+        function setupEventListeners() {
+            // 連接按鈕
+            elements.connectBtn.addEventListener('click', () => {
+                connectToServer();
+            });
+            
+            // 斷開連接按鈕
+            elements.disconnectBtn.addEventListener('click', () => {
+                disconnectFromServer();
+            });
+            
+            // 下注按鈕
+            elements.placeBetBtn.addEventListener('click', () => {
+                placeBet();
+            });
+            
+            // 清除選擇按鈕
+            elements.clearSelectionBtn.addEventListener('click', () => {
+                clearNumberSelection();
+            });
+            
+            // 聲音控制
+            elements.toggleSound.addEventListener('click', () => {
+                toggleSoundEffects();
+            });
+            
+            // 生成號碼選擇板
+            generateNumberPad();
+        }
+        
+        // 生成號碼選擇板
+        function generateNumberPad() {
+            // 清空現有內容
+            elements.numberPad.innerHTML = '';
+            
+            // 創建1-80數字按鈕
+            for (let i = 1; i <= 80; i++) {
+                const numberBtn = document.createElement('button');
+                numberBtn.textContent = i;
+                numberBtn.className = 'number-btn';
+                numberBtn.dataset.number = i;
+                
+                // 點擊事件
+                numberBtn.addEventListener('click', (e) => {
+                    const number = parseInt(e.target.dataset.number);
+                    toggleNumberSelection(number);
+                });
+                
+                elements.numberPad.appendChild(numberBtn);
+            }
+        }
+        
+        // 連接到WebSocket服務器
+        function connectToServer() {
+            const serverAddress = elements.serverAddress.value.trim();
+            const playerId = elements.playerId.value.trim();
+            
+            if (!serverAddress) {
+                addLogEntry('請輸入服務器地址', 'error');
+                return;
+            }
+            
+            if (!playerId) {
+                addLogEntry('請輸入玩家ID', 'error');
+                return;
+            }
+            
+            // 禁用連接按鈕，啟用斷開按鈕
+            elements.connectBtn.disabled = true;
+            elements.disconnectBtn.disabled = false;
+            
+            // 更新狀態指示器
+            elements.statusIndicator.className = 'status-badge status-connecting';
+            elements.statusIndicator.textContent = '連接中...';
+            
+            // 初始化WebSocket管理器
+            initWebSocketManager();
+            
+            // 構建WebSocket URL
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${serverAddress}/ws/player`;
+            
+            // 連接到WebSocket服務器
+            wsManager.connect(wsUrl, {
+                playerId: playerId
+            }).then(() => {
+                // 連接成功
+                playerId = elements.playerId.value.trim();
+                
+                // 初始化UI狀態
+                updateGameState('initial');
+                
+                // 發送加入遊戲命令
+                wsManager.sendMessage({
+                    command: 'joinGame',
+                    playerId: playerId
+                });
+                
+                // 播放連接成功音效
+                wsManager.playSound('notification', 0.6);
+            }).catch(error => {
+                // 連接失敗，重置UI
+                elements.connectBtn.disabled = false;
+                elements.disconnectBtn.disabled = true;
+                elements.statusIndicator.className = 'status-badge status-disconnected';
+                elements.statusIndicator.textContent = '連接失敗';
+                
+                addLogEntry(`連接失敗: ${error.message}`, 'error');
+            });
+        }
+        
+        // 斷開WebSocket連接
+        function disconnectFromServer() {
+            if (!wsManager) return;
+            
+            // 停止所有計時器
+            if (connectionInfoTimer) {
+                clearInterval(connectionInfoTimer);
+                connectionInfoTimer = null;
+            }
+            
+            // 斷開連接
+            wsManager.disconnect(1000, '用戶主動斷開連接');
+            
+            // 更新UI
+            elements.connectBtn.disabled = false;
+            elements.disconnectBtn.disabled = true;
+            elements.statusIndicator.className = 'status-badge status-disconnected';
+            elements.statusIndicator.textContent = '未連接';
+            
+            // 重置遊戲狀態
+            updateGameState('initial');
+            clearDrawnNumbers();
+            clearNumberSelection();
+            
+            addLogEntry('已斷開與服務器的連接', 'system');
+        }
+        
+        // 更新連接狀態
+        function updateConnectionStatus(status) {
+            // 更新狀態指示器
+            if (status.connected) {
+                elements.statusIndicator.textContent = '已連接';
+                elements.statusIndicator.className = 'status-badge status-connected';
+                elements.disconnectBtn.disabled = false;
+            } else {
+                elements.statusIndicator.textContent = '未連接';
+                elements.statusIndicator.className = 'status-badge status-disconnected';
+                elements.disconnectBtn.disabled = true;
+                
+                // 恢復按鈕和輸入
+                elements.serverAddress.disabled = false;
+                elements.playerId.disabled = false;
+                elements.connectBtn.disabled = false;
+            }
+            
+            // 更新連接信息
+            elements.connectionInfo.innerHTML = '';
+            
+            if (status.connected) {
+                // 連接時間
+                const connTimeEl = document.createElement('div');
+                connTimeEl.innerHTML = `<i class="fas fa-clock"></i> 連接時間: ${status.connTime}`;
+                elements.connectionInfo.appendChild(connTimeEl);
+                
+                // 最後心跳
+                const heartbeatEl = document.createElement('div');
+                heartbeatEl.innerHTML = `<i class="fas fa-heartbeat"></i> 上次心跳: ${status.heartbeat}`;
+                elements.connectionInfo.appendChild(heartbeatEl);
+            }
+        }
+        
+        // 處理從服務器接收到的消息
+        function handleServerMessage(data) {
+            if (!data || !data.command) return;
+            
+            switch (data.command) {
+                case 'gameState':
+                    // 更新遊戲狀態
+                    updateGameState(data.state);
+                    
+                    // 更新倒計時
+                    if (data.countdown !== undefined) {
+                        updateCountdown(data.countdown);
+                    }
+                    
+                    break;
+                    
+                case 'countdown':
+                    // 更新倒計時
+                    updateCountdown(data.seconds);
+                    break;
+                    
+                case 'ballDrawn':
+                    // 添加抽出的球號
+                    if (data.number !== undefined) {
+                        addDrawnBall(data.number, data.win);
+                    }
+                    break;
+                    
+                case 'balanceUpdate':
+                    // 更新玩家餘額
+                    if (data.balance !== undefined) {
+                        playerBalance = data.balance;
+                        elements.playerBalance.textContent = playerBalance;
+                    }
+                    break;
+                    
+                case 'betResult':
+                    // 處理下注結果
+                    if (data.success) {
+                        addLogEntry(`下注成功: ${data.amount} 金額在 ${data.numbers.join(', ')} 上`, 'system');
+                        // 播放下注成功音效
+                        wsManager.playSound('message', 0.5);
+                    } else {
+                        addLogEntry(`下注失敗: ${data.error || '未知錯誤'}`, 'error');
+                        // 播放錯誤音效
+                        wsManager.playSound('notification', 1.0);
+                    }
+                    break;
+                    
+                case 'winResult':
+                    // 處理中獎結果
+                    if (data.win) {
+                        const winMessage = `恭喜! 您贏得了 ${data.amount} 金額`;
+                        addLogEntry(winMessage, 'system');
+                        
+                        // 創建中獎提示
+                        showWinNotification(data.amount);
+                        
+                        // 播放獲勝音效
+                        wsManager.playSound('notification', 0.8);
+                    }
+                    break;
+                    
+                case 'error':
+                    // 處理錯誤消息
+                    addLogEntry(`服務器錯誤: ${data.message || '未知錯誤'}`, 'error');
+                    // 播放錯誤音效
+                    wsManager.playSound('notification', 1.0);
+                    break;
+                    
+                default:
+                    // 處理其他未知命令
+                    addLogEntry(`收到未知命令: ${data.command}`, 'system');
+            }
+        }
+        
+        // 顯示贏錢通知
+        function showWinNotification(amount) {
+            const notification = document.createElement('div');
+            notification.className = 'win-notification';
+            notification.textContent = `恭喜您贏得 ${amount} 金額！`;
+            
+            document.body.appendChild(notification);
+            
+            // 3秒後移除通知
+            setTimeout(() => {
+                document.body.removeChild(notification);
+            }, 3000);
+        }
+        
+        // 處理WebSocket消息
+        function handleMessage(data) {
+            // 處理餘額更新
+            if (data.command === 'balance' && data.amount !== undefined) {
+                playerBalance = data.amount;
+                updatePlayerBalance();
+            }
+            
+            // 處理倒計時更新
+            if (data.command === 'countdown' && data.seconds !== undefined) {
+                updateCountdown(data.seconds);
+            }
+            
+            // 處理抽出的球號
+            if (data.command === 'ballDrawn' && data.number !== undefined) {
+                addDrawnBall(data.number, data.win);
+            }
+            
+            // 處理下注確認
+            if (data.command === 'betConfirmed' && data.bet) {
+                addBetToList(data.bet);
+            }
+            
+            // 處理下注結果
+            if (data.command === 'betResult' && data.results) {
+                handleBetResults(data.results);
+            }
+        }
+        
+        // 處理游戲狀態變更
+        function handleGameStateChange(state, data) {
+            updateGameState(state);
+            
+            // 如果游戲狀態變為投注中，清除之前抽出的球
+            if (state === 'betting') {
+                clearDrawnNumbers();
+                clearBets();
+            }
+            
+            // 如果游戲結束，顯示獲勝信息
+            if (state === 'ended' && data.winningNumbers) {
+                // 顯示中獎號碼
+                addLogEntry(`本輪中獎號碼: ${data.winningNumbers.join(', ')}`, 'system');
+            }
+        }
+        
+        // 更新遊戲狀態
+        function updateGameState(state) {
+            // 保存先前狀態
+            const previousState = gameState;
+            
+            // 更新當前狀態
+            gameState = state;
+            
+            // 更新狀態指示器
+            elements.gameStateIndicator.textContent = getGameStateLabel(state);
+            elements.gameStateIndicator.className = `status-badge status-${state}`;
+            
+            // 遊戲狀態特定處理
+            switch(state) {
+                case 'initial':
+                    // 初始狀態 - 禁用遊戲相關按鈕
+                    elements.placeBetBtn.disabled = true;
+                    elements.clearSelectionBtn.disabled = true;
+                    elements.betAmount.disabled = true;
+                    disableNumberPad();
+                    break;
+                    
+                case 'betting':
+                    // 下注階段 - 啟用下注相關控件
+                    elements.placeBetBtn.disabled = false;
+                    elements.clearSelectionBtn.disabled = false;
+                    elements.betAmount.disabled = false;
+                    enableNumberPad();
+                    
+                    // 如果是從draw狀態轉換，清除上一局結果
+                    if (previousState === 'drawing' || previousState === 'showing_results') {
+                        clearDrawnNumbers();
+                        clearBets();
+                    }
+                    
+                    addLogEntry('下注階段開始，請選擇號碼並下注', 'system');
+                    break;
+                    
+                case 'drawing':
+                    // 抽獎階段 - 禁用下注
+                    elements.placeBetBtn.disabled = true;
+                    elements.betAmount.disabled = true;
+                    disableNumberPad();
+                    
+                    addLogEntry('下注結束，抽獎開始', 'system');
+                    break;
+                    
+                case 'showing_results':
+                    // 顯示結果階段
+                    elements.placeBetBtn.disabled = true;
+                    elements.betAmount.disabled = true;
+                    disableNumberPad();
+                    
+                    addLogEntry('遊戲結束，顯示結果', 'system');
+                    break;
+                
+                default:
+                    // 其他狀態或未知狀態
+                    elements.placeBetBtn.disabled = true;
+                    elements.clearSelectionBtn.disabled = true;
+                    elements.betAmount.disabled = true;
+                    disableNumberPad();
+            }
+            
+            // 添加到WebSocket管理器的遊戲狀態歷史記錄
+            if (wsManager && previousState !== state) {
+                wsManager.addToConnectionHistory({
+                    type: 'game_state_change',
+                    time: Date.now(),
+                    data: {
+                        from: previousState,
+                        to: state
+                    }
+                });
+                
+                // 觸發遊戲狀態更改回調
+                if (typeof wsManager.options.onGameStateChange === 'function') {
+                    wsManager.options.onGameStateChange(state, previousState);
+                }
+            }
+        }
+        
+        // 獲取遊戲狀態顯示標籤
+        function getGameStateLabel(state) {
+            switch(state) {
+                case 'initial': return '等待遊戲';
+                case 'betting': return '下注階段';
+                case 'drawing': return '抽獎中';
+                case 'showing_results': return '顯示結果';
+                default: return state || '未知狀態';
+            }
+        }
+        
+        // 啟用數字選擇板
+        function enableNumberPad() {
+            const numberButtons = elements.numberPad.querySelectorAll('.number-btn');
+            numberButtons.forEach(btn => {
+                btn.disabled = false;
+                btn.classList.remove('disabled');
+            });
+        }
+        
+        // 禁用數字選擇板
+        function disableNumberPad() {
+            const numberButtons = elements.numberPad.querySelectorAll('.number-btn');
+            numberButtons.forEach(btn => {
+                btn.disabled = true;
+                btn.classList.add('disabled');
+            });
+        }
+        
+        // 切換號碼選擇
+        function toggleNumberSelection(number) {
+            // 檢查是否已經選擇該號碼
+            const index = selectedNumbers.indexOf(number);
+            const numberBtn = elements.numberPad.querySelector(`.number-btn[data-number="${number}"]`);
+            
+            if (index === -1) {
+                // 檢查是否已達最大選擇數量限制 (例如10個)
+                if (selectedNumbers.length >= 10) {
+                    addLogEntry('最多只能選擇10個號碼', 'error');
+                    return;
+                }
+                
+                // 添加到選擇列表
+                selectedNumbers.push(number);
+                
+                // 更新UI
+                numberBtn.classList.add('selected');
+                
+                // 更新選擇顯示
+                updateSelectedNumbersDisplay();
+                
+                addLogEntry(`選擇號碼: ${number}`, 'system');
+            } else {
+                // 從選擇列表移除
+                selectedNumbers.splice(index, 1);
+                
+                // 更新UI
+                numberBtn.classList.remove('selected');
+                
+                // 更新選擇顯示
+                updateSelectedNumbersDisplay();
+                
+                addLogEntry(`取消選擇號碼: ${number}`, 'system');
+            }
+            
+            // 更新清除按鈕狀態
+            elements.clearSelectionBtn.disabled = selectedNumbers.length === 0;
+        }
+        
+        // 更新已選號碼顯示
+        function updateSelectedNumbersDisplay() {
+            elements.selectedNumbersContainer.innerHTML = '';
+            
+            if (selectedNumbers.length === 0) {
+                elements.selectedNumbersContainer.textContent = '尚未選擇';
+                return;
+            }
+            
+            // 對選擇的號碼進行排序
+            const sortedNumbers = [...selectedNumbers].sort((a, b) => a - b);
+            
+            sortedNumbers.forEach(number => {
+                const chip = document.createElement('div');
+                chip.className = 'number-chip';
+                chip.textContent = number;
+                
+                // 點擊籌碼取消選擇
+                chip.addEventListener('click', () => {
+                    toggleNumberSelection(number);
+                });
+                
+                elements.selectedNumbersContainer.appendChild(chip);
+            });
+        }
+        
+        // 清除號碼選擇
+        function clearNumberSelection() {
+            // 清除選擇陣列
+            selectedNumbers = [];
+            
+            // 清除UI上的選中狀態
+            const numberButtons = elements.numberPad.querySelectorAll('.number-btn');
+            numberButtons.forEach(btn => {
+                btn.classList.remove('selected');
+            });
+            
+            // 更新選擇顯示
+            updateSelectedNumbersDisplay();
+            
+            // 更新清除按鈕狀態
+            elements.clearSelectionBtn.disabled = true;
+            
+            addLogEntry('已清除所有選擇', 'system');
+        }
+        
+        // 更新倒計時
+        function updateCountdown(seconds) {
+            bettingCountdown = seconds;
+            
+            // 更新顯示
+            if (seconds > 0) {
+                elements.countdown.textContent = seconds;
+                elements.countdown.classList.add('active');
+            } else {
+                elements.countdown.textContent = '等待中';
+                elements.countdown.classList.remove('active');
+            }
+        }
+        
+        // 添加抽出的球
+        function addDrawnBall(number, isWinningNumber = false) {
+            // 檢查是否已經添加過該號碼
+            if (drawnNumbers.includes(number)) {
+                // 如果已經存在且是中獎號碼，則更新樣式
+                if (isWinningNumber) {
+                    const existingBall = elements.ballContainer.querySelector(`.ball[data-number="${number}"]`);
+                    if (existingBall) {
+                        existingBall.classList.add('won');
+                        // 播放中獎音效
+                        if (wsManager) {
+                            wsManager.playSound('notification', 0.7);
+                        }
+                    }
+                }
+                return;
+            }
+            
+            // 添加到數組
+            drawnNumbers.push(number);
+            
+            // 創建球元素
+            const ball = document.createElement('div');
+            ball.className = 'ball';
+            if (isWinningNumber) ball.classList.add('won');
+            ball.textContent = number;
+            ball.dataset.number = number;
+            
+            elements.ballContainer.appendChild(ball);
+            
+            // 高亮號碼板上對應的號碼
+            highlightNumberPadButton(number);
+            
+            // 檢查是否選中了該號碼(比對玩家選擇)
+            if (selectedNumbers.includes(number)) {
+                ball.classList.add('highlight');
+                
+                // 如果WebSocket管理器存在，播放特殊音效
+                if (wsManager) {
+                    wsManager.playSound('message', 0.6);
+                }
+            }
+            
+            // 通知抽出球號
+            addLogEntry(`抽出號碼: ${number}`, 'system');
+        }
+        
+        // 高亮號碼板上的號碼
+        function highlightNumberPadButton(number) {
+            const numberBtn = elements.numberPad.querySelector(`.number-btn[data-number="${number}"]`);
+            if (numberBtn) {
+                numberBtn.classList.add('drawn');
+            }
+        }
+        
+        // 清除抽出的球
+        function clearDrawnNumbers() {
+            drawnNumbers = [];
+            elements.ballContainer.innerHTML = '';
+            
+            // 清除號碼板上的高亮
+            const drawnButtons = elements.numberPad.querySelectorAll('.number-btn.drawn');
+            drawnButtons.forEach(btn => {
+                btn.classList.remove('drawn');
+            });
+            
+            addLogEntry('已清除抽獎結果', 'system');
+        }
+        
+        // 下注
+        function placeBet() {
+            if (selectedNumbers.length === 0) {
+                addLogEntry('請至少選擇一個號碼', 'error');
+                return;
+            }
+            
+            const amount = parseInt(elements.betAmount.value);
+            if (isNaN(amount) || amount <= 0) {
+                addLogEntry('請輸入有效的下注金額', 'error');
+                return;
+            }
+            
+            // 構建下注請求
+            const betRequest = {
+                type: 'place_bet',
+                data: {
+                    numbers: selectedNumbers,
+                    amount: amount
+                }
+            };
+            
+            // 通過WebSocket發送下注
+            if (wsManager && wsManager.isConnected()) {
+                wsManager.send(JSON.stringify(betRequest));
+                
+                // 記錄下注信息
+                const sortedNumbers = [...selectedNumbers].sort((a, b) => a - b);
+                addLogEntry(`已下注 ${amount} 元於號碼: ${sortedNumbers.join(', ')}`, 'bet');
+                
+                // 顯示在下注列表中
+                addBetToList(sortedNumbers, amount);
+                
+                // 清空選擇
+                clearNumberSelection();
+            } else {
+                addLogEntry('未連接到伺服器，無法下注', 'error');
+            }
+        }
+        
+        // 添加下注到列表顯示
+        function addBetToList(numbers, amount) {
+            const betItem = document.createElement('div');
+            betItem.className = 'bet-item';
+            
+            const numbersSpan = document.createElement('span');
+            numbersSpan.className = 'bet-numbers';
+            numbersSpan.textContent = numbers.join(', ');
+            
+            const amountSpan = document.createElement('span');
+            amountSpan.className = 'bet-amount';
+            amountSpan.textContent = `${amount} 元`;
+            
+            betItem.appendChild(numbersSpan);
+            betItem.appendChild(amountSpan);
+            
+            // 添加到下注列表
+            elements.betsContainer.appendChild(betItem);
+        }
+        
+        // 清除所有下注顯示
+        function clearBets() {
+            elements.betsContainer.innerHTML = '';
+        }
+        
+        // 處理中獎號碼顯示
+        function displayDrawnNumbers(numbers) {
+            if (!numbers || !Array.isArray(numbers)) {
+                return;
+            }
+            
+            // 清除先前的結果
+            clearDrawnNumbers();
+            
+            // 保存中獎號碼
+            drawnNumbers = [...numbers];
+            
+            // 排序號碼
+            const sortedNumbers = [...numbers].sort((a, b) => a - b);
+            
+            // 顯示中獎號碼
+            sortedNumbers.forEach(number => {
+                const chip = document.createElement('div');
+                chip.className = 'drawn-number';
+                chip.textContent = number;
+                elements.drawnNumbersContainer.appendChild(chip);
+            });
+            
+            // 高亮數字板上的中獎號碼
+            highlightDrawnNumbersOnPad();
+            
+            // 計算並顯示中獎結果
+            displayWinningResults();
+            
+            // 添加到日誌
+            addLogEntry(`中獎號碼: ${sortedNumbers.join(', ')}`, 'system');
+        }
+        
+        // 高亮數字板上的中獎號碼
+        function highlightDrawnNumbersOnPad() {
+            // 先清除所有高亮
+            const numberButtons = elements.numberPad.querySelectorAll('.number-btn');
+            numberButtons.forEach(btn => {
+                btn.classList.remove('drawn');
+            });
+            
+            // 高亮中獎號碼
+            drawnNumbers.forEach(number => {
+                const btn = elements.numberPad.querySelector(`.number-btn[data-number="${number}"]`);
+                if (btn) {
+                    btn.classList.add('drawn');
+                }
+            });
+        }
+        
+        // 顯示中獎結果
+        function displayWinningResults() {
+            // 確保有中獎號碼
+            if (!drawnNumbers || drawnNumbers.length === 0) {
+                return;
+            }
+            
+            // 獲取所有下注
+            const betItems = elements.betsContainer.querySelectorAll('.bet-item');
+            
+            // 遍歷每個下注，檢查是否中獎
+            betItems.forEach(betItem => {
+                const numbersSpan = betItem.querySelector('.bet-numbers');
+                const numbers = numbersSpan.textContent.split(', ').map(n => parseInt(n.trim()));
+                
+                // 計算匹配的號碼數量
+                const matchedNumbers = numbers.filter(n => drawnNumbers.includes(n));
+                
+                // 根據匹配數確定中獎狀態
+                if (matchedNumbers.length > 0) {
+                    const matchRate = (matchedNumbers.length / numbers.length * 100).toFixed(0);
+                    
+                    // 添加中獎標記
+                    const resultSpan = document.createElement('span');
+                    resultSpan.className = 'bet-result win';
+                    resultSpan.textContent = `中獎 ${matchedNumbers.length}/${numbers.length} (${matchRate}%)`;
+                    
+                    // 如果有獎勵乘數，添加獎勵顯示
+                    const amountSpan = betItem.querySelector('.bet-amount');
+                    const amount = parseInt(amountSpan.textContent);
+                    if (!isNaN(amount)) {
+                        // 假設獎勵乘數基於匹配率
+                        const multiplier = calculateWinMultiplier(matchedNumbers.length, numbers.length);
+                        const prize = Math.floor(amount * multiplier);
+                        
+                        if (prize > 0) {
+                            const prizeSpan = document.createElement('span');
+                            prizeSpan.className = 'bet-prize';
+                            prizeSpan.textContent = `贏得 ${prize} 元`;
+                            betItem.appendChild(prizeSpan);
+                            
+                            // 添加到日誌
+                            addLogEntry(`恭喜! 您贏得了 ${prize} 元`, 'win');
+                        }
+                    }
+                    
+                    betItem.appendChild(resultSpan);
+                    betItem.classList.add('winning-bet');
+                } else {
+                    // 沒有匹配，添加未中獎標記
+                    const resultSpan = document.createElement('span');
+                    resultSpan.className = 'bet-result lose';
+                    resultSpan.textContent = '未中獎';
+                    betItem.appendChild(resultSpan);
+                    betItem.classList.add('losing-bet');
+                }
+            });
+        }
+        
+        // 計算獎勵乘數（根據遊戲規則調整）
+        function calculateWinMultiplier(matched, total) {
+            // 簡單範例：根據匹配率計算乘數
+            if (matched === 0) return 0;
+            
+            // 匹配率越高，乘數越高
+            const matchRate = matched / total;
+            
+            if (matchRate === 1) {
+                // 全部匹配
+                return 5.0;
+            } else if (matchRate >= 0.75) {
+                // 大部分匹配
+                return 3.0;
+            } else if (matchRate >= 0.5) {
+                // 半數匹配
+                return 2.0;
+            } else if (matchRate >= 0.25) {
+                // 小部分匹配
+                return 1.5;
+            } else {
+                // 少量匹配
+                return 1.2;
+            }
+        }
+        
+        // 更新玩家餘額顯示
+        function updatePlayerBalance() {
+            elements.playerBalance.textContent = playerBalance;
+        }
+        
+        // 初始化WebSocket連接管理器
+        function initWebSocketManager() {
+            // 獲取當前聲音設置
+            const soundEnabled = elements.toggleSound.classList.contains('active');
+            
+            // 構建WebSocket管理器配置
+            const wsOptions = {
+                debug: true,
+                autoReconnect: true,
+                maxReconnectAttempts: 5,
+                reconnectInterval: 3000,
+                connectionTimeout: 5000,
+                heartbeatInterval: 30000,
+                enableSounds: soundEnabled,
+                
+                // 聲音配置
+                sounds: {
+                    message: 'message.mp3',
+                    notification: 'notification.mp3'
+                },
+                
+                // 回調
+                onOpen: () => {
+                    addLogEntry('連接已建立', 'system');
+                    updateConnectionStatus({connected: true});
+                },
+                
+                onClose: (event) => {
+                    addLogEntry(`連接已關閉，代碼: ${event.code}`, 'system');
+                    updateConnectionStatus({connected: false});
+                },
+                
+                onError: (error) => {
+                    addLogEntry(`錯誤: ${error.message}`, 'error');
+                },
+                
+                onMessage: (data) => {
+                    handleServerMessage(data);
+                },
+                
+                onStatusChange: (status) => {
+                    updateConnectionStatus(status);
+                }
+            };
+            
+            // 創建WebSocket管理器實例
+            wsManager = new WebSocketManager(wsOptions);
+            
+            // 設置自定義日誌函數
+            wsManager.log = addLogEntry;
+        }
+        
+        // 處理WebSocket錯誤
+        function handleWebSocketError(error) {
+            console.error('WebSocket錯誤:', error);
+            
+            // 更新UI以顯示錯誤狀態
+            elements.statusIndicator.className = 'status-badge status-error';
+            elements.statusIndicator.textContent = '連接錯誤';
+            
+            // 在連接信息區域顯示錯誤詳情
+            const errorDetail = document.createElement('div');
+            errorDetail.className = 'error-detail';
+            errorDetail.textContent = `錯誤: ${error.message || '未知錯誤'}`;
+            
+            // 清除現有錯誤消息並添加新消息
+            const existingErrors = elements.connectionInfo.querySelectorAll('.error-detail');
+            if (existingErrors.length > 2) {
+                elements.connectionInfo.removeChild(existingErrors[0]);
+            }
+            
+            elements.connectionInfo.appendChild(errorDetail);
+        }
+        
+        // 處理重連嘗試
+        function handleReconnectAttempt(attempt, maxAttempts, delay) {
+            elements.statusIndicator.className = 'status-badge status-reconnecting';
+            elements.statusIndicator.textContent = `重連中 (${attempt}/${maxAttempts})`;
+            
+            // 更新連接信息
+            updateConnectionInfo();
+        }
+        
+        // 更新連接信息顯示
+        function updateConnectionInfo() {
+            if (!wsManager) return;
+            
+            const info = wsManager.getConnectionInfo();
+            let infoHtml = '';
+            
+            if (info.connected) {
+                infoHtml += `<div>已連接時間: ${info.formattedConnTime || '剛剛連接'}</div>`;
+                if (info.pingPongTime) {
+                    infoHtml += `<div>連接延遲: ${info.pingPongTime}ms</div>`;
+                }
+            } else if (info.reconnectAttempts > 0) {
+                infoHtml += `<div>重連嘗試: ${info.reconnectAttempts}</div>`;
+            }
+            
+            if (info.stats) {
+                infoHtml += `<div class="stats">
+                    <div>訊息收發: ${info.stats.messagesReceived}/${info.stats.messagesSent}</div>
+                    <div>連接次數: ${info.stats.totalConnections}</div>
+                    <div>錯誤數: ${info.stats.errors}</div>
+                </div>`;
+            }
+            
+            // 添加顯示連接歷史的按鈕
+            if (info.connectionHistoryCount > 0) {
+                infoHtml += `<div><button id="showHistoryBtn" class="mini-btn">查看連接歷史 (${info.connectionHistoryCount})</button></div>`;
+            }
+            
+            elements.connectionInfo.innerHTML = infoHtml;
+            
+            // 添加歷史按鈕點擊事件
+            const historyBtn = document.getElementById('showHistoryBtn');
+            if (historyBtn) {
+                historyBtn.addEventListener('click', showConnectionHistory);
+            }
+        }
+        
+        // 顯示連接歷史記錄
+        function showConnectionHistory() {
+            if (!wsManager) return;
+            
+            const history = wsManager.getConnectionHistory();
+            if (!history || history.length === 0) return;
+            
+            // 創建模態對話框
+            const modal = document.createElement('div');
+            modal.className = 'modal';
+            
+            let historyHtml = '<div class="modal-content"><h3>連接歷史記錄</h3><div class="history-list">';
+            
+            history.forEach(entry => {
+                const time = new Date(entry.time).toLocaleTimeString('zh-TW');
+                let typeText = '';
+                let detailText = '';
+                
+                switch(entry.type) {
+                    case 'connect_attempt': typeText = '嘗試連接'; break;
+                    case 'connected': typeText = '已連接'; break;
+                    case 'disconnected': typeText = '連接斷開'; 
+                        detailText = entry.data.wasClean ? '正常斷開' : `異常斷開 (${entry.data.code})`;
+                        break;
+                    case 'error': typeText = '錯誤'; 
+                        detailText = entry.data.message || '未知錯誤';
+                        break;
+                    case 'reconnect_attempt': typeText = '重連嘗試'; 
+                        detailText = `第 ${entry.data.attempt} 次`;
+                        break;
+                    case 'game_state_change': typeText = '遊戲狀態變更'; 
+                        detailText = `${entry.data.from || '無'} → ${entry.data.to}`;
+                        break;
+                    default: typeText = entry.type;
+                }
+                
+                historyHtml += `<div class="history-item ${entry.type}">
+                    <span class="history-time">${time}</span>
+                    <span class="history-type">${typeText}</span>
+                    ${detailText ? `<span class="history-detail">${detailText}</span>` : ''}
+                </div>`;
+            });
+            
+            historyHtml += '</div><button id="closeHistoryBtn">關閉</button></div>';
+            modal.innerHTML = historyHtml;
+            
+            document.body.appendChild(modal);
+            
+            // 添加關閉按鈕事件
+            document.getElementById('closeHistoryBtn').addEventListener('click', () => {
+                document.body.removeChild(modal);
+            });
+        }
+        
+        // 添加日誌條目
+        function addLogEntry(message, type = 'system', skipDisplay = false) {
+            if (skipDisplay) return;
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'log-time';
+            const now = new Date();
+            timeSpan.textContent = `[${now.toLocaleTimeString()}]`;
+            
+            const messageSpan = document.createElement('span');
+            messageSpan.textContent = message;
+            
+            logEntry.appendChild(timeSpan);
+            logEntry.appendChild(messageSpan);
+            
+            elements.logContainer.appendChild(logEntry);
+            
+            // 滾動到底部
+            elements.logContainer.scrollTop = elements.logContainer.scrollHeight;
+        }
+        
+        // 添加到全局作用域(用於從WebSocketManager中調用)
+        window.addDrawnBall = addDrawnBall;
+
+        // 啟動抽獎動畫
+        function startDrawingAnimation(duration = 5000, finalNumbers = []) {
+            const animationContainer = document.querySelector('.drawing-animation');
+            const numberRoll = document.querySelector('.number-roll');
+            
+            // 清空之前的內容
+            numberRoll.innerHTML = '';
+            
+            // 顯示動畫容器
+            animationContainer.classList.add('active');
+            
+            // 創建5個滾動數字格
+            for (let i = 0; i < 5; i++) {
+                const rollingNumber = document.createElement('div');
+                rollingNumber.className = 'rolling-number';
+                rollingNumber.textContent = Math.floor(Math.random() * 80) + 1;
+                numberRoll.appendChild(rollingNumber);
+            }
+            
+            // 滾動動畫
+            const rollingNumbers = document.querySelectorAll('.rolling-number');
+            
+            // 設置滾動間隔，每100毫秒更新一次數字
+            const intervalIds = rollingNumbers.map((el, index) => {
+                return setInterval(() => {
+                    el.textContent = Math.floor(Math.random() * 80) + 1;
+                }, 100);
+            });
+            
+            // 設置結束時間，依次停止每個數字滾動
+            const stopDelay = duration / rollingNumbers.length;
+            
+            // 依次停止每個數字的滾動
+            rollingNumbers.forEach((el, index) => {
+                setTimeout(() => {
+                    clearInterval(intervalIds[index]);
+                    
+                    // 如果提供了最終數字，顯示最終數字
+                    if (finalNumbers && finalNumbers[index]) {
+                        el.textContent = finalNumbers[index];
+                    }
+                    
+                    // 添加高亮效果
+                    el.classList.add('highlight');
+                    
+                    // 播放聲音效果
+                    playSound('number_stop');
+                    
+                    // 最後一個數字停止後，結束動畫
+                    if (index === rollingNumbers.length - 1) {
+                        setTimeout(() => {
+                            animationContainer.classList.remove('active');
+                            
+                            // 觸發結果顯示
+                            if (finalNumbers && finalNumbers.length > 0) {
+                                displayDrawnNumbers(finalNumbers);
+                            }
+                        }, 1500);
+                    }
+                }, index * stopDelay);
+            });
+        }
+
+        // 播放音效
+        function playSound(soundType) {
+            // 創建音效對象
+            const sounds = {
+                'connect': new Audio('/sounds/connect.mp3'),
+                'disconnect': new Audio('/sounds/disconnect.mp3'),
+                'bet_placed': new Audio('/sounds/bet_placed.mp3'),
+                'number_selected': new Audio('/sounds/number_selected.mp3'),
+                'number_stop': new Audio('/sounds/number_stop.mp3'),
+                'win': new Audio('/sounds/win.mp3'),
+                'lose': new Audio('/sounds/lose.mp3')
+            };
+            
+            // 音效模擬（實際開發中應使用真實音效文件）
+            console.log(`播放音效: ${soundType}`);
+            
+            // 如果有音效，播放它
+            if (sounds[soundType]) {
+                try {
+                    // 音量設置
+                    sounds[soundType].volume = 0.5;
+                    sounds[soundType].play().catch(err => {
+                        console.log('音效播放失敗:', err);
+                    });
+                } catch (e) {
+                    console.log('音效播放出錯:', e);
+                }
+            }
+        }
+
+        // 切換聲音效果
+        function toggleSoundEffects() {
+            const soundEnabled = elements.toggleSound.classList.contains('active');
+            
+            if (soundEnabled) {
+                // 關閉聲音
+                elements.toggleSound.classList.remove('active');
+                elements.toggleSound.innerHTML = '<i class="fas fa-volume-mute"></i>';
+                addLogEntry('已關閉聲音效果', 'system');
+                
+                // 如果WebSocket管理器存在，關閉其聲音功能
+                if (wsManager) {
+                    wsManager.toggleSounds(false);
+                }
+            } else {
+                // 開啟聲音
+                elements.toggleSound.classList.add('active');
+                elements.toggleSound.innerHTML = '<i class="fas fa-volume-up"></i>';
+                addLogEntry('已開啟聲音效果', 'system');
+                
+                // 如果WebSocket管理器存在，開啟其聲音功能
+                if (wsManager) {
+                    wsManager.toggleSounds(true);
+                    wsManager.playSound('notification', 0.3); // 播放測試音效
+                }
+            }
+        }
+    </script>
 </head>
 <body>
+    <!-- 聲音控制按鈕 -->
+    <div class="sound-controls">
+        <div id="toggleSound" class="sound-toggle active" title="開啟/關閉聲音">
+            <i class="fas fa-volume-up"></i>
+        </div>
+    </div>
+    
     <div class="container">
         <h1>樂透抽獎遊戲 - 玩家客戶端</h1>
         
         <div class="panel">
             <div class="panel-left">
+                <!-- 連接面板 -->
                 <div class="card">
-                    <div class="card-title">連線控制</div>
+                    <div class="card-title">連接設置</div>
                     <div class="form-group">
-                        <label for="serverUrl">伺服器地址：</label>
-                        <input type="text" id="serverUrl" value="ws://localhost:8080/ws" placeholder="例如：ws://localhost:8080/ws">
-                    </div>
-                    <div class="form-group">
-                        <label for="userId">玩家 ID：</label>
-                        <input type="text" id="userId" placeholder="請輸入玩家 ID">
+                        <label for="serverAddress">服務器地址:</label>
+                        <input type="text" id="serverAddress" placeholder="例如: localhost:8080">
                     </div>
                     <div class="form-group">
-                        <label for="token">認證 Token：</label>
-                        <input type="text" id="token" placeholder="請輸入認證 Token（可選）">
+                        <label for="playerId">玩家ID:</label>
+                        <input type="text" id="playerId" placeholder="請輸入您的ID">
                     </div>
                     <div class="form-group">
-                        <button id="connectBtn">連線到伺服器</button>
-                        <button id="disconnectBtn" class="btn-disconnect" disabled>斷開連線</button>
+                        <button id="connectBtn">連接</button>
+                        <button id="disconnectBtn" class="btn-disconnect" disabled>斷開連接</button>
                     </div>
-                    <div>
-                        <span>連線狀態：</span>
-                        <span class="status-badge status-disconnected" id="connectionStatus">未連線</span>
+                    <div class="status-info">
+                        <span id="statusIndicator" class="status-badge status-disconnected">未連接</span>
+                        <span id="gameStateIndicator" class="status-badge status-initial">初始化</span>
                     </div>
-                    <div>
-                        <span>遊戲狀態：</span>
-                        <span class="status-badge" id="gameStatus">--</span>
+                    <div id="connectionInfo" class="connection-info"></div>
+                </div>
+                
+                <!-- 遊戲信息面板 -->
+                <div class="card">
+                    <div class="card-title">遊戲信息</div>
+                    <div class="game-info">
+                        <div>
+                            <label>倒計時:</label>
+                            <div id="countdown" class="countdown">等待中</div>
+                        </div>
+                        <div>
+                            <label>餘額:</label>
+                            <div id="playerBalance">0</div>
+                        </div>
                     </div>
-                    <div class="connection-info">
-                        <div>最後心跳：<span id="lastHeartbeat">--</span></div>
-                        <div>連線時間：<span id="connectionTime">--</span></div>
+                    
+                    <div class="form-group">
+                        <label for="betAmount">下注金額:</label>
+                        <input type="number" id="betAmount" value="10" min="1" step="1">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>已選號碼:</label>
+                        <div id="selectedNumbers" class="selected-numbers-container"></div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <button id="placeBetBtn" disabled>下注</button>
+                        <button id="clearSelectionBtn" disabled>清除選擇</button>
                     </div>
                 </div>
                 
+                <!-- 日誌面板 -->
                 <div class="card">
-                    <div class="card-title">玩家資訊</div>
-                    <div class="user-info">
-                        <div>餘額：</div>
-                        <div class="balance" id="userBalance">-- 元</div>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div class="card-title">投注歷史</div>
-                    <div id="betHistory">
-                        尚無投注歷史
-                    </div>
+                    <div class="card-title">系統日誌</div>
+                    <div id="logContainer" class="log-container"></div>
                 </div>
             </div>
             
             <div class="panel-right">
+                <!-- 抽獎結果面板 -->
                 <div class="card">
-                    <div class="card-title">遊戲狀態</div>
-                    <div class="game-info">
-                        <div>距離結束時間：</div>
-                        <div class="countdown" id="countdown">--</div>
-                    </div>
-                    
-                    <div id="resultContainer" style="display: none;" class="result">
-                        <h3>開獎結果</h3>
-                        <div class="ball-container" id="drawnBalls"></div>
-                        <div id="winningInfo"></div>
-                    </div>
+                    <div class="card-title">抽獎結果</div>
+                    <div id="ballContainer" class="ball-container"></div>
                 </div>
                 
+                <!-- 號碼選擇面板 -->
                 <div class="card">
-                    <div class="card-title">訊息日誌</div>
-                    <div class="log-container" id="logContainer"></div>
+                    <div class="card-title">選擇號碼</div>
+                    <div id="numberPad" class="number-pad"></div>
+                </div>
+                
+                <!-- 當前下注面板 -->
+                <div class="card">
+                    <div class="card-title">當前下注</div>
+                    <div id="betsContainer" class="bets-container"></div>
                 </div>
             </div>
         </div>
     </div>
     
-    <script src="ws-common.js"></script>
-    <script>
-        // DOM 元素
-        const serverUrlInput = document.getElementById('serverUrl');
-        const userIdInput = document.getElementById('userId');
-        const tokenInput = document.getElementById('token');
-        const connectBtn = document.getElementById('connectBtn');
-        const disconnectBtn = document.getElementById('disconnectBtn');
-        const connectionStatusEl = document.getElementById('connectionStatus');
-        const gameStatusEl = document.getElementById('gameStatus');
-        const lastHeartbeatEl = document.getElementById('lastHeartbeat');
-        const connectionTimeEl = document.getElementById('connectionTime');
-        const countdownEl = document.getElementById('countdown');
-        const userBalanceEl = document.getElementById('userBalance');
-        const betHistoryEl = document.getElementById('betHistory');
-        const resultContainerEl = document.getElementById('resultContainer');
-        const drawnBallsEl = document.getElementById('drawnBalls');
-        const winningInfoEl = document.getElementById('winningInfo');
-        const logContainerEl = document.getElementById('logContainer');
-        
-        // 倒數計時器
-        let countdownTimer = null;
-        let countdownEndTime = null;
-        
-        // 遊戲資料
-        let drawnBalls = [];
-        let betHistory = [];
-        let userBalance = 0;
-        
-        // 創建 WebSocketManager 實例
-        const wsManager = new WebSocketManager({
-            heartbeatInterval: 10000,
-            onConnectionStatusChange: updateConnectionStatus,
-            onMessage: handleMessage,
-            onGameStateChange: handleGameStateChange,
-            onLog: addLog
-        });
-        
-        // 初始化
-        function init() {
-            // 設置事件監聽器
-            connectBtn.addEventListener('click', connectToServer);
-            disconnectBtn.addEventListener('click', disconnectFromServer);
-            
-            // 檢查本地儲存的設定
-            const savedServerUrl = localStorage.getItem('serverUrl');
-            const savedUserId = localStorage.getItem('userId');
-            
-            if (savedServerUrl) {
-                serverUrlInput.value = savedServerUrl;
-            }
-            
-            if (savedUserId) {
-                userIdInput.value = savedUserId;
-            }
-        }
-        
-        // 連線到伺服器
-        function connectToServer() {
-            const serverUrl = serverUrlInput.value.trim();
-            const userId = userIdInput.value.trim();
-            const token = tokenInput.value.trim();
-            
-            if (!serverUrl) {
-                addLog('請輸入伺服器地址', 'error');
-                return;
-            }
-            
-            if (!userId) {
-                addLog('請輸入玩家 ID', 'error');
-                return;
-            }
-            
-            // 保存設定到本地儲存
-            localStorage.setItem('serverUrl', serverUrl);
-            localStorage.setItem('userId', userId);
-            
-            // 準備認證參數
-            const authParams = {
-                client_type: 'player',
-                player_id: userId
-            };
-            
-            // 如果提供了 token，則添加到參數中
-            if (token) {
-                authParams.token = token;
-            }
-            
-            // 連線到伺服器
-            wsManager.connect(serverUrl, authParams);
-            
-            // 更新按鈕狀態
-            connectBtn.disabled = true;
-            disconnectBtn.disabled = false;
-        }
-        
-        // 斷開與伺服器的連線
-        function disconnectFromServer() {
-            wsManager.disconnect();
-            
-            // 重置 UI
-            resetUI();
-            
-            // 更新按鈕狀態
-            connectBtn.disabled = false;
-            disconnectBtn.disabled = true;
-        }
-        
-        // 更新連線狀態
-        function updateConnectionStatus(status) {
-            // 更新連線狀態
-            connectionStatusEl.textContent = status.connected ? '已連線' : '未連線';
-            connectionStatusEl.className = `status-badge ${status.connected ? 'status-connected' : 'status-disconnected'}`;
-            
-            // 更新心跳和連線時間
-            lastHeartbeatEl.textContent = status.heartbeat;
-            connectionTimeEl.textContent = status.connTime;
-            
-            // 更新按鈕狀態
-            connectBtn.disabled = status.connected;
-            disconnectBtn.disabled = !status.connected;
-        }
-        
-        // 處理接收到的訊息
-        function handleMessage(message) {
-            // 處理餘額更新
-            if (message.command === 'balanceUpdate' && message.balance !== undefined) {
-                userBalance = message.balance;
-                updateBalanceDisplay();
-            }
-            
-            // 處理投注確認
-            if (message.command === 'betConfirm') {
-                const betInfo = {
-                    time: new Date(),
-                    numbers: message.numbers || [],
-                    amount: message.amount || 0
-                };
-                
-                betHistory.unshift(betInfo);
-                updateBetHistory();
-                addLog(`投注已確認: ${betInfo.numbers.join(',')} 金額: ${betInfo.amount}元`, 'system');
-            }
-            
-            // 處理倒數計時
-            if (message.command === 'countdown' && message.seconds !== undefined) {
-                startCountdown(message.seconds);
-            }
-            
-            // 處理球號抽出
-            if (message.command === 'ballDrawn' && message.number !== undefined) {
-                addBall(message.number);
-            }
-            
-            // 處理中獎結果
-            if (message.command === 'winResult') {
-                showWinningResult(message);
-            }
-        }
-        
-        // 處理遊戲狀態變更
-        function handleGameStateChange(state, stateData) {
-            // 更新遊戲狀態顯示
-            gameStatusEl.textContent = WebSocketManager.getGameStateText(state);
-            gameStatusEl.className = `status-badge status-${state}`;
-            
-            // 根據狀態更新 UI
-            switch (state) {
-                case WS_STATE.INITIAL:
-                    resetGameUI();
-                    stopCountdown();
-                    hideResultContainer();
-                    break;
-                    
-                case WS_STATE.BETTING:
-                    resetGameUI();
-                    hideResultContainer();
-                    // 如果有倒數時間，開始倒數
-                    if (stateData.timeLeft) {
-                        startCountdown(stateData.timeLeft);
-                    }
-                    break;
-                    
-                case WS_STATE.DRAWING:
-                    stopCountdown();
-                    countdownEl.textContent = '開獎中';
-                    break;
-                    
-                case WS_STATE.ENDED:
-                    stopCountdown();
-                    countdownEl.textContent = '已結束';
-                    break;
-            }
-        }
-        
-        // 開始倒數計時
-        function startCountdown(seconds) {
-            // 停止現有的計時器
-            stopCountdown();
-            
-            // 設置結束時間
-            countdownEndTime = Date.now() + (seconds * 1000);
-            
-            // 更新倒數顯示
-            updateCountdown();
-            
-            // 啟動計時器
-            countdownTimer = setInterval(updateCountdown, 1000);
-        }
-        
-        // 更新倒數顯示
-        function updateCountdown() {
-            if (!countdownEndTime) return;
-            
-            const now = Date.now();
-            const diff = countdownEndTime - now;
-            
-            if (diff <= 0) {
-                stopCountdown();
-                countdownEl.textContent = '時間到';
-                return;
-            }
-            
-            const seconds = Math.floor(diff / 1000);
-            countdownEl.textContent = `${seconds} 秒`;
-        }
-        
-        // 停止倒數計時
-        function stopCountdown() {
-            if (countdownTimer) {
-                clearInterval(countdownTimer);
-                countdownTimer = null;
-            }
-            countdownEndTime = null;
-        }
-        
-        // 添加球號
-        function addBall(number) {
-            // 添加到已抽出的球號列表
-            drawnBalls.push(number);
-            
-            // 顯示結果容器
-            showResultContainer();
-            
-            // 創建新的球元素
-            const ballEl = document.createElement('div');
-            ballEl.className = 'ball';
-            ballEl.textContent = number;
-            
-            // 添加到容器中
-            drawnBallsEl.appendChild(ballEl);
-        }
-        
-        // 顯示中獎結果
-        function showWinningResult(result) {
-            // 顯示結果容器
-            showResultContainer();
-            
-            // 更新中獎信息
-            let winInfoText = '';
-            
-            if (result.won) {
-                winInfoText = `<h3>恭喜中獎！</h3>`;
-                winInfoText += `<p>中獎金額：${result.amount} 元</p>`;
-                if (result.matchedNumbers && result.matchedNumbers.length > 0) {
-                    winInfoText += `<p>中獎號碼：${result.matchedNumbers.join(', ')}</p>`;
-                }
-            } else {
-                winInfoText = `<p>未中獎，再接再厲！</p>`;
-            }
-            
-            winningInfoEl.innerHTML = winInfoText;
-        }
-        
-        // 顯示結果容器
-        function showResultContainer() {
-            resultContainerEl.style.display = 'block';
-        }
-        
-        // 隱藏結果容器
-        function hideResultContainer() {
-            resultContainerEl.style.display = 'none';
-        }
-        
-        // 更新餘額顯示
-        function updateBalanceDisplay() {
-            userBalanceEl.textContent = `${userBalance} 元`;
-        }
-        
-        // 更新投注歷史顯示
-        function updateBetHistory() {
-            if (betHistory.length === 0) {
-                betHistoryEl.innerHTML = '尚無投注歷史';
-                return;
-            }
-            
-            let html = '';
-            
-            for (let i = 0; i < Math.min(betHistory.length, 5); i++) {
-                const bet = betHistory[i];
-                const time = bet.time.toLocaleTimeString();
-                
-                html += `<div class="bet-info">`;
-                html += `<div>${time}</div>`;
-                html += `<div>號碼：${bet.numbers.join(',')}</div>`;
-                html += `<div>金額：${bet.amount} 元</div>`;
-                html += `</div>`;
-            }
-            
-            betHistoryEl.innerHTML = html;
-        }
-        
-        // 重置遊戲 UI
-        function resetGameUI() {
-            drawnBalls = [];
-            drawnBallsEl.innerHTML = '';
-            winningInfoEl.innerHTML = '';
-        }
-        
-        // 重置整個 UI
-        function resetUI() {
-            resetGameUI();
-            hideResultContainer();
-            stopCountdown();
-            countdownEl.textContent = '--';
-            gameStatusEl.textContent = '--';
-            gameStatusEl.className = 'status-badge';
-            userBalance = 0;
-            updateBalanceDisplay();
-            betHistory = [];
-            updateBetHistory();
-        }
-        
-        // 添加日誌
-        function addLog(message, type = 'system', skipDisplay = false) {
-            if (skipDisplay) return;
-            
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString();
-            
-            const logEntry = document.createElement('div');
-            logEntry.className = `log-entry log-${type}`;
-            logEntry.innerHTML = `<span class="log-time">[${timeStr}]</span> ${message}`;
-            
-            logContainerEl.appendChild(logEntry);
-            logContainerEl.scrollTop = logContainerEl.scrollHeight;
-            
-            // 限制日誌數量
-            while (logContainerEl.children.length > 100) {
-                logContainerEl.removeChild(logContainerEl.firstChild);
-            }
-        }
-        
-        // 初始化
-        init();
-    </script>
+    <!-- 音效元素 -->
+    <div id="sound-container" style="display:none;">
+        <audio id="sound-connect" src="sounds/connect.mp3" preload="auto"></audio>
+        <audio id="sound-disconnect" src="sounds/disconnect.mp3" preload="auto"></audio>
+        <audio id="sound-bet_placed" src="sounds/bet_placed.mp3" preload="auto"></audio>
+        <audio id="sound-number_selected" src="sounds/number_selected.mp3" preload="auto"></audio>
+        <audio id="sound-number_stop" src="sounds/number_stop.mp3" preload="auto"></audio>
+        <audio id="sound-win" src="sounds/win.mp3" preload="auto"></audio>
+        <audio id="sound-lose" src="sounds/lose.mp3" preload="auto"></audio>
+    </div>
+    
+    <!-- Font Awesome 圖標 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/js/all.min.js"></script>
 </body>
 </html> 

@@ -14,10 +14,12 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host    string
-	Port    uint64
-	APIHost string
-	Version string
+	Host         string
+	Port         uint64
+	APIHost      string
+	Version      string
+	PlayerWSPort uint64 // 遊戲端 WebSocket 端口
+	DealerWSPort uint64 // 荷官端 WebSocket 端口
 }
 
 type DatabaseConfig struct {
@@ -51,21 +53,23 @@ type NacosConfig struct {
 }
 
 type NacosAppConfig struct {
-	Port          string `json:"PORT" yaml:"PORT"`
-	DBHost        string `json:"DB_HOST" yaml:"DB_HOST"`
-	DBPort        int    `json:"DB_PORT" yaml:"DB_PORT"`
-	DBName        string `json:"DB_NAME" yaml:"DB_NAME"`
-	DBUser        string `json:"DB_USER" yaml:"DB_USER"`
-	DBPassword    string `json:"DB_PASSWORD" yaml:"DB_PASSWORD"`
-	JWTSecret     string `json:"JWT_SECRET" yaml:"JWT_SECRET"`
-	JWTExpiresIn  string `json:"JWT_EXPIRES_IN" yaml:"JWT_EXPIRES_IN"`
-	APIHost       string `json:"API_HOST" yaml:"API_HOST"`
-	Version       string `json:"VERSION" yaml:"VERSION"`
-	RedisHost     string `json:"REDIS_HOST" yaml:"REDIS_HOST"`
-	RedisPort     string `json:"REDIS_PORT" yaml:"REDIS_PORT"`
-	RedisUsername string `json:"REDIS_USERNAME" yaml:"REDIS_USERNAME"`
-	RedisPassword string `json:"REDIS_PASSWORD" yaml:"REDIS_PASSWORD"`
-	RedisDB       int    `json:"REDIS_DB" yaml:"REDIS_DB"`
+	Port          string `json:"PORT,omitempty" yaml:"PORT,omitempty" json:"port,omitempty"`
+	PlayerWSPort  string `json:"PLAYER_WS_PORT,omitempty" yaml:"PLAYER_WS_PORT,omitempty" json:"player_ws_port,omitempty"`
+	DealerWSPort  string `json:"DEALER_WS_PORT,omitempty" yaml:"DEALER_WS_PORT,omitempty" json:"dealer_ws_port,omitempty"`
+	DBHost        string `json:"DB_HOST,omitempty" yaml:"DB_HOST,omitempty" json:"db_host,omitempty"`
+	DBPort        int    `json:"DB_PORT,omitempty" yaml:"DB_PORT,omitempty" json:"db_port,omitempty"`
+	DBName        string `json:"DB_NAME,omitempty" yaml:"DB_NAME,omitempty" json:"db_name,omitempty"`
+	DBUser        string `json:"DB_USER,omitempty" yaml:"DB_USER,omitempty" json:"db_user,omitempty"`
+	DBPassword    string `json:"DB_PASSWORD,omitempty" yaml:"DB_PASSWORD,omitempty" json:"db_password,omitempty"`
+	JWTSecret     string `json:"JWT_SECRET,omitempty" yaml:"JWT_SECRET,omitempty" json:"jwt_secret,omitempty"`
+	JWTExpiresIn  string `json:"JWT_EXPIRES_IN,omitempty" yaml:"JWT_EXPIRES_IN,omitempty" json:"jwt_expires_in,omitempty"`
+	APIHost       string `json:"API_HOST,omitempty" yaml:"API_HOST,omitempty" json:"api_host,omitempty"`
+	Version       string `json:"VERSION,omitempty" yaml:"VERSION,omitempty" json:"version,omitempty"`
+	RedisHost     string `json:"REDIS_HOST,omitempty" yaml:"REDIS_HOST,omitempty" json:"redis_host,omitempty"`
+	RedisPort     string `json:"REDIS_PORT,omitempty" yaml:"REDIS_PORT,omitempty" json:"redis_port,omitempty"`
+	RedisUsername string `json:"REDIS_USERNAME,omitempty" yaml:"REDIS_USERNAME,omitempty" json:"redis_username,omitempty"`
+	RedisPassword string `json:"REDIS_PASSWORD,omitempty" yaml:"REDIS_PASSWORD,omitempty" json:"redis_password,omitempty"`
+	RedisDB       int    `json:"REDIS_DB,omitempty" yaml:"REDIS_DB,omitempty" json:"redis_db,omitempty"`
 }
 
 func (c *Config) GetDatabaseHost() string {

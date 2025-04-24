@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 
 	"g38_lottery_service/internal/config"
 	"g38_lottery_service/internal/service"
@@ -28,25 +29,44 @@ var DatabaseModule = fx.Options(
 					port = 3306 // 使用默認的MySQL端口
 				}
 
-				// 從環境變量獲取配置
-				host := os.Getenv("MYSQL_HOST")
-				if host == "" {
-					host = cfg.Database.Host
+				// 使用構建好的配置，優先使用 Config 對象中的值
+				host := cfg.Database.Host
+				user := cfg.Database.User
+				password := cfg.Database.Password
+				dbName := cfg.Database.Name
+
+				// 檢查環境變量是否覆蓋（僅在開發環境或測試時使用）
+				envHost := os.Getenv("MYSQL_HOST")
+				if envHost != "" {
+					host = envHost
+					fmt.Printf("從環境變量獲取到主機: %s\n", host)
 				}
 
-				user := os.Getenv("MYSQL_USER")
-				if user == "" {
-					user = cfg.Database.User
+				// 解析 MYSQL_PORT 環境變量
+				envPort := os.Getenv("MYSQL_PORT")
+				if envPort != "" {
+					if parsedPort, err := strconv.Atoi(envPort); err == nil && parsedPort > 0 && parsedPort <= 65535 {
+						port = parsedPort
+						fmt.Printf("從環境變量獲取到端口: %d\n", port)
+					}
 				}
 
-				password := os.Getenv("MYSQL_PASSWORD")
-				if password == "" {
-					password = cfg.Database.Password
+				envUser := os.Getenv("MYSQL_USER")
+				if envUser != "" {
+					user = envUser
+					fmt.Printf("從環境變量獲取到用戶: %s\n", user)
 				}
 
-				dbName := os.Getenv("MYSQL_DATABASE")
-				if dbName == "" {
-					dbName = cfg.Database.Name
+				envPassword := os.Getenv("MYSQL_PASSWORD")
+				if envPassword != "" {
+					password = envPassword
+					fmt.Printf("從環境變量獲取到密碼\n")
+				}
+
+				envDBName := os.Getenv("MYSQL_DATABASE")
+				if envDBName != "" {
+					dbName = envDBName
+					fmt.Printf("從環境變量獲取到數據庫名: %s\n", dbName)
 				}
 
 				// 記錄最終使用的數據庫配置
