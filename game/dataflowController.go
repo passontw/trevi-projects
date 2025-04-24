@@ -278,24 +278,139 @@ func (dfc *DataFlowController) VerifyTwoBalls(ball1, ball2 int) bool {
 }
 
 // GetGameStatus API 功能：取回現在的遊戲狀態
-func (dfc *DataFlowController) GetGameStatus() map[string]interface{} {
+func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 	dfc.mu.RLock()
 	defer dfc.mu.RUnlock()
 
-	status := map[string]interface{}{
-		"game_id":         dfc.currentGameID,
-		"current_state":   dfc.currentState,
-		"drawn_balls":     dfc.drawnBalls,
-		"extra_balls":     dfc.extraBalls,
-		"drawn_count":     len(dfc.drawnBalls),
-		"extra_count":     len(dfc.extraBalls),
-		"is_jp_triggered": dfc.isJPTriggered,
-		"total_balls":     dfc.totalBalls,
-		"main_draw_count": dfc.mainDrawCount,
-		"max_extra_balls": dfc.maxExtraBalls,
+	// 創建時間數據
+	now := time.Now()
+
+	// 模擬狀態開始時間（實際應用中應該記錄狀態變更時間）
+	stateStartTime := now.Add(-time.Duration(rand.Intn(300)) * time.Second)
+
+	// 創建一個模擬的結束時間（如果遊戲已結束）
+	var endTime *time.Time
+	if dfc.currentState == StateCompleted {
+		t := now.Add(-time.Minute)
+		endTime = &t
 	}
 
-	return status
+	// 將DrawResult轉換為BallInfo
+	drawnBalls := make([]BallInfo, 0, len(dfc.drawnBalls))
+	for _, ball := range dfc.drawnBalls {
+		drawnBalls = append(drawnBalls, BallInfo{
+			Number:    ball.BallNumber,
+			DrawnTime: ball.DrawTime,
+			Sequence:  ball.OrderIndex,
+		})
+	}
+
+	// 將額外球DrawResult轉換為ExtraBall
+	extraBalls := make([]ExtraBall, 0, len(dfc.extraBalls))
+	for i, ball := range dfc.extraBalls {
+		// 模擬左右位置
+		side := "LEFT"
+		if i%2 == 1 {
+			side = "RIGHT"
+		}
+
+		extraBalls = append(extraBalls, ExtraBall{
+			Number:    ball.BallNumber,
+			DrawnTime: ball.DrawTime,
+			Sequence:  ball.OrderIndex,
+			Side:      side,
+		})
+	}
+
+	// 創建模擬的幸運數字
+	luckyNumbers := make([]int, 0, 7)
+	for i := 0; i < 7; i++ {
+		luckyNumbers = append(luckyNumbers, 1+rand.Intn(75))
+	}
+
+	// 創建模擬的JP數據
+	jackpotInfo := JackpotInfo{
+		Active:     dfc.isJPTriggered,
+		GameID:     nil,
+		Amount:     500000.0,
+		StartTime:  nil,
+		EndTime:    nil,
+		DrawnBalls: []BallInfo{},
+		Winner:     nil,
+	}
+
+	// 如果JP被觸發，添加更多數據
+	if dfc.isJPTriggered {
+		jpGameID := "JP" + dfc.currentGameID[1:]
+		jpStart := now.Add(-time.Minute * 5)
+		jackpotInfo.GameID = &jpGameID
+		jackpotInfo.StartTime = &jpStart
+
+		// 如果是JP結果狀態，添加結束時間和獲勝者
+		if dfc.currentState == StateJPResult {
+			jpEnd := now.Add(-time.Minute)
+			winner := "U" + fmt.Sprintf("%d", rand.Intn(999999))
+			jackpotInfo.EndTime = &jpEnd
+			jackpotInfo.Winner = &winner
+		}
+	}
+
+	// 創建模擬玩家數據
+	topPlayers := []PlayerInfo{
+		{
+			UserID:    "U123456",
+			Nickname:  "幸運星",
+			WinAmount: 25000,
+			BetAmount: 5000,
+			Cards:     3,
+		},
+		{
+			UserID:    "U789012",
+			Nickname:  "好運連連",
+			WinAmount: 18500,
+			BetAmount: 3500,
+			Cards:     2,
+		},
+		{
+			UserID:    "U345678",
+			Nickname:  "財神到",
+			WinAmount: 12000,
+			BetAmount: 2000,
+			Cards:     1,
+		},
+	}
+
+	// 計算剩餘時間
+	remainingTime := 60 - int(now.Sub(stateStartTime).Seconds())
+	if remainingTime < 0 {
+		remainingTime = 0
+	}
+
+	// 構建完整的遊戲狀態響應
+	response := &GameStatusResponse{
+		Game: GameInfo{
+			ID:             dfc.currentGameID,
+			State:          string(dfc.currentState),
+			StartTime:      stateStartTime.Add(-time.Minute * 5),
+			EndTime:        endTime,
+			HasJackpot:     dfc.isJPTriggered,
+			ExtraBallCount: dfc.maxExtraBalls,
+			Timeline: TimelineInfo{
+				CurrentTime:    now,
+				StateStartTime: stateStartTime,
+				RemainingTime:  remainingTime,
+				MaxTimeout:     60,
+			},
+		},
+		LuckyNumbers:   luckyNumbers,
+		DrawnBalls:     drawnBalls,
+		ExtraBalls:     extraBalls,
+		Jackpot:        jackpotInfo,
+		TopPlayers:     topPlayers,
+		TotalWinAmount: 75800.0,
+	}
+
+	return response
 }
 
 // Private helper methods
@@ -303,8 +418,9 @@ func (dfc *DataFlowController) GetGameStatus() map[string]interface{} {
 // isValidStateTransition 檢查狀態轉換是否合法
 func (dfc *DataFlowController) isValidStateTransition(from, to GameState) bool {
 	validTransitions := map[GameState][]GameState{
-		StateInitial:   {StateStandby},
+		StateInitial:   {StateStandby, StateReady},
 		StateStandby:   {StateBetting},
+		StateReady:     {StateBetting},
 		StateBetting:   {StateDrawing},
 		StateDrawing:   {StateExtraBet, StateJPStandby},
 		StateExtraBet:  {StateExtraDraw},
