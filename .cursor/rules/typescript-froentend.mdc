@@ -6,7 +6,7 @@ alwaysApply: true
 ---
 description: 
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Your rule content

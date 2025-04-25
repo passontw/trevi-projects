@@ -26,20 +26,17 @@ import (
 	"syscall"
 	"time"
 
-	"g38_lottery_service/game"
 	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/handlers"
+	"g38_lottery_service/internal/services"
 	"g38_lottery_service/pkg/databaseManager"
 	"g38_lottery_service/pkg/redisManager"
 	"g38_lottery_service/pkg/websocketManager"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
 
 	_ "g38_lottery_service/docs/swagger" // 導入swagger文檔
-
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // 全局變數
@@ -173,7 +170,7 @@ func initConfig() (*config.Config, error) {
 }
 
 // 初始化資料庫連接
-func initDatabase(cfg *config.Config) (*gorm.DB, error) {
+func initDatabase(cfg *config.Config) (databaseManager.DatabaseManager, error) {
 	dbConfig := &databaseManager.MySQLConfig{
 		Host:      cfg.Database.Host,
 		Port:      cfg.Database.Port,
@@ -205,7 +202,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	log.Printf("[成功] 已連接到數據庫 %s@%s:%d/%s",
 		cfg.Database.User, cfg.Database.Host, cfg.Database.Port, cfg.Database.Name)
 
-	return db, nil
+	return manager, nil
 }
 
 // 初始化Redis連接
@@ -278,155 +275,6 @@ func getIpAddress() string {
 	return hostname
 }
 
-// 設定CORS中間件
-func setupCORS() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	}
-}
-
-// 遊戲服務介面
-type GameService interface {
-	Initialize() error
-	Shutdown(ctx context.Context) error
-	GetGameController() *game.DataFlowController
-}
-
-// 設定遊戲端路由
-func setupPlayerRouter(wsHandler *websocketManager.DualWebSocketHandler, gameService GameService) *gin.Engine {
-	router := gin.New()
-	router.Use(gin.Recovery())
-	router.Use(setupCORS())
-
-	// 健康檢查
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status": "ok",
-			"type":   "player",
-			"time":   time.Now().Format(time.RFC3339),
-		})
-	})
-
-	// 版本資訊
-	router.GET("/version", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"version": appConfig.Server.Version,
-		})
-	})
-
-	// 遊戲狀態API
-	router.GET("/game/status", func(c *gin.Context) {
-		gameController := gameService.GetGameController()
-		response := gameController.GetGameStatus()
-		c.JSON(http.StatusOK, response)
-	})
-
-	// WebSocket 連接端點
-	router.GET("/ws", wsHandler.HandlePlayerConnection)
-
-	// 認證端點 - 臨時實現
-	router.POST("/auth", func(c *gin.Context) {
-		token := c.GetHeader("Authorization")
-
-		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"message": "缺少認證令牌",
-			})
-			return
-		}
-
-		// 使用與初始化DualWebSocketService相同的認證函數
-		userID, err := authenticateToken(token)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"message": "玩家認證失敗: " + err.Error(),
-			})
-			return
-		}
-
-		// 返回 WebSocket 連接 URL 和用戶信息
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "玩家認證成功",
-			"data": gin.H{
-				"wsURL":  "/ws",
-				"userID": userID,
-				"token":  token,
-			},
-		})
-	})
-
-	// 提供Swagger靜態文件
-	router.StaticFile("/swagger.json", "./docs/swagger/swagger.json")
-	router.StaticFile("/swagger.yaml", "./docs/swagger/swagger.yaml")
-
-	// Swagger UI - 玩家端
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler,
-		ginSwagger.URL(fmt.Sprintf("http://%s:%d/swagger.json", appConfig.Server.Host, appConfig.Server.PlayerWSPort)),
-		ginSwagger.DefaultModelsExpandDepth(-1)))
-
-	return router
-}
-
-// 設定荷官端路由
-func setupDealerRouter(wsHandler *websocketManager.DualWebSocketHandler, gameService GameService) *gin.Engine {
-	router := gin.New()
-	router.Use(gin.Recovery())
-	router.Use(setupCORS())
-
-	// 健康檢查
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status": "ok",
-			"type":   "dealer",
-			"time":   time.Now().Format(time.RFC3339),
-		})
-	})
-
-	// 版本資訊
-	router.GET("/version", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"version": appConfig.Server.Version,
-		})
-	})
-
-	// 遊戲狀態API
-	router.GET("/game/status", func(c *gin.Context) {
-		gameController := gameService.GetGameController()
-		response := gameController.GetGameStatus()
-		c.JSON(http.StatusOK, response)
-	})
-
-	// WebSocket 連接端點
-	router.GET("/ws", wsHandler.HandleDealerConnection)
-
-	// 認證端點
-	router.POST("/auth", wsHandler.HandleDealerAuthRequest)
-
-	// 提供Swagger靜態文件
-	router.StaticFile("/swagger.json", "./docs/swagger/swagger.json")
-	router.StaticFile("/swagger.yaml", "./docs/swagger/swagger.yaml")
-
-	// Swagger UI - 荷官端
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler,
-		ginSwagger.URL(fmt.Sprintf("http://%s:%d/swagger.json", appConfig.Server.Host, appConfig.Server.DealerWSPort)),
-		ginSwagger.DefaultModelsExpandDepth(-1)))
-
-	return router
-}
-
 // 啟動 HTTP 服務器
 func startServer(ctx context.Context, router *gin.Engine, port uint64, serverType string) *http.Server {
 	server := &http.Server{
@@ -445,65 +293,6 @@ func startServer(ctx context.Context, router *gin.Engine, port uint64, serverTyp
 	return server
 }
 
-// 簡易遊戲服務實現
-type SimpleGameService struct {
-	wsService      *websocketManager.DualWebSocketService
-	db             *gorm.DB
-	logger         *SimpleLogger
-	gameController *game.DataFlowController // 新增遊戲控制器
-}
-
-func NewGameService(wsService *websocketManager.DualWebSocketService, db *gorm.DB) GameService {
-	return &SimpleGameService{
-		wsService:      wsService,
-		db:             db,
-		logger:         NewSimpleLogger("[遊戲服務] "),
-		gameController: game.NewDataFlowController(), // 初始化遊戲控制器
-	}
-}
-
-func (s *SimpleGameService) Initialize() error {
-	s.logger.Info("初始化遊戲服務")
-
-	// 啟動WebSocket服務
-	s.wsService.Start()
-
-	// 將遊戲狀態從初始化改為待機狀態
-	currentState := s.gameController.GetCurrentState()
-	s.logger.Info("當前遊戲狀態：%s", currentState)
-
-	// 檢查當前狀態，如果是初始狀態，則更改為準備狀態
-	if currentState == game.StateInitial {
-		if err := s.gameController.ChangeState(game.StateReady); err != nil {
-			s.logger.Error("更改遊戲狀態失敗: %v", err)
-			return err
-		}
-		s.logger.Info("遊戲狀態已更改為: %s", game.StateReady)
-	}
-
-	return nil
-}
-
-func (s *SimpleGameService) Shutdown(ctx context.Context) error {
-	s.logger.Info("關閉遊戲服務")
-
-	// 嘗試先將遊戲狀態改回初始狀態
-	currentState := s.gameController.GetCurrentState()
-	s.logger.Info("關閉時遊戲狀態: %s", currentState)
-
-	// 不強制改變狀態，只記錄當前狀態
-	s.logger.Info("遊戲狀態保持為: %s", currentState)
-
-	// 停止WebSocket服務
-	s.wsService.Stop()
-
-	return nil
-}
-
-func (s *SimpleGameService) GetGameController() *game.DataFlowController {
-	return s.gameController
-}
-
 func main() {
 	// 設置日誌格式
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
@@ -518,10 +307,11 @@ func main() {
 	}
 
 	// 初始化資料庫
-	db, err := initDatabase(appConfig)
+	dbManager, err := initDatabase(appConfig)
 	if err != nil {
 		log.Fatalf("初始化資料庫失敗: %v", err)
 	}
+	db := dbManager.GetDB()
 
 	// 初始化 Redis
 	_, err = initRedis()
@@ -536,7 +326,7 @@ func main() {
 		authenticateToken)
 
 	// 初始化遊戲服務
-	gameService := NewGameService(wsService, db)
+	gameService := services.NewGameService(wsService, db)
 	if err := gameService.Initialize(); err != nil {
 		log.Printf("[警告] 遊戲服務初始化失敗: %v", err)
 	}
@@ -544,11 +334,37 @@ func main() {
 	// 創建 WebSocket 處理器
 	wsHandler := websocketManager.NewDualWebSocketHandler(wsService)
 
-	// 設置玩家路由
-	playerRouter := setupPlayerRouter(wsHandler, gameService)
+	// 創建 Gin 路由器
+	playerRouter := gin.New()
+	playerRouter.Use(gin.Recovery())
+	playerRouter.Use(handlers.SetupCORS())
 
-	// 設置莊家路由
-	dealerRouter := setupDealerRouter(wsHandler, gameService)
+	dealerRouter := gin.New()
+	dealerRouter.Use(gin.Recovery())
+	dealerRouter.Use(handlers.SetupCORS())
+
+	// 創建玩家處理程序
+	playerHandler := handlers.NewPlayerHandler(
+		wsHandler,
+		gameService,
+		appConfig.Server.Host,
+		int(appConfig.Server.PlayerWSPort),
+		appConfig.Server.Version,
+		authenticateToken,
+	)
+
+	// 創建荷官處理程序
+	dealerHandler := handlers.NewDealerHandler(
+		wsHandler,
+		gameService,
+		appConfig.Server.Host,
+		int(appConfig.Server.DealerWSPort),
+		appConfig.Server.Version,
+	)
+
+	// 註冊路由
+	playerHandler.RegisterRoutes(playerRouter)
+	dealerHandler.RegisterRoutes(dealerRouter)
 
 	// 創建上下文
 	ctx, cancel := context.WithCancel(context.Background())
