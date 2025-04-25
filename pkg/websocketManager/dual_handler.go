@@ -3,7 +3,6 @@ package websocketManager
 import (
 	"encoding/json"
 	"log"
-	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -136,38 +135,4 @@ func (h *DualWebSocketHandler) HandlePlayerConnection(c *gin.Context) {
 			}
 		}()
 	}
-}
-
-// HandleDealerAuthRequest 處理荷官端 WebSocket 認證請求
-func (h *DualWebSocketHandler) HandleDealerAuthRequest(c *gin.Context) {
-	token := c.GetHeader("Authorization")
-
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "缺少認證令牌",
-		})
-		return
-	}
-
-	// 驗證令牌
-	userID, err := h.service.GetDealerManager().auth(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "荷官認證失敗: " + err.Error(),
-		})
-		return
-	}
-
-	// 返回 WebSocket 連接 URL 和用戶信息
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "荷官認證成功",
-		"data": gin.H{
-			"wsURL":  "/dealer/ws",
-			"userID": userID,
-			"token":  token,
-		},
-	})
 }

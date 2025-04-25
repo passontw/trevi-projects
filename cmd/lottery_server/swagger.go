@@ -50,24 +50,3 @@ func swaggerVersionHandler() {}
 // @Success 200 {object} map[string]interface{} "遊戲狀態詳細資訊"
 // @Router /game/status [get]
 func swaggerGameStatusHandler() {}
-
-// @Summary WebSocket連接
-// @Description 建立WebSocket連接
-// @Tags WebSocket
-// @Accept json
-// @Produce json
-// @Success 101 {string} string "WebSocket連接成功"
-// @Router /ws [get]
-func swaggerWsHandler() {}
-
-// @Summary 認證請求
-// @Description 處理用戶認證請求
-// @Tags 認證
-// @Accept json
-// @Produce json
-// @Param token header string true "認證令牌"
-// @Success 200 {object} map[string]interface{} "認證成功"
-// @Failure 400 {object} map[string]interface{} "錯誤的請求"
-// @Failure 401 {object} map[string]interface{} "認證失敗"
-// @Router /auth [post]
-func swaggerAuthHandler() {}

@@ -56,9 +56,6 @@ func (h *PlayerHandler) RegisterRoutes(router *gin.Engine) {
 	// WebSocket 連接端點
 	router.GET("/ws", h.wsHandler.HandlePlayerConnection)
 
-	// 認證端點
-	router.POST("/auth", h.HandleAuth)
-
 	// 提供Swagger靜態文件
 	router.StaticFile("/swagger.json", "./docs/swagger/swagger.json")
 	router.StaticFile("/swagger.yaml", "./docs/swagger/swagger.yaml")
@@ -90,38 +87,4 @@ func (h *PlayerHandler) HandleGameStatus(c *gin.Context) {
 	gameController := h.gameService.GetGameController()
 	response := gameController.GetGameStatus()
 	c.JSON(http.StatusOK, response)
-}
-
-// HandleAuth 處理認證請求
-func (h *PlayerHandler) HandleAuth(c *gin.Context) {
-	token := c.GetHeader("Authorization")
-
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "缺少認證令牌",
-		})
-		return
-	}
-
-	// 使用與初始化DualWebSocketService相同的認證函數
-	userID, err := h.authFunc(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "玩家認證失敗: " + err.Error(),
-		})
-		return
-	}
-
-	// 返回 WebSocket 連接 URL 和用戶信息
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "玩家認證成功",
-		"data": gin.H{
-			"wsURL":  "/ws",
-			"userID": userID,
-			"token":  token,
-		},
-	})
 }

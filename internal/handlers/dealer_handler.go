@@ -53,9 +53,6 @@ func (h *DealerHandler) RegisterRoutes(router *gin.Engine) {
 	// WebSocket 連接端點
 	router.GET("/ws", h.wsHandler.HandleDealerConnection)
 
-	// 認證端點
-	router.POST("/auth", h.wsHandler.HandleDealerAuthRequest)
-
 	// 提供Swagger靜態文件
 	router.StaticFile("/swagger.json", "./docs/swagger/swagger.json")
 	router.StaticFile("/swagger.yaml", "./docs/swagger/swagger.yaml")
