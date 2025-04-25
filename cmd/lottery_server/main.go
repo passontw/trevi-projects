@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"g38_lottery_service/game"
 	"g38_lottery_service/internal/config"
 	"g38_lottery_service/internal/handlers"
 	"g38_lottery_service/internal/services"
@@ -35,13 +36,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/fx"
+	"gorm.io/gorm"
 
 	_ "g38_lottery_service/docs/swagger" // 導入swagger文檔
-)
-
-// 全局變數
-var (
-	appConfig *config.Config
 )
 
 // 自定義簡易日誌記錄器
@@ -69,8 +67,8 @@ func (l *SimpleLogger) Debug(format string, args ...interface{}) {
 	log.Printf(l.prefix+"DEBUG: "+format, args...)
 }
 
-// 初始化配置
-func initConfig() (*config.Config, error) {
+// 初始化配置模組
+func provideConfig() (*config.Config, error) {
 	// 設置默認環境變量 - TiDB 配置
 	os.Setenv("MYSQL_HOST", "127.0.0.1")
 	os.Setenv("MYSQL_PORT", "4000")
@@ -169,8 +167,8 @@ func initConfig() (*config.Config, error) {
 	return cfg, nil
 }
 
-// 初始化資料庫連接
-func initDatabase(cfg *config.Config) (databaseManager.DatabaseManager, error) {
+// 初始化資料庫模組
+func provideDatabaseManager(cfg *config.Config) (databaseManager.DatabaseManager, error) {
 	dbConfig := &databaseManager.MySQLConfig{
 		Host:      cfg.Database.Host,
 		Port:      cfg.Database.Port,
@@ -205,19 +203,24 @@ func initDatabase(cfg *config.Config) (databaseManager.DatabaseManager, error) {
 	return manager, nil
 }
 
-// 初始化Redis連接
-func initRedis() (redisManager.RedisManager, error) {
+// 提供 GORM DB 實例
+func provideGormDB(dbManager databaseManager.DatabaseManager) *gorm.DB {
+	return dbManager.GetDB()
+}
+
+// 初始化Redis模組
+func provideRedisManager(cfg *config.Config) (redisManager.RedisManager, error) {
 	// 檢查配置有效性
-	if appConfig.Redis.Addr == "" {
-		appConfig.Redis.Addr = "localhost:6379" // 使用默認地址
-		log.Printf("[警告] Redis地址未配置，使用默認地址: %s", appConfig.Redis.Addr)
+	if cfg.Redis.Addr == "" {
+		cfg.Redis.Addr = "localhost:6379" // 使用默認地址
+		log.Printf("[警告] Redis地址未配置，使用默認地址: %s", cfg.Redis.Addr)
 	}
 
 	redisConfig := &redisManager.RedisConfig{
-		Addr:         appConfig.Redis.Addr,
-		Username:     appConfig.Redis.Username,
-		Password:     appConfig.Redis.Password,
-		DB:           appConfig.Redis.DB,
+		Addr:         cfg.Redis.Addr,
+		Username:     cfg.Redis.Username,
+		Password:     cfg.Redis.Password,
+		DB:           cfg.Redis.DB,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
@@ -248,7 +251,7 @@ func initRedis() (redisManager.RedisManager, error) {
 	if err := client.Ping(ctx).Err(); err != nil {
 		log.Printf("[警告] Redis連接測試失敗: %v", err)
 		log.Printf("[警告] Redis配置: 地址=%s, 用戶=%s, DB=%d",
-			appConfig.Redis.Addr, appConfig.Redis.Username, appConfig.Redis.DB)
+			cfg.Redis.Addr, cfg.Redis.Username, cfg.Redis.DB)
 		client.Close() // 關閉失敗的連接
 		return nil, fmt.Errorf("無法連接到Redis: %w", err)
 	}
@@ -256,14 +259,239 @@ func initRedis() (redisManager.RedisManager, error) {
 	// 使用成功連接的客戶端創建 RedisManager
 	redis := redisManager.ProvideRedisManager(client)
 
-	log.Printf("[成功] 已連接到Redis %s", appConfig.Redis.Addr)
+	log.Printf("[成功] 已連接到Redis %s", cfg.Redis.Addr)
 	return redis, nil
 }
 
-// 認證函數 - 根據您的需求自行實現
-func authenticateToken(token string) (uint, error) {
-	// 模擬認證，實際場景請替換為您的認證邏輯
-	return 1000, nil
+// 處理Redis模組初始化錯誤的回退方案
+func provideRedisManagerWithFallback(lc fx.Lifecycle, cfg *config.Config) (redisManager.RedisManager, error) {
+	redis, err := provideRedisManager(cfg)
+	if err != nil {
+		log.Printf("[警告] 使用無操作的Redis替代實現")
+		// 提供一個空的實現，避免系統崩潰
+		return &noOpRedisManager{}, nil
+	}
+
+	return redis, nil
+}
+
+// 空操作的Redis實現
+type noOpRedisManager struct{}
+
+func (r *noOpRedisManager) Get(ctx context.Context, key string) (string, error) {
+	return "", nil
+}
+
+func (r *noOpRedisManager) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	return nil
+}
+
+func (r *noOpRedisManager) Delete(ctx context.Context, keys ...string) error {
+	return nil
+}
+
+func (r *noOpRedisManager) Exists(ctx context.Context, key string) (bool, error) {
+	return false, nil
+}
+
+func (r *noOpRedisManager) Expire(ctx context.Context, key string, expiration time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (r *noOpRedisManager) TTL(ctx context.Context, key string) (time.Duration, error) {
+	return 0, nil
+}
+
+func (r *noOpRedisManager) HSet(ctx context.Context, key string, field string, value interface{}) error {
+	return nil
+}
+
+func (r *noOpRedisManager) HGet(ctx context.Context, key string, field string) (string, error) {
+	return "", nil
+}
+
+func (r *noOpRedisManager) HGetAll(ctx context.Context, key string) (map[string]string, error) {
+	return nil, nil
+}
+
+func (r *noOpRedisManager) HDel(ctx context.Context, key string, fields ...string) error {
+	return nil
+}
+
+func (r *noOpRedisManager) LPush(ctx context.Context, key string, values ...interface{}) error {
+	return nil
+}
+
+func (r *noOpRedisManager) RPush(ctx context.Context, key string, values ...interface{}) error {
+	return nil
+}
+
+func (r *noOpRedisManager) LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	return nil, nil
+}
+
+func (r *noOpRedisManager) SAdd(ctx context.Context, key string, members ...interface{}) error {
+	return nil
+}
+
+func (r *noOpRedisManager) SMembers(ctx context.Context, key string) ([]string, error) {
+	return nil, nil
+}
+
+func (r *noOpRedisManager) SRem(ctx context.Context, key string, members ...interface{}) error {
+	return nil
+}
+
+func (r *noOpRedisManager) ZAdd(ctx context.Context, key string, score float64, member string) error {
+	return nil
+}
+
+func (r *noOpRedisManager) ZRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	return nil, nil
+}
+
+func (r *noOpRedisManager) Watch(ctx context.Context, fn func(*redis.Tx) error, keys ...string) error {
+	return nil
+}
+
+func (r *noOpRedisManager) Incr(ctx context.Context, key string) (int64, error) {
+	return 0, nil
+}
+
+func (r *noOpRedisManager) GetClient() *redis.Client {
+	return nil
+}
+
+func (r *noOpRedisManager) Close() error {
+	return nil
+}
+
+func (r *noOpRedisManager) Ping(ctx context.Context) error {
+	return nil
+}
+
+// 提供認證函數 - 根據您的需求自行實現
+func provideAuthFunc() func(string) (uint, error) {
+	return func(token string) (uint, error) {
+		// 模擬認證，實際場景請替換為您的認證邏輯
+		return 1000, nil
+	}
+}
+
+// 提供WebSocket服務模組
+func provideWebSocketService(authFunc func(string) (uint, error)) *websocketManager.DualWebSocketService {
+	return websocketManager.NewDualWebSocketService(authFunc, authFunc)
+}
+
+// 提供WebSocket處理器模組
+func provideWebSocketHandler(service *websocketManager.DualWebSocketService) *websocketManager.DualWebSocketHandler {
+	return websocketManager.NewDualWebSocketHandler(service)
+}
+
+// 提供Gin路由器模組
+func providePlayerRouter() *gin.Engine {
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(handlers.SetupGinCORS())
+	return router
+}
+
+func provideDealerRouter() *gin.Engine {
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(handlers.SetupGinCORS())
+	return router
+}
+
+// 註冊應用生命週期管理
+func registerHooks(
+	lc fx.Lifecycle,
+	cfg *config.Config,
+	playerRouter *gin.Engine,
+	dealerRouter *gin.Engine,
+	gameService services.GameService,
+) {
+	// 創建上下文用於取消
+	_, cancel := context.WithCancel(context.Background())
+
+	// 啟動階段
+	lc.Append(fx.Hook{
+		OnStart: func(appCtx context.Context) error {
+			// 啟動遊戲服務
+			if err := gameService.Initialize(); err != nil {
+				log.Printf("[警告] 遊戲服務初始化失敗: %v", err)
+				// 不返回錯誤，允許系統繼續運行
+			}
+
+			// 啟動玩家服務器
+			go func() {
+				addr := fmt.Sprintf(":%d", cfg.Server.PlayerWSPort)
+				log.Printf("[玩家] 伺服器開始監聽 http://%s:%d", cfg.Server.Host, cfg.Server.PlayerWSPort)
+				log.Printf("[玩家] Swagger API 文檔可訪問: http://%s:%d/swagger/index.html", cfg.Server.Host, cfg.Server.PlayerWSPort)
+
+				server := &http.Server{
+					Addr:    addr,
+					Handler: playerRouter,
+				}
+
+				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					log.Printf("[玩家] 伺服器啟動失敗: %v", err)
+				}
+			}()
+
+			// 啟動莊家服務器
+			go func() {
+				addr := fmt.Sprintf(":%d", cfg.Server.DealerWSPort)
+				log.Printf("[莊家] 伺服器開始監聽 http://%s:%d", cfg.Server.Host, cfg.Server.DealerWSPort)
+				log.Printf("[莊家] Swagger API 文檔可訪問: http://%s:%d/swagger/index.html", cfg.Server.Host, cfg.Server.DealerWSPort)
+
+				server := &http.Server{
+					Addr:    addr,
+					Handler: dealerRouter,
+				}
+
+				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					log.Printf("[莊家] 伺服器啟動失敗: %v", err)
+				}
+			}()
+
+			// 設置信號處理
+			go func() {
+				quit := make(chan os.Signal, 1)
+				signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+				<-quit
+				log.Println("接收到關閉信號...")
+				cancel() // 取消上下文，觸發 OnStop
+			}()
+
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			log.Println("正在關閉服務...")
+
+			// 關閉遊戲服務
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+
+			if err := gameService.Shutdown(shutdownCtx); err != nil {
+				log.Printf("[警告] 遊戲服務關閉時發生錯誤: %v", err)
+			}
+
+			log.Println("服務已關閉")
+			return nil
+		},
+	})
+}
+
+// 註冊路由處理
+func registerRoutes(
+	playerHandler *handlers.PlayerHandler,
+	dealerHandler *handlers.DealerHandler,
+	playerRouter *gin.Engine,
+	dealerRouter *gin.Engine,
+) {
+	playerHandler.RegisterRoutes(playerRouter)
+	dealerHandler.RegisterRoutes(dealerRouter)
 }
 
 // 獲取當前主機IP
@@ -275,22 +503,14 @@ func getIpAddress() string {
 	return hostname
 }
 
-// 啟動 HTTP 服務器
-func startServer(ctx context.Context, router *gin.Engine, port uint64, serverType string) *http.Server {
-	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: router,
-	}
-
-	go func() {
-		log.Printf("[%s] 伺服器開始監聽 http://%s:%d", serverType, appConfig.Server.Host, port)
-		log.Printf("[%s] Swagger API 文檔可訪問: http://%s:%d/swagger/index.html", serverType, appConfig.Server.Host, port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("[%s] 伺服器啟動失敗: %v", serverType, err)
-		}
-	}()
-
-	return server
+// 提供必要的配置項目
+func provideConfigParams(cfg *config.Config) (
+	host string,
+	playerPort int,
+	dealerPort int,
+	version string,
+) {
+	return cfg.Server.Host, int(cfg.Server.PlayerWSPort), int(cfg.Server.DealerWSPort), cfg.Server.Version
 }
 
 func main() {
@@ -299,107 +519,52 @@ func main() {
 	log.Println("樂透遊戲服務初始化中...")
 	log.Println("Swagger API 文檔可在 http://localhost:3001/swagger/index.html 和 http://localhost:3002/swagger/index.html 訪問")
 
-	var err error
-	// 初始化配置
-	appConfig, err = initConfig()
-	if err != nil {
-		log.Fatalf("初始化配置失敗: %v", err)
-	}
+	app := fx.New(
+		// 註冊模組
+		game.Module,
+		services.Module,
+		handlers.Module,
 
-	// 初始化資料庫
-	dbManager, err := initDatabase(appConfig)
-	if err != nil {
-		log.Fatalf("初始化資料庫失敗: %v", err)
-	}
-	db := dbManager.GetDB()
+		// 提供基礎組件
+		fx.Provide(
+			provideConfig,
+			provideDatabaseManager,
+			provideGormDB,
+			provideRedisManagerWithFallback,
+			provideAuthFunc,
+			provideWebSocketService,
+			provideWebSocketHandler,
+			fx.Annotate(
+				providePlayerRouter,
+				fx.ResultTags(`name:"playerRouter"`),
+			),
+			fx.Annotate(
+				provideDealerRouter,
+				fx.ResultTags(`name:"dealerRouter"`),
+			),
+		),
 
-	// 初始化 Redis
-	_, err = initRedis()
-	if err != nil {
-		log.Printf("[警告] Redis 初始化失敗: %v", err)
-		// 繼續執行，即使 Redis 連接失敗
-	}
+		// 提供配置參數
+		fx.Provide(
+			fx.Annotate(
+				provideConfigParams,
+				fx.ResultTags(`name:"serverHost"`, `name:"playerPort"`, `name:"dealerPort"`, `name:"serverVersion"`),
+			),
+		),
 
-	// 創建 WebSocket 服務
-	wsService := websocketManager.NewDualWebSocketService(
-		authenticateToken,
-		authenticateToken)
-
-	// 初始化遊戲服務
-	gameService := services.NewGameService(wsService, db)
-	if err := gameService.Initialize(); err != nil {
-		log.Printf("[警告] 遊戲服務初始化失敗: %v", err)
-	}
-
-	// 創建 WebSocket 處理器
-	wsHandler := websocketManager.NewDualWebSocketHandler(wsService)
-
-	// 創建 Gin 路由器
-	playerRouter := gin.New()
-	playerRouter.Use(gin.Recovery())
-	playerRouter.Use(handlers.SetupCORS())
-
-	dealerRouter := gin.New()
-	dealerRouter.Use(gin.Recovery())
-	dealerRouter.Use(handlers.SetupCORS())
-
-	// 創建玩家處理程序
-	playerHandler := handlers.NewPlayerHandler(
-		wsHandler,
-		gameService,
-		appConfig.Server.Host,
-		int(appConfig.Server.PlayerWSPort),
-		appConfig.Server.Version,
-		authenticateToken,
+		// 註冊路由和生命週期鉤子
+		fx.Invoke(
+			fx.Annotate(
+				registerRoutes,
+				fx.ParamTags(``, ``, `name:"playerRouter"`, `name:"dealerRouter"`),
+			),
+			fx.Annotate(
+				registerHooks,
+				fx.ParamTags(``, ``, `name:"playerRouter"`, `name:"dealerRouter"`, ``),
+			),
+		),
 	)
 
-	// 創建荷官處理程序
-	dealerHandler := handlers.NewDealerHandler(
-		wsHandler,
-		gameService,
-		appConfig.Server.Host,
-		int(appConfig.Server.DealerWSPort),
-		appConfig.Server.Version,
-	)
-
-	// 註冊路由
-	playerHandler.RegisterRoutes(playerRouter)
-	dealerHandler.RegisterRoutes(dealerRouter)
-
-	// 創建上下文
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// 啟動玩家服務器
-	playerServer := startServer(ctx, playerRouter, uint64(appConfig.Server.PlayerWSPort), "玩家")
-
-	// 啟動莊家服務器
-	dealerServer := startServer(ctx, dealerRouter, uint64(appConfig.Server.DealerWSPort), "莊家")
-
-	// 設置優雅關閉服務
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Println("正在關閉服務...")
-
-	// 設置關閉超時
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-
-	// 關閉玩家服務器
-	if err := playerServer.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("玩家服務器關閉失敗: %v", err)
-	}
-
-	// 關閉莊家服務器
-	if err := dealerServer.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("莊家服務器關閉失敗: %v", err)
-	}
-
-	// 關閉遊戲服務
-	if err := gameService.Shutdown(shutdownCtx); err != nil {
-		log.Printf("[警告] 遊戲服務關閉時發生錯誤: %v", err)
-	}
-
-	log.Println("服務已關閉")
+	// 啟動應用程式
+	app.Run()
 }

@@ -3,8 +3,8 @@ package handlers
 
 import "github.com/gin-gonic/gin"
 
-// SetupCORS 建立跨域資源共享中間件
-func SetupCORS() gin.HandlerFunc {
+// SetupGinCORS 建立跨域資源共享中間件 (適用於 Gin)
+func SetupGinCORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
