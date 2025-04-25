@@ -24,7 +24,7 @@ type ServerConfig struct {
 // DatabaseConfig 資料庫配置
 type DatabaseConfig struct {
 	Host     string `json:"host"`
-	Port     int    `json:"port"`
+	Port     string `json:"port"`
 	User     string `json:"user"`
 	Password string `json:"password"`
 	Name     string `json:"name"`
@@ -64,10 +64,10 @@ func loadLocalConfig() *ServiceConfig {
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
-			Port:     getEnvAsInt("DB_PORT", 3306),
-			User:     getEnv("DB_USER", "root"),
-			Password: getEnv("DB_PASSWORD", ""),
-			Name:     getEnv("DB_NAME", "lottery_service"),
+			Port:     getEnv("DB_PORT", "5432"),
+			User:     getEnv("DB_USER", "postgres"),
+			Password: getEnv("DB_PASSWORD", "postgres"),
+			Name:     getEnv("DB_NAME", "shoppingcart"),
 		},
 		Redis: RedisConfig{
 			Host:     getEnv("REDIS_HOST", "localhost"),
@@ -78,16 +78,10 @@ func loadLocalConfig() *ServiceConfig {
 	}
 }
 
-// DSN 構建MySQL連接字符串
-func (db *DatabaseConfig) DSN() string {
-	// MySQL DSN 格式: username:password@tcp(host:port)/database
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		db.User,
-		db.Password,
-		db.Host,
-		db.Port,
-		db.Name,
-	)
+// DSN 構建PostgreSQL連接字符串
+func (c *DatabaseConfig) DSN() string {
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		c.Host, c.Port, c.User, c.Password, c.Name)
 }
 
 // RedisAddr 構建Redis地址
@@ -105,19 +99,9 @@ func getEnv(key, defaultValue string) string {
 
 // 獲取整數類型的環境變量
 func getEnvAsInt(key string, defaultValue int) int {
-	if valueStr, exists := os.LookupEnv(key); exists {
-		if value, err := strconv.Atoi(valueStr); err == nil {
-			return value
-		}
-	}
-	return defaultValue
-}
-
-// 獲取布爾類型的環境變量
-func getEnvAsBool(key string, defaultValue bool) bool {
-	if valueStr, exists := os.LookupEnv(key); exists {
-		if value, err := strconv.ParseBool(valueStr); err == nil {
-			return value
+	if value, exists := os.LookupEnv(key); exists {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
 		}
 	}
 	return defaultValue
@@ -133,21 +117,4 @@ func GetOutboundIP() string {
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 	return localAddr.IP.String()
-}
-
-// GetLocalIP 獲取本地IP地址
-func GetLocalIP() (string, error) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "", err
-	}
-	for _, address := range addrs {
-		// 檢查IP地址類型
-		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String(), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("無法獲取本地IP地址")
 }

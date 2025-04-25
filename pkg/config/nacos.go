@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/nacos-group/nacos-sdk-go/clients"
 	"github.com/nacos-group/nacos-sdk-go/clients/config_client"
@@ -111,7 +110,7 @@ func NewNacosClient(cfg NacosConfig) (*NacosClient, error) {
 	}, nil
 }
 
-// GetServiceConfig 獲取服務配置
+// GetServiceConfig 從Nacos獲取服務配置
 func (c *NacosClient) GetServiceConfig() (*ServiceConfig, error) {
 	if !c.Config.EnableNacos {
 		// 如果禁用Nacos，使用本地配置
@@ -122,10 +121,10 @@ func (c *NacosClient) GetServiceConfig() (*ServiceConfig, error) {
 			},
 			Database: DatabaseConfig{
 				Host:     "localhost",
-				Port:     3306,
-				User:     "root",
-				Password: "",
-				Name:     "lottery_service",
+				Port:     "5432",
+				User:     "postgres",
+				Password: "postgres",
+				Name:     "shoppingcart",
 			},
 			Redis: RedisConfig{
 				Host:     "localhost",
@@ -145,45 +144,11 @@ func (c *NacosClient) GetServiceConfig() (*ServiceConfig, error) {
 		return nil, err
 	}
 
-	log.Printf("從Nacos獲取的原始配置: %s", content)
-
 	// 解析配置
 	var config ServiceConfig
 	if err := json.Unmarshal([]byte(content), &config); err != nil {
-		log.Printf("解析配置失敗: %v", err)
 		return nil, err
 	}
-
-	// 打印原始數據庫配置
-	log.Printf("解析後的數據庫配置: Host=%s, Port=%v, User=%s, Name=%s",
-		config.Database.Host, config.Database.Port, config.Database.User, config.Database.Name)
-
-	// 檢查是否需要將字符串轉換為整數 (處理Nacos返回不一致的情況)
-	var jsonData map[string]interface{}
-	if err := json.Unmarshal([]byte(content), &jsonData); err == nil {
-		// 嘗試直接訪問數據庫配置
-		if db, ok := jsonData["database"].(map[string]interface{}); ok {
-			if portValue, exists := db["port"]; exists {
-				// 處理不同類型的端口值
-				switch port := portValue.(type) {
-				case float64:
-					// JSON 數字會解析為 float64
-					config.Database.Port = int(port)
-					log.Printf("提取到數字端口: %d", config.Database.Port)
-				case string:
-					// 字符串需要轉換
-					if portInt, err := strconv.Atoi(port); err == nil {
-						config.Database.Port = portInt
-						log.Printf("轉換字符串端口 %s 為數字: %d", port, portInt)
-					}
-				}
-			}
-		}
-	}
-
-	// 打印最終數據庫配置
-	log.Printf("最終數據庫配置: Host=%s, Port=%d, User=%s, Name=%s",
-		config.Database.Host, config.Database.Port, config.Database.User, config.Database.Name)
 
 	return &config, nil
 }
@@ -221,36 +186,4 @@ func (c *NacosClient) DeregisterService(ip string, port uint64) (bool, error) {
 		Ephemeral:   true,
 		GroupName:   c.Config.Group,
 	})
-}
-
-// 從JSON字符串中提取指定路徑的字符串值
-func extractStringValue(jsonStr, path string) (string, bool) {
-	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-		return "", false
-	}
-
-	parts := strings.Split(path, ".")
-	current := data
-
-	for i, part := range parts {
-		if i == len(parts)-1 {
-			// 最後一個部分，嘗試獲取值
-			if val, ok := current[part]; ok {
-				if strVal, ok := val.(string); ok {
-					return strVal, true
-				}
-			}
-			return "", false
-		}
-
-		// 不是最後一個部分，繼續遍歷
-		if nextMap, ok := current[part].(map[string]interface{}); ok {
-			current = nextMap
-		} else {
-			return "", false
-		}
-	}
-
-	return "", false
 }

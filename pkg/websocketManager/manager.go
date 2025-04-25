@@ -440,7 +440,6 @@ func (client *Client) ReadPump() {
 
 		client.Conn.SetReadDeadline(time.Now().Add(readTimeout))
 		client.LastActivity = time.Now()
-		log.Printf("WebSocket Manager: Received pong from client %s\n", client.ID)
 		return nil
 	})
 
@@ -484,11 +483,6 @@ func (client *Client) ReadPump() {
 
 			// 處理心跳訊息
 			if msg.Type == "heartbeat" {
-				// 更新最後活動時間
-				client.connMutex.Lock()
-				client.LastActivity = time.Now()
-				client.connMutex.Unlock()
-
 				// 客戶端發送的心跳，直接回應
 				heartbeatResponse := HeartbeatMessage{
 					Type:      "heartbeat",
@@ -499,7 +493,6 @@ func (client *Client) ReadPump() {
 				select {
 				case client.Send <- responseBytes:
 					// 心跳已送入通道
-					log.Printf("WebSocket Manager: Responded to heartbeat from client %s\n", client.ID)
 				default:
 					log.Printf("WebSocket Manager: Client %s send channel full for heartbeat\n", client.ID)
 				}
@@ -638,10 +631,7 @@ func (client *Client) StartHeartbeat() {
 
 	// 創建新的心跳計時器
 	client.heartbeatTicker = time.NewTicker(heartbeatInterval)
-	log.Printf("WebSocket Manager: Started heartbeat for client %s with interval %v\n", client.ID, heartbeatInterval)
-
-	// 初始化最後活動時間
-	client.LastActivity = time.Now()
+	log.Printf("WebSocket Manager: Started heartbeat for client %s\n", client.ID)
 
 	// 創建本地副本
 	localCloseChan := client.closeChan
@@ -656,12 +646,6 @@ func (client *Client) StartHeartbeat() {
 			log.Printf("WebSocket Manager: Heartbeat routine for client %s exiting\n", client.ID)
 		}()
 
-		// 初始心跳：立即發送一次心跳
-		if err := client.sendPing(); err != nil {
-			log.Printf("WebSocket Manager: Client %s initial ping failed: %v\n", client.ID, err)
-		}
-
-		consecutiveFailures := 0
 		for {
 			select {
 			case <-localCloseChan:
@@ -671,22 +655,7 @@ func (client *Client) StartHeartbeat() {
 				// 使用本地副本確保即使 client 被修改也能正確工作
 				if err := client.sendPing(); err != nil {
 					log.Printf("WebSocket Manager: Client %s ping failed: %v\n", client.ID, err)
-					consecutiveFailures++
-
-					// 如果連續失敗3次，關閉連接
-					if consecutiveFailures >= 3 {
-						log.Printf("WebSocket Manager: Client %s heartbeat failed %d consecutive times, closing connection\n",
-							client.ID, consecutiveFailures)
-						client.connMutex.Lock()
-						if client.closeChan != nil {
-							close(client.closeChan)
-						}
-						client.connMutex.Unlock()
-						return
-					}
-				} else {
-					// 成功發送後重置失敗計數
-					consecutiveFailures = 0
+					return
 				}
 			}
 		}
@@ -701,18 +670,6 @@ func (client *Client) sendPing() error {
 	// 檢查連接是否有效
 	if client.Conn == nil {
 		return fmt.Errorf("connection is nil")
-	}
-
-	// 檢查自上次心跳以來是否超時
-	heartbeatTimeout := time.Duration(heartbeatInterval * 3)
-	if time.Since(client.LastActivity) > heartbeatTimeout {
-		log.Printf("WebSocket Manager: Client %s heartbeat timeout (%v), closing connection",
-			client.ID, heartbeatTimeout)
-		// 解鎖後調用重連，避免死鎖
-		client.connMutex.Unlock()
-		client.attemptReconnect()
-		client.connMutex.Lock()
-		return fmt.Errorf("heartbeat timeout")
 	}
 
 	// 發送Ping訊息
@@ -736,7 +693,6 @@ func (client *Client) sendPing() error {
 	select {
 	case client.Send <- heartbeatBytes:
 		// 心跳已送入通道
-		log.Printf("WebSocket Manager: Heartbeat sent to client %s\n", client.ID)
 	default:
 		// 發送通道已滿，可能需要處理
 		log.Printf("WebSocket Manager: Client %s send channel full, cannot send heartbeat\n", client.ID)

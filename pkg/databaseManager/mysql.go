@@ -22,14 +22,6 @@ type MySQLConfig struct {
 	Loc       string
 }
 
-// DatabaseManager 提供數據庫操作的介面
-type DatabaseManager interface {
-	// 獲取 GORM DB 實例
-	GetDB() *gorm.DB
-	// 關閉數據庫連接
-	Close() error
-}
-
 // mysqlManagerImpl 是 DatabaseManager 介面的實作
 type mysqlManagerImpl struct {
 	db *gorm.DB
@@ -68,10 +60,10 @@ func NewMySQLManager(config *MySQLConfig) (DatabaseManager, error) {
 		fmt.Printf("檢測到無效端口 %d，使用默認端口 3306\n", config.Port)
 	}
 
-	// MySQL 的 DSN 格式
+	// MySQL/TiDB 的 DSN 格式 (注意：使用 127.0.0.1 而非 localhost 以避免 IPv6 的問題)
 	var dsn string
 	if config.Password == "" {
-		// 無密碼連接格式: username@tcp(host:port)/database?charset=utf8mb4&parseTime=True&loc=Local
+		// 無密碼連接格式
 		dsn = fmt.Sprintf("%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s&allowNativePasswords=true",
 			config.User,
 			config.Host,
@@ -82,7 +74,7 @@ func NewMySQLManager(config *MySQLConfig) (DatabaseManager, error) {
 			config.Loc,
 		)
 	} else {
-		// 有密碼連接格式: username:password@tcp(host:port)/database?charset=utf8mb4&parseTime=True&loc=Local
+		// 有密碼連接格式
 		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s&allowNativePasswords=true",
 			config.User,
 			config.Password,
@@ -95,7 +87,7 @@ func NewMySQLManager(config *MySQLConfig) (DatabaseManager, error) {
 		)
 	}
 
-	fmt.Printf("MySQL連接字符串: %s\n", dsn)
+	fmt.Printf("MySQL連接字符串: %s\n\n", dsn)
 
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
@@ -211,7 +203,7 @@ func ProvideMySQLConfig(cfg interface{}) *MySQLConfig {
 		}
 	}
 
-	// 如果主機名是 localhost，替換為 127.0.0.1 以強制使用 IPv4
+	// 總是使用 127.0.0.1 替代 localhost 以確保使用 IPv4 而非 IPv6
 	host := config.GetDatabaseHost()
 	if host == "localhost" {
 		host = "127.0.0.1"
