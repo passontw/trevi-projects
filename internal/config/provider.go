@@ -93,6 +93,9 @@ func extractConfig(jsonStr string, logger logger.Logger) *NacosAppConfig {
 	logger.Info(fmt.Sprintf("標準解析失敗: %v，嘗試手動解析配置項", err))
 
 	// 手動解析主要配置項
+	config.Port = extractStringValue(cleanStr, `"PORT":\s*"([^"]+)"`)
+	config.PlayerWSPort = extractStringValue(cleanStr, `"PLAYER_WS_PORT":\s*"([^"]+)"`)
+	config.DealerWSPort = extractStringValue(cleanStr, `"DEALER_WS_PORT":\s*"([^"]+)"`)
 	config.DBHost = extractStringValue(cleanStr, `"DB_HOST":\s*"([^"]+)"`)
 	dbPortStr := extractStringValue(cleanStr, `"DB_PORT":\s*(\d+)`)
 	if dbPortStr != "" {
@@ -115,8 +118,8 @@ func extractConfig(jsonStr string, logger logger.Logger) *NacosAppConfig {
 	}
 
 	// 列出提取的值，便於調試
-	logger.Info(fmt.Sprintf("手動提取的配置: DB_HOST=%s, DB_PORT=%d, DB_NAME=%s, DB_USER=%s",
-		config.DBHost, config.DBPort, config.DBName, config.DBUser))
+	logger.Info(fmt.Sprintf("手動提取的配置: PORT=%s, DB_HOST=%s, DB_PORT=%d, DB_NAME=%s, DB_USER=%s",
+		config.Port, config.DBHost, config.DBPort, config.DBName, config.DBUser))
 
 	return config
 }
@@ -133,6 +136,15 @@ func extractStringValue(text, pattern string) string {
 
 // updateConfigFromExtracted 使用提取的配置更新應用設置
 func updateConfigFromExtracted(cfg *Config, nacosConfig *NacosAppConfig, logger logger.Logger) {
+	// 更新服務器配置
+	if nacosConfig.Port != "" {
+		portInt, err := strconv.Atoi(nacosConfig.Port)
+		if err == nil {
+			logger.Info(fmt.Sprintf("更新服務器端口: %d -> %d", cfg.Server.Port, portInt))
+			cfg.Server.Port = uint64(portInt)
+		}
+	}
+
 	// 更新數據庫配置
 	if nacosConfig.DBHost != "" {
 		logger.Info(fmt.Sprintf("更新數據庫主機: %s -> %s", cfg.Database.Host, nacosConfig.DBHost))

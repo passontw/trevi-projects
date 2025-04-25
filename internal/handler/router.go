@@ -29,6 +29,7 @@ func NewRouter(
 	cfg *config.Config,
 	authHandler *AuthHandler,
 	userHandler *UserHandler,
+	gameHandler *GameHandler,
 	authService service.AuthService,
 	wsHandler *websocketManager.WebSocketHandler,
 ) *gin.Engine {
@@ -44,8 +45,8 @@ func NewRouter(
 
 	api := r.Group("/api/v1")
 	{
-		configurePublicRoutes(api, authHandler, userHandler)
-		configureAuthenticatedRoutes(api, authHandler, userHandler, authService)
+		configurePublicRoutes(api, authHandler, userHandler, gameHandler)
+		configureAuthenticatedRoutes(api, authHandler, userHandler, gameHandler, authService)
 	}
 
 	return r
@@ -67,21 +68,27 @@ func configureCORS() gin.HandlerFunc {
 	}
 }
 
-func configurePublicRoutes(api *gin.RouterGroup, authHandler *AuthHandler, userHandler *UserHandler) {
+func configurePublicRoutes(api *gin.RouterGroup, authHandler *AuthHandler, userHandler *UserHandler, gameHandler *GameHandler) {
 	api.POST("/auth", authHandler.UserLogin)
 	api.POST("/users", userHandler.CreateUser)
+
+	api.GET("/game/status", gameHandler.GetGameStatus)
+	api.GET("/game/state", gameHandler.GetGameState)
 }
 
-func configureAuthenticatedRoutes(api *gin.RouterGroup, authHandler *AuthHandler, userHandler *UserHandler, authService service.AuthService) {
+func configureAuthenticatedRoutes(api *gin.RouterGroup, authHandler *AuthHandler, userHandler *UserHandler, gameHandler *GameHandler, authService service.AuthService) {
 	authorized := api.Group("/")
 	authorized.Use(middleware.AuthMiddleware(authService))
 
 	authorized.POST("/auth/logout", authHandler.UserLogout)
 	authorized.POST("/auth/token", authHandler.ValidateToken)
 	authorized.GET("/users", userHandler.GetUsers)
+
+	authorized.POST("/game/state", gameHandler.ChangeGameState)
 }
 
 func StartServer(cfg *config.Config, router *gin.Engine) {
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	fmt.Printf("正在使用端口 %d 啟動服務器...\n", cfg.Server.Port)
 	router.Run(addr)
 }
