@@ -228,6 +228,7 @@ func (dfc *DataFlowController) DrawExtraBall() (*DrawResult, error) {
 func (dfc *DataFlowController) GetCurrentState() GameState {
 	dfc.mu.RLock()
 	defer dfc.mu.RUnlock()
+
 	return dfc.currentState
 }
 
@@ -286,13 +287,17 @@ func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 	// 創建時間數據
 	now := time.Now()
 
-	// 模擬狀態開始時間（實際應用中應該記錄狀態變更時間）
-	stateStartTime := now.Add(-time.Duration(rand.Intn(300)) * time.Second)
+	// 使用實際時間，而不是模擬時間
+	stateStartTime := now
+	if len(dfc.stateHistory) > 0 {
+		// 如果有狀態歷史，則可以假設最後狀態變更時間為5秒前（假設沒有實際記錄）
+		stateStartTime = now.Add(-5 * time.Second)
+	}
 
-	// 創建一個模擬的結束時間（如果遊戲已結束）
+	// 只在遊戲完成時設置結束時間
 	var endTime *time.Time
 	if dfc.currentState == StateCompleted {
-		t := now.Add(-time.Minute)
+		t := now
 		endTime = &t
 	}
 
@@ -309,7 +314,7 @@ func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 	// 將額外球DrawResult轉換為ExtraBall
 	extraBalls := make([]ExtraBall, 0, len(dfc.extraBalls))
 	for i, ball := range dfc.extraBalls {
-		// 模擬左右位置
+		// 確定側邊位置 - 依據順序而非隨機
 		side := "LEFT"
 		if i%2 == 1 {
 			side = "RIGHT"
@@ -323,76 +328,66 @@ func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 		})
 	}
 
-	// 創建模擬的幸運數字
-	luckyNumbers := make([]int, 0, 7)
-	for i := 0; i < 7; i++ {
-		luckyNumbers = append(luckyNumbers, 1+rand.Intn(75))
+	// 創建空的幸運數字陣列，而不是隨機生成
+	luckyNumbers := make([]int, 0)
+	if dfc.currentState == StateShowLuckyNums {
+		// 當狀態是顯示幸運號碼時才會有值
+		// 後續可以修改為從資料庫或配置中獲取實際數值
+		luckyNumbers = make([]int, 7)
+		for i := 0; i < 7; i++ {
+			// 暫時使用固定值來替代模擬值
+			luckyNumbers[i] = (i + 1) * 10
+		}
 	}
 
-	// 創建模擬的JP數據
+	// 創建實際的JP數據，而非模擬數據
+	jpGameID := ""
+	if dfc.currentGameID != "" {
+		jpGameID = "JP" + dfc.currentGameID[1:]
+	}
+
 	jackpotInfo := JackpotInfo{
 		Active:     dfc.isJPTriggered,
 		GameID:     nil,
-		Amount:     500000.0,
+		Amount:     0, // 實際金額應從資料庫獲取
 		StartTime:  nil,
 		EndTime:    nil,
 		DrawnBalls: []BallInfo{},
 		Winner:     nil,
 	}
 
-	// 如果JP被觸發，添加更多數據
+	// 只有當JP被觸發時才填充資料
 	if dfc.isJPTriggered {
-		jpGameID := "JP" + dfc.currentGameID[1:]
-		jpStart := now.Add(-time.Minute * 5)
 		jackpotInfo.GameID = &jpGameID
+		jpStart := now.Add(-time.Second)
 		jackpotInfo.StartTime = &jpStart
-
-		// 如果是JP結果狀態，添加結束時間和獲勝者
-		if dfc.currentState == StateJPResult {
-			jpEnd := now.Add(-time.Minute)
-			winner := "U" + fmt.Sprintf("%d", rand.Intn(999999))
-			jackpotInfo.EndTime = &jpEnd
-			jackpotInfo.Winner = &winner
-		}
+		jackpotInfo.Amount = 500000 // 實際金額應該從配置或資料庫獲取
 	}
 
-	// 創建模擬玩家數據
-	topPlayers := []PlayerInfo{
-		{
-			UserID:    "U123456",
-			Nickname:  "幸運星",
-			WinAmount: 25000,
-			BetAmount: 5000,
-			Cards:     3,
-		},
-		{
-			UserID:    "U789012",
-			Nickname:  "好運連連",
-			WinAmount: 18500,
-			BetAmount: 3500,
-			Cards:     2,
-		},
-		{
-			UserID:    "U345678",
-			Nickname:  "財神到",
-			WinAmount: 12000,
-			BetAmount: 2000,
-			Cards:     1,
-		},
+	// 計算實際剩餘時間 - 基於狀態的預設持續時間
+	stateDuration := 60 // 預設每個狀態60秒
+	switch dfc.currentState {
+	case StateBetting:
+		stateDuration = 120 // 投注時間更長
+	case StateDrawing, StateJPDrawing:
+		stateDuration = 90 // 抽球時間適中
+	case StateExtraBet:
+		stateDuration = 30 // 額外投注時間較短
 	}
 
 	// 計算剩餘時間
-	remainingTime := 60 - int(now.Sub(stateStartTime).Seconds())
+	elapsed := int(now.Sub(stateStartTime).Seconds())
+	remainingTime := stateDuration - elapsed
 	if remainingTime < 0 {
 		remainingTime = 0
 	}
 
-	// 構建完整的遊戲狀態響應
+	// 構建完整的遊戲狀態響應，不使用模擬玩家數據
 	response := &GameStatusResponse{
 		Game: GameInfo{
 			ID:             dfc.currentGameID,
 			State:          string(dfc.currentState),
-			StartTime:      stateStartTime.Add(-time.Minute * 5),
+			StartTime:      stateStartTime,
 			EndTime:        endTime,
 			HasJackpot:     dfc.isJPTriggered,
 			ExtraBallCount: dfc.maxExtraBalls,
@@ -400,15 +395,15 @@ func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 				CurrentTime:    now,
 				StateStartTime: stateStartTime,
 				RemainingTime:  remainingTime,
-				MaxTimeout:     60,
+				MaxTimeout:     stateDuration,
 			},
 		},
 		LuckyNumbers:   luckyNumbers,
 		DrawnBalls:     drawnBalls,
 		ExtraBalls:     extraBalls,
 		Jackpot:        jackpotInfo,
-		TopPlayers:     topPlayers,
-		TotalWinAmount: 75800.0,
+		TopPlayers:     []PlayerInfo{}, // 不使用模擬數據，返回空陣列
+		TotalWinAmount: 0,              // 不使用模擬數據，初始為0
 	}
 
 	return response
@@ -476,4 +471,20 @@ func (dfc *DataFlowController) checkJPTrigger(ballNumber int) {
 	if matchedCount == len(dfc.jpTriggerNumbers) {
 		dfc.isJPTriggered = true
 	}
+}
+
+// SetCurrentGameID 設置當前遊戲ID
+func (dfc *DataFlowController) SetCurrentGameID(gameID string) {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	dfc.currentGameID = gameID
+}
+
+// GetCurrentGameID 獲取當前遊戲ID
+func (dfc *DataFlowController) GetCurrentGameID() string {
+	dfc.mu.RLock()
+	defer dfc.mu.RUnlock()
+
+	return dfc.currentGameID
 }
