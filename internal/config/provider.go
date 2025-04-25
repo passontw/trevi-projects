@@ -145,6 +145,23 @@ func updateConfigFromExtracted(cfg *Config, nacosConfig *NacosAppConfig, logger 
 		}
 	}
 
+	// 更新 WebSocket 端口配置
+	if nacosConfig.DealerWSPort != "" {
+		wsPortInt, err := strconv.Atoi(nacosConfig.DealerWSPort)
+		if err == nil {
+			logger.Info(fmt.Sprintf("更新荷官 WebSocket 端口: %d -> %d", cfg.Server.DealerWSPort, wsPortInt))
+			cfg.Server.DealerWSPort = uint64(wsPortInt)
+		}
+	}
+
+	if nacosConfig.PlayerWSPort != "" {
+		wsPortInt, err := strconv.Atoi(nacosConfig.PlayerWSPort)
+		if err == nil {
+			logger.Info(fmt.Sprintf("更新玩家 WebSocket 端口: %d -> %d", cfg.Server.PlayerWSPort, wsPortInt))
+			cfg.Server.PlayerWSPort = uint64(wsPortInt)
+		}
+	}
+
 	// 更新數據庫配置
 	if nacosConfig.DBHost != "" {
 		logger.Info(fmt.Sprintf("更新數據庫主機: %s -> %s", cfg.Database.Host, nacosConfig.DBHost))

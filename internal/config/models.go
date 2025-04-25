@@ -14,10 +14,12 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host    string
-	Port    uint64
-	APIHost string
-	Version string
+	Host         string
+	Port         uint64
+	DealerWSPort uint64 // 荷官端 WebSocket 端口
+	PlayerWSPort uint64 // 玩家端 WebSocket 端口 (預留)
+	APIHost      string
+	Version      string
 }
 
 type DatabaseConfig struct {
@@ -101,4 +103,14 @@ func (c *Config) GetNacosGroup() string {
 
 func (c *Config) GetNacosDataId() string {
 	return c.Nacos.DataId
+}
+
+// 獲取 DealerWSPort
+func (c *Config) GetDealerWSPort() uint64 {
+	return c.Server.DealerWSPort
+}
+
+// 獲取 PlayerWSPort
+func (c *Config) GetPlayerWSPort() uint64 {
+	return c.Server.PlayerWSPort
 }

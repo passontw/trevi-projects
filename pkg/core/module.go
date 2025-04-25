@@ -6,10 +6,10 @@ import (
 	"g38_lottery_service/internal/config"
 	"g38_lottery_service/internal/service"
 	"g38_lottery_service/pkg/databaseManager"
+	"g38_lottery_service/pkg/dealerWebsocket"
 	"g38_lottery_service/pkg/logger"
 	"g38_lottery_service/pkg/nacosManager"
 	redis "g38_lottery_service/pkg/redisManager"
-	"g38_lottery_service/pkg/websocketManager"
 
 	"go.uber.org/fx"
 )
@@ -65,15 +65,17 @@ var RedisModule = fx.Options(
 var WebSocketModule = fx.Options(
 	fx.Provide(
 		// 提供 WebSocket 管理器
-		func(authService service.AuthService) *websocketManager.Manager {
-			return websocketManager.NewManager(authService.ValidateToken)
+		func(authService service.AuthService) *dealerWebsocket.Manager {
+			return dealerWebsocket.NewManager(authService.ValidateToken)
 		},
 		// 提供 WebSocket 處理程序
-		websocketManager.NewWebSocketHandler,
+		func(manager *dealerWebsocket.Manager, authService service.AuthService) *dealerWebsocket.WebSocketHandler {
+			return dealerWebsocket.NewWebSocketHandler(manager, authService.ValidateToken)
+		},
 	),
 	// 啟動 WebSocket 管理器
 	fx.Invoke(
-		func(lc fx.Lifecycle, manager *websocketManager.Manager) {
+		func(lc fx.Lifecycle, manager *dealerWebsocket.Manager) {
 			lc.Append(fx.Hook{
 				OnStart: func(ctx context.Context) error {
 					go manager.Start(ctx)

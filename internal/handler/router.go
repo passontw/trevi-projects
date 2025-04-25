@@ -8,7 +8,7 @@ import (
 	"g38_lottery_service/internal/interfaces"
 	"g38_lottery_service/internal/middleware"
 	"g38_lottery_service/internal/service"
-	"g38_lottery_service/pkg/websocketManager"
+	"g38_lottery_service/pkg/dealerWebsocket"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -31,7 +31,7 @@ func NewRouter(
 	userHandler *UserHandler,
 	gameHandler *GameHandler,
 	authService service.AuthService,
-	wsHandler *websocketManager.WebSocketHandler,
+	wsHandler *dealerWebsocket.WebSocketHandler,
 ) *gin.Engine {
 	r := gin.Default()
 	r.Use(configureCORS())
@@ -41,7 +41,9 @@ func NewRouter(
 		c.JSON(http.StatusOK, SuccessResponse{Message: "Service is healthy"})
 	})
 
-	r.GET("/ws", wsHandler.HandleConnection)
+	r.GET("/ws", func(c *gin.Context) {
+		wsHandler.HandleWebSocket(c.Writer, c.Request)
+	})
 
 	api := r.Group("/api/v1")
 	{
