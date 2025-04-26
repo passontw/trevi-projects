@@ -5,9 +5,6 @@ import (
 	"net/http"
 
 	"g38_lottery_service/internal/config"
-	"g38_lottery_service/internal/interfaces"
-	"g38_lottery_service/internal/middleware"
-	"g38_lottery_service/internal/service"
 	"g38_lottery_service/pkg/dealerWebsocket"
 
 	"github.com/gin-gonic/gin"
@@ -23,14 +20,9 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-type UserResponse = interfaces.User
-
 func NewRouter(
 	cfg *config.Config,
-	authHandler *AuthHandler,
-	userHandler *UserHandler,
 	gameHandler *GameHandler,
-	authService service.AuthService,
 	wsHandler *dealerWebsocket.WebSocketHandler,
 ) *gin.Engine {
 	r := gin.Default()
@@ -47,8 +39,8 @@ func NewRouter(
 
 	api := r.Group("/api/v1")
 	{
-		configurePublicRoutes(api, authHandler, userHandler, gameHandler)
-		configureAuthenticatedRoutes(api, authHandler, userHandler, gameHandler, authService)
+		configurePublicRoutes(api, gameHandler)
+		configureAuthenticatedRoutes(api, gameHandler)
 	}
 
 	return r
@@ -70,21 +62,13 @@ func configureCORS() gin.HandlerFunc {
 	}
 }
 
-func configurePublicRoutes(api *gin.RouterGroup, authHandler *AuthHandler, userHandler *UserHandler, gameHandler *GameHandler) {
-	api.POST("/auth", authHandler.UserLogin)
-	api.POST("/users", userHandler.CreateUser)
-
+func configurePublicRoutes(api *gin.RouterGroup, gameHandler *GameHandler) {
 	api.GET("/game/status", gameHandler.GetGameStatus)
 	api.GET("/game/state", gameHandler.GetGameState)
 }
 
-func configureAuthenticatedRoutes(api *gin.RouterGroup, authHandler *AuthHandler, userHandler *UserHandler, gameHandler *GameHandler, authService service.AuthService) {
+func configureAuthenticatedRoutes(api *gin.RouterGroup, gameHandler *GameHandler) {
 	authorized := api.Group("/")
-	authorized.Use(middleware.AuthMiddleware(authService))
-
-	authorized.POST("/auth/logout", authHandler.UserLogout)
-	authorized.POST("/auth/token", authHandler.ValidateToken)
-	authorized.GET("/users", userHandler.GetUsers)
 
 	authorized.POST("/game/state", gameHandler.ChangeGameState)
 }

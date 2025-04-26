@@ -6,8 +6,6 @@ import (
 
 var Module = fx.Options(
 	fx.Provide(
-		NewUserHandler,
-		NewAuthHandler,
 		NewGameHandler,
 		NewRouter,
 	),

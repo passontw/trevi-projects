@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"g38_lottery_service/internal/config"
-	"g38_lottery_service/internal/service"
 	"g38_lottery_service/pkg/databaseManager"
 	"g38_lottery_service/pkg/dealerWebsocket"
 	"g38_lottery_service/pkg/logger"
@@ -64,13 +63,21 @@ var RedisModule = fx.Options(
 // WebSocketModule WebSocket 模組
 var WebSocketModule = fx.Options(
 	fx.Provide(
-		// 提供 WebSocket 管理器
-		func(authService service.AuthService) *dealerWebsocket.Manager {
-			return dealerWebsocket.NewManager(authService.ValidateToken)
+		// 提供 WebSocket 管理器，使用空的驗證函數
+		func() *dealerWebsocket.Manager {
+			// 使用一個始終返回成功的驗證函數
+			tokenValidator := func(token string) (uint, error) {
+				return 1, nil // 假設用戶ID為1
+			}
+			return dealerWebsocket.NewManager(tokenValidator)
 		},
-		// 提供 WebSocket 處理程序
-		func(manager *dealerWebsocket.Manager, authService service.AuthService) *dealerWebsocket.WebSocketHandler {
-			return dealerWebsocket.NewWebSocketHandler(manager, authService.ValidateToken)
+		// 提供 WebSocket 處理程序，使用空的驗證函數
+		func(manager *dealerWebsocket.Manager) *dealerWebsocket.WebSocketHandler {
+			// 使用一個始終返回成功的驗證函數
+			tokenValidator := func(token string) (uint, error) {
+				return 1, nil // 假設用戶ID為1
+			}
+			return dealerWebsocket.NewWebSocketHandler(manager, tokenValidator)
 		},
 	),
 	// 啟動 WebSocket 管理器

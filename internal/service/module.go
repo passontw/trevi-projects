@@ -8,12 +8,6 @@ import (
 
 var Module = fx.Options(
 	fx.Provide(
-		ProvideGormDB,
-		fx.Annotate(
-			NewUserService,
-			fx.As(new(UserService)),
-		),
-		NewAuthService,
 		fx.Annotate(
 			NewGameService,
 			fx.As(new(GameService)),
