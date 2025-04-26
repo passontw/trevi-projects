@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
 	"g38_lottery_service/internal/config"
@@ -72,9 +73,14 @@ func configureAuthenticatedRoutes(api *gin.RouterGroup, gameHandler *GameHandler
 
 	authorized.POST("/game/state", gameHandler.ChangeGameState)
 }
-
 func StartServer(cfg *config.Config, router *gin.Engine) {
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
-	fmt.Printf("正在使用端口 %d 啟動服務器...\n", cfg.Server.Port)
-	router.Run(addr)
+	fmt.Printf("正在使用端口 %d 啟動 API 服務器...\n", cfg.Server.Port)
+
+	// 將 Gin 服務器的啟動放在單獨的 goroutine 中，避免阻塞 FX 生命週期
+	go func() {
+		if err := router.Run(addr); err != nil {
+			log.Fatalf("無法啟動 API 服務器: %v", err)
+		}
+	}()
 }
