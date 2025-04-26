@@ -10,7 +10,8 @@ import (
 	_ "g38_lottery_service/docs"
 	"g38_lottery_service/pkg/core"
 	"g38_lottery_service/pkg/utils"
-	"g38_lottery_service/pkg/websocket"
+
+	// "g38_lottery_service/pkg/websocket" // 註釋掉，避免衝突
 
 	"go.uber.org/fx"
 )
@@ -44,8 +45,8 @@ func main() {
 		service.Module,
 		handler.Module,
 
-		// 新增 WebSocket 模組
-		websocket.Module,
+		// 註釋掉重複的 WebSocket 模組
+		// websocket.Module,
 	)
 
 	app.Run()
