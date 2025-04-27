@@ -19,7 +19,6 @@ type GameState string
 
 const (
 	StateInitial         GameState = "INITIAL"           // 初始狀態
-	StateAgent           GameState = "AGENT"             // 代理狀態
 	StateStandby         GameState = "STANDBY"           // 待機狀態
 	StateReady           GameState = "READY"             // 待機狀態 對到 GAME_READY 等待開局
 	StateShowLuckyNums   GameState = "SHOW_LUCKYNUMS"    // 開七個幸運球的狀態
@@ -420,8 +419,7 @@ func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 // isValidStateTransition 檢查狀態轉換是否合法
 func (dfc *DataFlowController) isValidStateTransition(from, to GameState) bool {
 	validTransitions := map[GameState][]GameState{
-		StateInitial:         {StateStandby, StateReady, StateAgent},
-		StateAgent:           {StateReady, StateInitial},
+		StateInitial:         {StateStandby, StateReady},
 		StateStandby:         {StateBetting},
 		StateReady:           {StateBetting},
 		StateBetting:         {StateDrawing},
