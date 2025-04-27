@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/service"
 	"g38_lottery_service/pkg/databaseManager"
 	"g38_lottery_service/pkg/dealerWebsocket"
 	"g38_lottery_service/pkg/logger"
@@ -72,11 +73,18 @@ var WebSocketModule = fx.Options(
 			return dealerWebsocket.NewManager(tokenValidator)
 		},
 		// 提供荷官 WebSocket 處理程序，使用空的驗證函數
-		func(manager *dealerWebsocket.Manager) *dealerWebsocket.WebSocketHandler {
+		func(manager *dealerWebsocket.Manager, gameService service.GameService) *dealerWebsocket.WebSocketHandler {
 			// 使用一個始終返回成功的驗證函數
 			tokenValidator := func(token string) (uint, error) {
 				return 1, nil // 假設用戶ID為1
 			}
+
+			// 創建消息處理器
+			messageHandler := dealerWebsocket.NewDealerMessageHandler(gameService)
+
+			// 設置消息處理器
+			manager.SetMessageHandler(messageHandler)
+
 			return dealerWebsocket.NewWebSocketHandler(manager, tokenValidator)
 		},
 		// 提供玩家 WebSocket 管理器，使用空的驗證函數

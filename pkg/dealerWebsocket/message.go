@@ -21,6 +21,15 @@ const (
 	MessageTypeTicketStatus   = "ticket_status"   // 票券狀態更新
 	MessageTypeDrawResult     = "draw_result"     // 開獎結果
 	MessageTypeAccountUpdate  = "account_update"  // 賬戶更新
+
+	// 遊戲命令類型
+	MessageTypeGameStart        = "GAME_START"          // 遊戲開始命令
+	MessageTypeGameResponse     = "GAME_START_RESPONSE" // 遊戲開始回應
+	MessageTypeShowLuckyNumbers = "SHOW_LUCKY_NUMBERS"  // 顯示幸運號碼命令
+	MessageTypeDrawBall         = "DRAW_BALL"           // 抽球命令
+	MessageTypeDrawExtraBall    = "DRAW_EXTRA_BALL"     // 抽額外球命令
+	MessageTypeStartJPGame      = "START_JP_GAME"       // 開始JP遊戲命令
+	MessageTypeDrawJPBall       = "DRAW_JP_BALL"        // 抽JP球命令
 )
 
 // 基礎消息結構 - 使用不同名稱避免衝突
@@ -86,6 +95,27 @@ type AccountUpdateMessage struct {
 	Description string    `json:"description"` // 描述
 }
 
+// 遊戲開始命令消息
+type GameStartMessage struct {
+	// 沒有額外參數，僅使用基本的Type欄位
+}
+
+// 遊戲開始回應消息
+type GameStartResponseMessage struct {
+	GameID     string    `json:"game_id"`     // 遊戲ID
+	State      string    `json:"state"`       // 遊戲狀態
+	HasJackpot bool      `json:"has_jackpot"` // 是否有JP遊戲
+	StartTime  time.Time `json:"start_time"`  // 開始時間
+}
+
+// WebSocket回應結構
+type WebSocketResponse struct {
+	Success bool        `json:"success"`           // 是否成功
+	Message string      `json:"message,omitempty"` // 消息
+	Type    string      `json:"type,omitempty"`    // 類型
+	Data    interface{} `json:"data,omitempty"`    // 數據
+}
+
 // 創建新消息
 func NewMessage(messageType string, data interface{}) *BasicMessage {
 	return &BasicMessage{
@@ -141,7 +171,42 @@ func NewErrorMessage(code int, message string) *BasicMessage {
 	return NewMessage(MessageTypeError, errorData)
 }
 
+// 創建遊戲開始回應消息
+func NewGameStartResponseMessage(gameID string, state string, hasJackpot bool, startTime time.Time) *BasicMessage {
+	responseData := GameStartResponseMessage{
+		GameID:     gameID,
+		State:      state,
+		HasJackpot: hasJackpot,
+		StartTime:  startTime,
+	}
+	return NewMessage(MessageTypeGameResponse, responseData)
+}
+
+// 創建成功的WebSocket回應
+func NewSuccessResponse(responseType string, message string, data interface{}) WebSocketResponse {
+	return WebSocketResponse{
+		Success: true,
+		Message: message,
+		Type:    responseType,
+		Data:    data,
+	}
+}
+
+// 創建錯誤的WebSocket回應
+func NewErrorResponse(message string) WebSocketResponse {
+	return WebSocketResponse{
+		Success: false,
+		Message: message,
+		Type:    "ERROR",
+	}
+}
+
 // 將消息轉換為JSON
 func (m *BasicMessage) ToJSON() ([]byte, error) {
 	return json.Marshal(m)
+}
+
+// 將WebSocket回應轉換為JSON
+func (r *WebSocketResponse) ToJSON() ([]byte, error) {
+	return json.Marshal(r)
 }

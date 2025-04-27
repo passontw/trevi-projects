@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,19 +48,20 @@ type HeartbeatMessage struct {
 
 // 客戶端結構體，代表一個 WebSocket 連接
 type Client struct {
-	ID              string          // 客戶端唯一標識
-	UserID          uint            // 用戶 ID
-	Conn            *websocket.Conn // WebSocket 連接
-	Send            chan []byte     // 發送訊息的通道
-	manager         *Manager        // 所屬的管理器
-	LastActivity    time.Time       // 最後活動時間
-	IsAuthed        bool            // 是否已認證
-	closeChan       chan struct{}   // 關閉通道
-	heartbeatTicker *time.Ticker    // 心跳定時器
-	connMutex       sync.Mutex      // 連接鎖，防止並發讀寫
-	closeReason     string          // 關閉原因
-	rooms           []string        // 客戶端所在的房間列表
-	games           []string        // 客戶端所在的遊戲列表
+	ID                   string          // 客戶端唯一標識
+	UserID               uint            // 用戶 ID
+	Conn                 *websocket.Conn // WebSocket 連接
+	Send                 chan []byte     // 發送訊息的通道
+	manager              *Manager        // 所屬的管理器
+	LastActivity         time.Time       // 最後活動時間
+	IsAuthed             bool            // 是否已認證
+	closeChan            chan struct{}   // 關閉通道
+	heartbeatTicker      *time.Ticker    // 心跳定時器
+	connMutex            sync.Mutex      // 連接鎖，防止並發讀寫
+	closeReason          string          // 關閉原因
+	rooms                []string        // 客戶端所在的房間列表
+	games                []string        // 客戶端所在的遊戲列表
+	heartbeatErrorLogged bool
 }
 
 // 客戶端狀態
@@ -72,24 +74,20 @@ const (
 	StateFailed
 )
 
-// 處理程序接口 - 由具體業務實現
+// MessageHandler 定義消息處理器介面
 type MessageHandler interface {
-	// 處理接收到的消息
+	// 處理消息
 	HandleMessage(client *Client, messageType string, data interface{})
-	// 處理客戶端連接成功事件
+	// 處理連接
 	HandleConnect(client *Client)
-	// 處理客戶端斷開連接事件
+	// 處理斷開連接
 	HandleDisconnect(client *Client)
 }
 
-// 定義消息
+// Message 消息結構
 type Message struct {
-	// 消息類型
-	Type string
-	// 客戶端
-	Client *Client
-	// 數據
-	Data []byte
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
 }
 
 // WebSocket 管理器結構體
@@ -597,128 +595,150 @@ func (manager *Manager) SendToUser(userID uint, message interface{}) error {
 	return nil
 }
 
-// 客戶端讀取訊息
-func (client *Client) ReadPump() {
-	// 初始化關閉通道
-	if client.closeChan == nil {
-		client.closeChan = make(chan struct{})
-	}
-
+// ReadPump 從websocket連接中讀取資料
+func (c *Client) ReadPump() {
 	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Dealer WebSocket Manager: Client %s ReadPump recovered from panic: %v\n", client.ID, r)
-		}
-		// 客戶端斷開連接
-		client.closeReason = "read pump exiting"
-		client.manager.unregister <- client
-		client.Conn.Close()
+		c.manager.unregister <- c
+		_ = c.Conn.Close()
 	}()
 
-	// 設置讀取參數 - 確保使用一致的超時設置
-	client.Conn.SetReadLimit(maxMessageSize)
-	client.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.Conn.SetReadLimit(maxMessageSize)
+	_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.Conn.SetPongHandler(func(string) error { _ = c.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 
-	// 設置Pong處理器，更新最後活動時間
-	client.Conn.SetPongHandler(func(string) error {
-		client.connMutex.Lock()
-		defer client.connMutex.Unlock()
-
-		client.Conn.SetReadDeadline(time.Now().Add(pongWait))
-		client.LastActivity = time.Now()
-		// 在日誌級別為Debug時記錄pong消息
-		log.Printf("Dealer WebSocket Manager: Client %s received pong\n", client.ID)
-		return nil
-	})
-
-	// 啟動心跳
-	client.StartHeartbeat()
+	// 如果設置了處理連接的消息處理器，則調用它
+	if c.manager.messageHandler != nil {
+		c.manager.messageHandler.HandleConnect(c)
+	}
 
 	for {
-		select {
-		case <-client.closeChan:
-			// 收到關閉信號，靜默退出
-			return
-		default:
-			messageType, message, err := client.Conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("Dealer WebSocket Manager: Client %s unexpected close: %v\n", client.ID, err)
-				} else if !strings.Contains(err.Error(), "use of closed network connection") &&
-					!strings.Contains(err.Error(), "websocket: close") {
-					// 只記錄非正常關閉的錯誤
-					log.Printf("Dealer WebSocket Manager: Client %s read error: %v\n", client.ID, err)
-				}
-				return
+		_, message, err := c.Conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("websocket連接錯誤: %v", err)
 			}
-
-			// 過濾非文本消息
-			if messageType != websocket.TextMessage {
-				log.Printf("Dealer WebSocket Manager: Client %s received non-text message type: %d\n", client.ID, messageType)
-				continue
+			// 如果設置了處理斷開連接的消息處理器，則調用它
+			if c.manager.messageHandler != nil {
+				c.manager.messageHandler.HandleDisconnect(c)
 			}
+			break
+		}
 
-			client.connMutex.Lock()
-			client.LastActivity = time.Now()
-			client.Conn.SetReadDeadline(time.Now().Add(pongWait))
-			client.connMutex.Unlock()
+		// 嘗試將消息解析為標準命令格式
+		var cmd struct {
+			Type      string          `json:"type"`
+			Data      json.RawMessage `json:"data"`
+			Timestamp int64           `json:"timestamp"`
+		}
 
-			// 處理接收到的訊息
-			var msg Message
-			if err := json.Unmarshal(message, &msg); err != nil {
-				// 記錄錯誤，但不記錄原始消息內容以減少日誌量
-				log.Printf("Dealer WebSocket Manager: Error unmarshaling message from client %s: %v\n", client.ID, err)
-				continue
-			}
+		if err := json.Unmarshal(message, &cmd); err == nil && cmd.Type != "" {
+			// 消息是標準命令格式
 
-			// 處理心跳訊息 - 不記錄日誌
-			if msg.Type == "heartbeat" {
-				// 客戶端發送的心跳，直接回應
-				heartbeatResponse := HeartbeatMessage{
-					Type:      "heartbeat",
-					Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
-				}
-				responseBytes, _ := json.Marshal(heartbeatResponse)
+			// 特別處理心跳消息
+			if cmd.Type == "heartbeat" {
+				// 回應心跳消息
+				heartbeatResponse := []byte(`{"type":"heartbeat_response","data":{},"timestamp":` + strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) + `}`)
 
+				// 不阻塞地發送心跳響應
 				select {
-				case client.Send <- responseBytes:
-					// 心跳已送入通道，不記錄日誌
+				case c.Send <- heartbeatResponse:
+					// 心跳響應已發送
 				default:
-					// 只在發送通道滿時記錄
-					log.Printf("Dealer WebSocket Manager: Client %s send channel full for heartbeat\n", client.ID)
+					// 發送通道已滿，這種情況下只記錄一次
+					if !c.heartbeatErrorLogged {
+						log.Printf("客戶端 %s 發送緩衝區已滿，無法發送心跳響應", c.ID)
+						c.heartbeatErrorLogged = true
+					}
 				}
 				continue
 			}
 
-			// 處理基準測試訊息 - 不記錄日誌
-			if msg.Type == "benchmark" {
-				responseMsg := struct {
-					Type      string `json:"type"`
-					Timestamp int64  `json:"timestamp"`
-				}{
-					Type:      "benchmark",
-					Timestamp: time.Now().UnixNano(),
-				}
+			// 特別處理基準測試消息
+			if cmd.Type == "benchmark" {
+				// 回應基準測試消息
+				benchmarkResponse := []byte(`{"type":"benchmark_response","data":{},"timestamp":` + strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) + `}`)
 
-				responseBytes, err := json.Marshal(responseMsg)
-				if err != nil {
-					log.Printf("Dealer WebSocket Manager: Error marshaling benchmark response: %v\n", err)
-					continue
-				}
-
+				// 不阻塞地發送基準測試響應
 				select {
-				case client.Send <- responseBytes:
-					// 成功發送，不記錄日誌
+				case c.Send <- benchmarkResponse:
+					// 基準測試響應已發送
 				default:
-					// 只在發送通道滿時記錄
-					log.Printf("Dealer WebSocket Manager: Failed to send benchmark response, buffer full for client %s\n", client.ID)
+					// 發送通道已滿，記錄錯誤
+					log.Printf("客戶端 %s 發送緩衝區已滿，無法發送基準測試響應", c.ID)
 				}
 				continue
 			}
 
-			// 處理其他訊息 - 只記錄重要的非心跳非基準測試消息
-			if msg.Type != "heartbeat" && msg.Type != "benchmark" {
-				log.Printf("Dealer WebSocket Manager: Received %s message from client %s\n", msg.Type, client.ID)
+			// 處理業務命令消息
+			log.Printf("處理業務命令: %s", cmd.Type)
+
+			// 如果設置了消息處理器，使用它處理消息
+			if c.manager.messageHandler != nil {
+				var data interface{}
+				if len(cmd.Data) > 0 {
+					if err := json.Unmarshal(cmd.Data, &data); err != nil {
+						log.Printf("解析命令數據失敗: %v", err)
+						// 如果解析失敗，傳遞原始數據
+						data = cmd.Data
+					}
+				}
+
+				c.manager.messageHandler.HandleMessage(c, cmd.Type, data)
+			} else {
+				log.Printf("未設置消息處理器，無法處理消息: %s", cmd.Type)
 			}
+
+			continue
+		}
+
+		// 如果不是標準命令格式，則處理為普通消息
+		log.Printf("收到普通消息（非標準命令格式）: %s", message)
+
+		msg := Message{}
+		if err := json.Unmarshal(message, &msg); err != nil {
+			log.Printf("解析消息失敗: %v", err)
+			continue
+		}
+
+		// 如果是心跳消息，則不記錄
+		if msg.Type == "heartbeat" {
+			// 回應心跳消息
+			response := Message{
+				Type: "heartbeat_response",
+				Data: map[string]interface{}{},
+			}
+			responseJSON, _ := json.Marshal(response)
+
+			// 不阻塞地發送心跳響應
+			select {
+			case c.Send <- responseJSON:
+				// 心跳響應已發送
+			default:
+				// 發送通道已滿，這種情況下只記錄一次
+				if !c.heartbeatErrorLogged {
+					log.Printf("客戶端 %s 發送緩衝區已滿，無法發送心跳響應", c.ID)
+					c.heartbeatErrorLogged = true
+				}
+			}
+		} else if msg.Type == "benchmark" {
+			// 回應基準測試消息
+			response := Message{
+				Type: "benchmark_response",
+				Data: map[string]interface{}{},
+			}
+			responseJSON, _ := json.Marshal(response)
+
+			// 不阻塞地發送基準測試響應
+			select {
+			case c.Send <- responseJSON:
+				// 基準測試響應已發送
+			default:
+				// 發送通道已滿，記錄錯誤
+				log.Printf("客戶端 %s 發送緩衝區已滿，無法發送基準測試響應", c.ID)
+			}
+		} else {
+			// 記錄重要消息
+			log.Printf("收到消息: %v", msg)
 		}
 	}
 }
@@ -1252,4 +1272,13 @@ func (m *Manager) removeClientFromGames(client *Client) {
 		}
 	}
 	client.games = []string{}
+}
+
+// SetMessageHandler 設置消息處理器
+func (manager *Manager) SetMessageHandler(handler MessageHandler) {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+
+	manager.messageHandler = handler
+	log.Printf("Dealer WebSocket Manager: Message handler has been set")
 }
