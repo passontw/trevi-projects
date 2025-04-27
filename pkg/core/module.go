@@ -72,6 +72,13 @@ var WebSocketModule = fx.Options(
 			}
 			return dealerWebsocket.NewManager(tokenValidator)
 		},
+		// 將 *dealerWebsocket.Manager 標記為實現 service.WebsocketManager 介面
+		fx.Annotate(
+			func(manager *dealerWebsocket.Manager) service.WebsocketManager {
+				return manager // 將現有的 Manager 實例作為 WebsocketManager 介面返回
+			},
+			fx.As(new(service.WebsocketManager)),
+		),
 		// 提供荷官 WebSocket 處理程序，使用空的驗證函數
 		func(manager *dealerWebsocket.Manager, gameService service.GameService) *dealerWebsocket.WebSocketHandler {
 			// 使用一個始終返回成功的驗證函數

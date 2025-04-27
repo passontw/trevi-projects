@@ -54,9 +54,10 @@ type DataFlowController struct {
 	stateHistory []GameState // 狀態歷史記錄
 
 	// 球池管理
-	sourceBalls []int        // 原始球池 (例如: 1-75)
-	drawnBalls  []DrawResult // 已抽出的球
-	extraBalls  []DrawResult // 額外球
+	sourceBalls  []int        // 原始球池 (例如: 1-75)
+	drawnBalls   []DrawResult // 已抽出的球
+	extraBalls   []DrawResult // 額外球
+	luckyNumbers []int        // 幸運號碼
 
 	// 遊戲設定
 	totalBalls    int // 總球數
@@ -77,9 +78,10 @@ func NewDataFlowController() *DataFlowController {
 		sourceBalls:      make([]int, 0),
 		drawnBalls:       make([]DrawResult, 0),
 		extraBalls:       make([]DrawResult, 0),
-		totalBalls:       75, // 預設75球
-		mainDrawCount:    30, // 預設主遊戲抽30球
-		maxExtraBalls:    3,  // 預設最多3顆額外球
+		luckyNumbers:     make([]int, 0), // 初始化幸運號碼陣列
+		totalBalls:       75,             // 預設75球
+		mainDrawCount:    30,             // 預設主遊戲抽30球
+		maxExtraBalls:    3,              // 預設最多3顆額外球
 		jpTriggerNumbers: make([]int, 0),
 		isJPTriggered:    false,
 	}
@@ -284,6 +286,45 @@ func (dfc *DataFlowController) VerifyTwoBalls(ball1, ball2 int) bool {
 	return true
 }
 
+// SetLuckyNumbers 生成7個幸運號碼
+func (dfc *DataFlowController) SetLuckyNumbers() []int {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	// 清空現有幸運號碼
+	dfc.luckyNumbers = make([]int, 0, 7)
+
+	// 創建一個75球的陣列
+	nums := make([]int, dfc.totalBalls)
+	for i := 0; i < dfc.totalBalls; i++ {
+		nums[i] = i + 1
+	}
+
+	// Fisher-Yates洗牌算法，隨機抽出7個不重複的號碼
+	for i := 0; i < 7; i++ {
+		// 隨機選擇剩餘球中的一個
+		j := i + rand.Intn(dfc.totalBalls-i)
+		// 交換球的位置
+		nums[i], nums[j] = nums[j], nums[i]
+		// 將選中的球加入幸運號碼
+		dfc.luckyNumbers = append(dfc.luckyNumbers, nums[i])
+	}
+
+	log.Printf("已生成幸運號碼: %v", dfc.luckyNumbers)
+
+	return dfc.luckyNumbers
+}
+
+// GetLuckyNumbers 獲取幸運號碼
+func (dfc *DataFlowController) GetLuckyNumbers() []int {
+	dfc.mu.RLock()
+	defer dfc.mu.RUnlock()
+
+	result := make([]int, len(dfc.luckyNumbers))
+	copy(result, dfc.luckyNumbers)
+	return result
+}
+
 // GetGameStatus API 功能：取回現在的遊戲狀態
 func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 	dfc.mu.RLock()
@@ -333,17 +374,9 @@ func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 		})
 	}
 
-	// 創建空的幸運數字陣列，而不是隨機生成
-	luckyNumbers := make([]int, 0)
-	if dfc.currentState == StateShowLuckyNums {
-		// 當狀態是顯示幸運號碼時才會有值
-		// 後續可以修改為從資料庫或配置中獲取實際數值
-		luckyNumbers = make([]int, 7)
-		for i := 0; i < 7; i++ {
-			// 暫時使用固定值來替代模擬值
-			luckyNumbers[i] = (i + 1) * 10
-		}
-	}
+	// 使用實際設置的幸運號碼，而不是固定生成
+	luckyNumbers := make([]int, len(dfc.luckyNumbers))
+	copy(luckyNumbers, dfc.luckyNumbers)
 
 	// 創建實際的JP數據，而非模擬數據
 	jpGameID := ""
@@ -421,7 +454,7 @@ func (dfc *DataFlowController) isValidStateTransition(from, to GameState) bool {
 	validTransitions := map[GameState][]GameState{
 		StateInitial:         {StateStandby, StateReady},
 		StateStandby:         {StateBetting},
-		StateReady:           {StateBetting},
+		StateReady:           {StateBetting, StateShowLuckyNums},
 		StateBetting:         {StateDrawing},
 		StateDrawing:         {StateExtraBet, StateJPStandby},
 		StateExtraBet:        {StateExtraDraw},
@@ -457,6 +490,7 @@ func (dfc *DataFlowController) isValidStateTransition(from, to GameState) bool {
 func (dfc *DataFlowController) resetGame() {
 	dfc.drawnBalls = make([]DrawResult, 0)
 	dfc.extraBalls = make([]DrawResult, 0)
+	dfc.luckyNumbers = make([]int, 0) // 重置幸運號碼
 	dfc.isJPTriggered = false
 	dfc.currentGameID = fmt.Sprintf("G%d", time.Now().UnixNano())
 }
@@ -497,4 +531,12 @@ func (dfc *DataFlowController) GetCurrentGameID() string {
 	defer dfc.mu.RUnlock()
 
 	return dfc.currentGameID
+}
+
+// ResetGame 公開方法，重置遊戲狀態
+func (dfc *DataFlowController) ResetGame() {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	dfc.resetGame()
 }

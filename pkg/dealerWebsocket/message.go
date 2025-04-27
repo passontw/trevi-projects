@@ -30,6 +30,9 @@ const (
 	MessageTypeDrawExtraBall    = "DRAW_EXTRA_BALL"     // 抽額外球命令
 	MessageTypeStartJPGame      = "START_JP_GAME"       // 開始JP遊戲命令
 	MessageTypeDrawJPBall       = "DRAW_JP_BALL"        // 抽JP球命令
+
+	// 遊戲事件類型
+	MessageTypeLuckyNumbersSet = "LUCKY_NUMBERS_SET" // 幸運號碼設置事件
 )
 
 // 基礎消息結構 - 使用不同名稱避免衝突

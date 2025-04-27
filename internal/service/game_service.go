@@ -2,7 +2,7 @@ package service
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"log"
 	"time"
 
@@ -10,9 +10,13 @@ import (
 	"g38_lottery_service/internal/model"
 	"g38_lottery_service/pkg/databaseManager"
 
-	"github.com/google/uuid"
 	"go.uber.org/fx"
 )
+
+// WebsocketManager 是一個抽象的 WebSocket 管理器接口
+type WebsocketManager interface {
+	BroadcastToAll(message interface{}) error
+}
 
 // GameService 定義遊戲服務介面
 type GameService interface {
@@ -36,19 +40,25 @@ type GameService interface {
 	GetExtraBalls() []game.DrawResult
 	// 創建新遊戲（處理 GAME_START 命令）
 	CreateGame() (*model.Game, error)
+	// 生成幸運號碼
+	SetLuckyNumbers() []int
+	// 獲取幸運號碼
+	GetLuckyNumbers() []int
 }
 
 // gameServiceImpl 實現 GameService 接口
 type gameServiceImpl struct {
 	controller *game.DataFlowController
 	db         databaseManager.DatabaseManager
+	wsManager  WebsocketManager
 }
 
 // NewGameService 創建一個新的遊戲服務
-func NewGameService(lc fx.Lifecycle, controller *game.DataFlowController, db databaseManager.DatabaseManager) GameService {
+func NewGameService(lc fx.Lifecycle, controller *game.DataFlowController, db databaseManager.DatabaseManager, wsManager WebsocketManager) GameService {
 	service := &gameServiceImpl{
 		controller: controller,
 		db:         db,
+		wsManager:  wsManager,
 	}
 
 	// 設置生命周期鉤子
@@ -112,48 +122,95 @@ func (s *gameServiceImpl) GetExtraBalls() []game.DrawResult {
 	return s.controller.GetExtraBalls()
 }
 
-// CreateGame 創建新遊戲（處理 GAME_START 命令）
+// CreateGame 創建新遊戲
 func (s *gameServiceImpl) CreateGame() (*model.Game, error) {
-	gameID := uuid.NewString()
-	game := &model.Game{
-		ID:         gameID,
-		State:      model.GameStateReady,
-		StartTime:  time.Now(),
-		HasJackpot: false,
+	// 重置控制器狀態
+	s.controller.ResetGame()
+
+	// 創建新遊戲記錄
+	newGame := model.NewGame()
+
+	// 在這裡設置遊戲ID
+	s.controller.SetCurrentGameID(newGame.ID)
+
+	// 保存遊戲記錄到數據庫
+	// TODO: 需要實現遊戲存儲功能
+	// 暫時跳過資料庫存儲
+	log.Printf("創建新遊戲: %s", newGame.ID)
+
+	// 生成幸運號碼
+	luckyNumbers := s.SetLuckyNumbers()
+	log.Printf("已為遊戲 %s 生成幸運號碼: %v", newGame.ID, luckyNumbers)
+
+	// 確保遊戲記錄中包含幸運號碼
+	luckyNumbersJSON, _ := json.Marshal(luckyNumbers)
+	luckyNumbersJSONStr := string(luckyNumbersJSON)
+	newGame.LuckyNumbersJSON = &luckyNumbersJSONStr
+
+	// 更改遊戲狀態為顯示幸運號碼
+	if err := s.ChangeState(game.StateShowLuckyNums); err != nil {
+		log.Printf("更改遊戲狀態失敗: %v", err)
+		return newGame, err
 	}
 
-	// 寫入資料庫
-	db := s.db.GetDB()
-	txdb := db.Begin()
-	if txdb.Error != nil {
-		return nil, fmt.Errorf("開始事務失敗: %w", txdb.Error)
+	log.Printf("遊戲狀態已更改為: %s", game.StateShowLuckyNums)
+
+	return newGame, nil
+}
+
+// SetLuckyNumbers 生成幸運號碼並通知荷官端
+func (s *gameServiceImpl) SetLuckyNumbers() []int {
+	// 生成幸運號碼
+	luckyNumbers := s.controller.SetLuckyNumbers()
+
+	// 構建幸運號碼設置通知
+	status := s.controller.GetGameStatus()
+
+	// 創建通知結構 - 嚴格遵照 EventLuckyNumbersSet 格式
+	notification := map[string]interface{}{
+		"type": "LUCKY_NUMBERS_SET",
+		"data": map[string]interface{}{
+			"game": map[string]interface{}{
+				"id":             status.Game.ID,
+				"state":          status.Game.State,
+				"startTime":      status.Game.StartTime,
+				"endTime":        status.Game.EndTime,
+				"hasJackpot":     status.Game.HasJackpot,
+				"extraBallCount": status.Game.ExtraBallCount,
+			},
+			"luckyNumbers": luckyNumbers,
+			"drawnBalls":   []interface{}{},
+			"extraBalls":   []interface{}{},
+			"jackpot": map[string]interface{}{
+				"active":     false,
+				"gameId":     nil,
+				"amount":     0,
+				"startTime":  nil,
+				"endTime":    nil,
+				"drawnBalls": []interface{}{},
+				"winner":     nil,
+			},
+			"topPlayers":     []interface{}{},
+			"totalWinAmount": 0,
+		},
+		"timestamp": time.Now().Format(time.RFC3339),
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			txdb.Rollback()
-		}
-	}()
+	// 詳細記錄通知內容以便調試
+	notificationJSON, _ := json.Marshal(notification)
+	log.Printf("發送幸運號碼通知: %s", string(notificationJSON))
 
-	// 插入記錄到資料庫
-	sql := `INSERT INTO games (id, state, start_time, has_jackpot) VALUES (?, ?, ?, ?)`
-	err := txdb.Exec(sql, game.ID, game.State, game.StartTime, game.HasJackpot).Error
-	if err != nil {
-		txdb.Rollback()
-		return nil, fmt.Errorf("創建遊戲記錄失敗: %w", err)
+	// 發送通知給所有荷官端
+	if err := s.wsManager.BroadcastToAll(notification); err != nil {
+		log.Printf("發送幸運號碼通知失敗: %v", err)
+	} else {
+		log.Printf("成功向所有荷官端發送幸運號碼通知")
 	}
 
-	if err := txdb.Commit().Error; err != nil {
-		return nil, fmt.Errorf("提交事務失敗: %w", err)
-	}
+	return luckyNumbers
+}
 
-	// 更新控制器的遊戲ID
-	s.controller.SetCurrentGameID(game.ID)
-
-	// 嘗試將狀態更改為準備狀態
-	_ = s.ChangeState("READY")
-
-	log.Printf("成功創建新遊戲 ID: %s, 開始時間: %v", game.ID, game.StartTime)
-
-	return game, nil
+// GetLuckyNumbers 獲取幸運號碼
+func (s *gameServiceImpl) GetLuckyNumbers() []int {
+	return s.controller.GetLuckyNumbers()
 }
