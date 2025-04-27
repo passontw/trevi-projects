@@ -2,6 +2,7 @@ package game
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"sync"
 	"time"
@@ -72,7 +73,7 @@ type DataFlowController struct {
 // NewDataFlowController 創建一個新的DataFlowController實例
 func NewDataFlowController() *DataFlowController {
 	controller := &DataFlowController{
-		currentState:     StateAgent,
+		currentState:     StateInitial,
 		stateHistory:     make([]GameState, 0),
 		sourceBalls:      make([]int, 0),
 		drawnBalls:       make([]DrawResult, 0),
@@ -104,6 +105,8 @@ func (dfc *DataFlowController) ChangeState(newState GameState) error {
 	dfc.mu.Lock()
 	defer dfc.mu.Unlock()
 
+	oldState := dfc.currentState
+
 	// 檢查狀態轉換是否合法
 	if !dfc.isValidStateTransition(dfc.currentState, newState) {
 		return fmt.Errorf("invalid state transition from %s to %s", dfc.currentState, newState)
@@ -111,6 +114,9 @@ func (dfc *DataFlowController) ChangeState(newState GameState) error {
 
 	dfc.stateHistory = append(dfc.stateHistory, dfc.currentState)
 	dfc.currentState = newState
+
+	// 新增更詳細的日誌
+	log.Printf("遊戲狀態已變更: %s -> %s", oldState, newState)
 
 	// 如果進入新遊戲，重置相關數據
 	if newState == StateStandby {
@@ -414,19 +420,25 @@ func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 // isValidStateTransition 檢查狀態轉換是否合法
 func (dfc *DataFlowController) isValidStateTransition(from, to GameState) bool {
 	validTransitions := map[GameState][]GameState{
-		StateInitial:   {StateStandby, StateReady, StateAgent},
-		StateAgent:     {StateReady},
-		StateStandby:   {StateBetting},
-		StateReady:     {StateBetting},
-		StateBetting:   {StateDrawing},
-		StateDrawing:   {StateExtraBet, StateJPStandby},
-		StateExtraBet:  {StateExtraDraw},
-		StateExtraDraw: {StateResult},
-		StateResult:    {StateStandby, StateCompleted},
-		StateJPStandby: {StateJPBetting},
-		StateJPBetting: {StateJPDrawing},
-		StateJPDrawing: {StateJPResult},
-		StateJPResult:  {StateStandby, StateCompleted},
+		StateInitial:         {StateStandby, StateReady, StateAgent},
+		StateAgent:           {StateReady, StateInitial},
+		StateStandby:         {StateBetting},
+		StateReady:           {StateBetting},
+		StateBetting:         {StateDrawing},
+		StateDrawing:         {StateExtraBet, StateJPStandby},
+		StateExtraBet:        {StateExtraDraw},
+		StateExtraDraw:       {StateResult},
+		StateResult:          {StateStandby, StateCompleted},
+		StateJPStandby:       {StateJPBetting},
+		StateJPBetting:       {StateJPDrawing},
+		StateJPDrawing:       {StateJPResult},
+		StateJPResult:        {StateStandby, StateCompleted},
+		StateShowLuckyNums:   {StateBetting},
+		StateShowBalls:       {StateExtraBet, StateResult},
+		StateChooseExtraBall: {StateExtraDraw},
+		StateShowExtraBalls:  {StateResult},
+		StateJPShowBalls:     {StateJPResult},
+		StateCompleted:       {StateStandby, StateReady, StateInitial},
 	}
 
 	allowedTransitions, exists := validTransitions[from]

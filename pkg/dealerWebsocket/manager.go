@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 const (
-	// 心跳間隔設置為15秒，避開30秒超時
+	// 心跳間隔設置為15秒
 	heartbeatInterval = 15 * time.Second
 	// 連接超時設置
-	readTimeout  = 30 * time.Second
+	readTimeout  = 60 * time.Second
 	writeTimeout = 10 * time.Second
 	// 非活躍連接超時（5分鐘）
 	inactivityTimeout = 5 * time.Minute
@@ -23,7 +24,7 @@ const (
 	writeWait = 10 * time.Second
 
 	// 允許客戶端不發送ping的最大時間
-	pongWait = 60 * time.Second
+	pongWait = 120 * time.Second
 
 	// 發送ping的頻率，必須小於pongWait
 	pingPeriod = (pongWait * 9) / 10
@@ -95,6 +96,7 @@ type Manager struct {
 	shutdown        chan struct{}
 	auth            func(token string) (uint, error)
 	mutex           sync.RWMutex
+	wsHandler       *WebSocketHandler // 引用 WebSocketHandler 以更新連接計數
 }
 
 // 創建新的 WebSocket 管理器
@@ -111,7 +113,13 @@ func NewManager(authFunc func(token string) (uint, error)) *Manager {
 		shutdown:        make(chan struct{}),
 		auth:            authFunc,
 		mutex:           sync.RWMutex{},
+		wsHandler:       nil, // 初始為 nil，稍後在 WebSocketHandler 建立時設置
 	}
+}
+
+// 設置 WebSocketHandler 的引用
+func (manager *Manager) SetWebSocketHandler(wsHandler *WebSocketHandler) {
+	manager.wsHandler = wsHandler
 }
 
 // 啟動 WebSocket 管理器
@@ -207,6 +215,12 @@ func (manager *Manager) cleanupAllConnections() {
 	manager.authClients = make(map[uint][]*Client)
 	manager.userClients = make(map[uint]map[string]*Client)
 	manager.directBroadcast = make(map[uint]chan []byte)
+
+	// 重置連接計數
+	if manager.wsHandler != nil {
+		atomic.StoreInt64(&manager.wsHandler.connections, 0)
+		log.Printf("Dealer WebSocket Handler: Reset active connections to 0")
+	}
 }
 
 // 移除指定客戶端
@@ -263,6 +277,12 @@ func (manager *Manager) removeClient(client *Client) {
 
 	// 從客戶端列表中刪除
 	delete(manager.clients, client)
+
+	// 減少連接計數
+	if manager.wsHandler != nil {
+		atomic.AddInt64(&manager.wsHandler.connections, -1)
+		log.Printf("Dealer WebSocket Handler: Active connections: %d", atomic.LoadInt64(&manager.wsHandler.connections))
+	}
 
 	log.Printf("Dealer WebSocket Manager: Client %s unregistered\n", client.ID)
 }
@@ -338,6 +358,12 @@ func (manager *Manager) broadcastMessage(message []byte) {
 
 			// 從客戶端列表中刪除
 			delete(manager.clients, client)
+
+			// 減少連接計數
+			if manager.wsHandler != nil {
+				atomic.AddInt64(&manager.wsHandler.connections, -1)
+				log.Printf("Dealer WebSocket Handler: Active connections: %d", atomic.LoadInt64(&manager.wsHandler.connections))
+			}
 		}
 
 		manager.mutex.Unlock()
@@ -404,6 +430,12 @@ func (manager *Manager) cleanupInactiveConnections() {
 
 			// 從客戶端列表中刪除
 			delete(manager.clients, client)
+
+			// 減少連接計數
+			if manager.wsHandler != nil {
+				atomic.AddInt64(&manager.wsHandler.connections, -1)
+				log.Printf("Dealer WebSocket Handler: Active connections: %d", atomic.LoadInt64(&manager.wsHandler.connections))
+			}
 		}
 	}
 
@@ -492,6 +524,13 @@ func (manager *Manager) SendToUser(userID uint, message interface{}) error {
 				// 移除客戶端
 				close(client.Send)
 				delete(manager.clients, client)
+
+				// 減少連接計數
+				if manager.wsHandler != nil {
+					atomic.AddInt64(&manager.wsHandler.connections, -1)
+					log.Printf("Dealer WebSocket Handler: Active connections: %d", atomic.LoadInt64(&manager.wsHandler.connections))
+				}
+
 				log.Printf("Dealer WebSocket Manager: Client %s removed (failed to send to user)\n", client.ID)
 			}
 		}
@@ -517,16 +556,17 @@ func (client *Client) ReadPump() {
 	}()
 
 	// 設置讀取參數
-	client.Conn.SetReadLimit(4096) // 4KB
-	client.Conn.SetReadDeadline(time.Now().Add(readTimeout))
+	client.Conn.SetReadLimit(maxMessageSize)
+	client.Conn.SetReadDeadline(time.Now().Add(pongWait))
 
 	// 設置Pong處理器，更新最後活動時間
 	client.Conn.SetPongHandler(func(string) error {
 		client.connMutex.Lock()
 		defer client.connMutex.Unlock()
 
-		client.Conn.SetReadDeadline(time.Now().Add(readTimeout))
+		client.Conn.SetReadDeadline(time.Now().Add(pongWait))
 		client.LastActivity = time.Now()
+		log.Printf("Dealer WebSocket Manager: Client %s received pong, updated activity time\n", client.ID)
 		return nil
 	})
 
@@ -557,7 +597,7 @@ func (client *Client) ReadPump() {
 
 			client.connMutex.Lock()
 			client.LastActivity = time.Now()
-			client.Conn.SetReadDeadline(time.Now().Add(readTimeout))
+			client.Conn.SetReadDeadline(time.Now().Add(pongWait))
 			client.connMutex.Unlock()
 
 			// 處理接收到的訊息
@@ -763,15 +803,26 @@ func (client *Client) sendPing() error {
 		return fmt.Errorf("connection is nil")
 	}
 
-	// 發送Ping訊息
-	if err := client.Conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(writeTimeout)); err != nil {
-		log.Printf("Dealer WebSocket Manager: Client %s ping error: %v\n", client.ID, err)
+	// 嘗試3次發送Ping消息
+	var pingErr error
+	for i := 0; i < 3; i++ {
+		// 發送Ping訊息
+		pingErr = client.Conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(writeTimeout))
+		if pingErr == nil {
+			break
+		}
+		log.Printf("Dealer WebSocket Manager: Client %s ping attempt %d failed: %v\n", client.ID, i+1, pingErr)
+		time.Sleep(100 * time.Millisecond) // 短暫延遲後重試
+	}
+
+	if pingErr != nil {
+		log.Printf("Dealer WebSocket Manager: Client %s all ping attempts failed: %v\n", client.ID, pingErr)
 
 		// 直接調用 attemptReconnect (已在 goroutine 中)
 		client.connMutex.Unlock() // 先解鎖以避免死鎖
 		client.attemptReconnect() // 直接調用而不是啟動新的 goroutine
 		client.connMutex.Lock()   // 重新鎖定
-		return err
+		return pingErr
 	}
 
 	// 發送應用層心跳訊息
@@ -784,6 +835,7 @@ func (client *Client) sendPing() error {
 	select {
 	case client.Send <- heartbeatBytes:
 		// 心跳已送入通道
+		log.Printf("Dealer WebSocket Manager: Client %s heartbeat sent successfully\n", client.ID)
 	default:
 		// 發送通道已滿，可能需要處理
 		log.Printf("Dealer WebSocket Manager: Client %s send channel full, cannot send heartbeat\n", client.ID)
@@ -855,6 +907,12 @@ func (manager *Manager) Shutdown() {
 	manager.authClients = make(map[uint][]*Client)
 	manager.userClients = make(map[uint]map[string]*Client)
 	manager.mutex.Unlock()
+
+	// 重置連接計數
+	if manager.wsHandler != nil {
+		atomic.StoreInt64(&manager.wsHandler.connections, 0)
+		log.Printf("Dealer WebSocket Handler: Reset active connections to 0")
+	}
 
 	// 關閉管理器的shutdown通道
 	close(manager.shutdown)

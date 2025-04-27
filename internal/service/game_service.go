@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"log"
-	"time"
 
 	"g38_lottery_service/game"
 
@@ -47,18 +46,6 @@ func NewGameService(lc fx.Lifecycle, controller *game.DataFlowController) GameSe
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			log.Println("遊戲服務已初始化，當前狀態:", string(controller.GetCurrentState()))
-
-			// 啟動時自動將狀態從 Agent 切換為 Ready
-			if controller.GetCurrentState() == game.StateAgent {
-				time.Sleep(1 * time.Second) // 稍微延遲一下，確保服務完全啟動
-				err := controller.ChangeState(game.StateReady)
-				if err != nil {
-					log.Printf("將遊戲狀態從 AGENT 設為 READY 失敗: %v\n", err)
-					return nil // 不阻止服務啟動
-				}
-				log.Println("遊戲狀態已從 AGENT 設置為 READY")
-			}
-
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {

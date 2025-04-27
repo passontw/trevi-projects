@@ -35,12 +35,17 @@ func NewWebSocketHandler(manager *Manager, authFunc func(token string) (uint, er
 		},
 	}
 
-	return &WebSocketHandler{
+	handler := &WebSocketHandler{
 		manager:     manager,
 		upgrader:    upgrader,
 		authFunc:    authFunc,
 		connections: 0,
 	}
+
+	// 設置管理器對處理器的引用，以便能夠更新連接計數
+	manager.SetWebSocketHandler(handler)
+
+	return handler
 }
 
 // 處理 WebSocket 連接請求的 HTTP 處理器
@@ -85,5 +90,5 @@ func (h *WebSocketHandler) GetConnectionCount() int64 {
 
 // 註冊 WebSocket 路由
 func (h *WebSocketHandler) RegisterHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("/dealer/ws", h.HandleWebSocket)
+	mux.HandleFunc("/ws", h.HandleWebSocket)
 }

@@ -63,7 +63,7 @@ var RedisModule = fx.Options(
 // WebSocketModule WebSocket 模組
 var WebSocketModule = fx.Options(
 	fx.Provide(
-		// 提供 WebSocket 管理器，使用空的驗證函數
+		// 提供荷官 WebSocket 管理器，使用空的驗證函數
 		func() *dealerWebsocket.Manager {
 			// 使用一個始終返回成功的驗證函數
 			tokenValidator := func(token string) (uint, error) {
@@ -71,7 +71,7 @@ var WebSocketModule = fx.Options(
 			}
 			return dealerWebsocket.NewManager(tokenValidator)
 		},
-		// 提供 WebSocket 處理程序，使用空的驗證函數
+		// 提供荷官 WebSocket 處理程序，使用空的驗證函數
 		func(manager *dealerWebsocket.Manager) *dealerWebsocket.WebSocketHandler {
 			// 使用一個始終返回成功的驗證函數
 			tokenValidator := func(token string) (uint, error) {
@@ -79,8 +79,31 @@ var WebSocketModule = fx.Options(
 			}
 			return dealerWebsocket.NewWebSocketHandler(manager, tokenValidator)
 		},
+		// 提供玩家 WebSocket 管理器，使用空的驗證函數
+		fx.Annotate(
+			func() *dealerWebsocket.Manager {
+				// 使用一個始終返回成功的驗證函數
+				tokenValidator := func(token string) (uint, error) {
+					return 1, nil // 假設用戶ID為1
+				}
+				return dealerWebsocket.NewManager(tokenValidator)
+			},
+			fx.ResultTags(`name:"playerManager"`),
+		),
+		// 提供玩家 WebSocket 處理程序，使用空的驗證函數
+		fx.Annotate(
+			func(manager *dealerWebsocket.Manager) *dealerWebsocket.WebSocketHandler {
+				// 使用一個始終返回成功的驗證函數
+				tokenValidator := func(token string) (uint, error) {
+					return 1, nil // 假設用戶ID為1
+				}
+				return dealerWebsocket.NewWebSocketHandler(manager, tokenValidator)
+			},
+			fx.ParamTags(`name:"playerManager"`),
+			fx.ResultTags(`name:"playerWSHandler"`),
+		),
 	),
-	// 啟動 WebSocket 管理器
+	// 啟動荷官 WebSocket 管理器
 	fx.Invoke(
 		func(lc fx.Lifecycle, manager *dealerWebsocket.Manager) {
 			lc.Append(fx.Hook{
@@ -94,6 +117,24 @@ var WebSocketModule = fx.Options(
 				},
 			})
 		},
+	),
+	// 啟動玩家 WebSocket 管理器
+	fx.Invoke(
+		fx.Annotate(
+			func(lc fx.Lifecycle, manager *dealerWebsocket.Manager) {
+				lc.Append(fx.Hook{
+					OnStart: func(ctx context.Context) error {
+						go manager.Start(ctx)
+						return nil
+					},
+					OnStop: func(ctx context.Context) error {
+						manager.Shutdown()
+						return nil
+					},
+				})
+			},
+			fx.ParamTags(``, `name:"playerManager"`),
+		),
 	),
 )
 
