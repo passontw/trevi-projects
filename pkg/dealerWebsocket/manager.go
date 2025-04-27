@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,13 +25,18 @@ const (
 	writeWait = 10 * time.Second
 
 	// 允許客戶端不發送ping的最大時間
-	pongWait = 120 * time.Second
+	pongWait = 60 * time.Second
 
 	// 發送ping的頻率，必須小於pongWait
 	pingPeriod = (pongWait * 9) / 10
 
 	// 消息最大大小
-	maxMessageSize = 512
+	maxMessageSize = 512 * 1024 // 512KB
+)
+
+var (
+	// 換行符用於分隔消息
+	newline = []byte{'\n'}
 )
 
 // 心跳消息結構
@@ -51,6 +57,9 @@ type Client struct {
 	closeChan       chan struct{}   // 關閉通道
 	heartbeatTicker *time.Ticker    // 心跳定時器
 	connMutex       sync.Mutex      // 連接鎖，防止並發讀寫
+	closeReason     string          // 關閉原因
+	rooms           []string        // 客戶端所在的房間列表
+	games           []string        // 客戶端所在的遊戲列表
 }
 
 // 客戶端狀態
@@ -88,6 +97,8 @@ type Manager struct {
 	clients         map[*Client]bool
 	authClients     map[uint][]*Client
 	userClients     map[uint]map[string]*Client // 用戶ID到客戶端ID的映射
+	roomClients     map[string]map[*Client]bool // 房間ID到客戶端的映射
+	gameClients     map[string]map[*Client]bool // 遊戲ID到客戶端的映射
 	directBroadcast map[uint]chan []byte
 	messageHandler  MessageHandler
 	register        chan *Client
@@ -105,6 +116,8 @@ func NewManager(authFunc func(token string) (uint, error)) *Manager {
 		clients:         make(map[*Client]bool),
 		authClients:     make(map[uint][]*Client),
 		userClients:     make(map[uint]map[string]*Client),
+		roomClients:     make(map[string]map[*Client]bool), // 初始化房間客戶端映射
+		gameClients:     make(map[string]map[*Client]bool), // 初始化遊戲客戶端映射
 		directBroadcast: make(map[uint]chan []byte),
 		messageHandler:  nil,
 		register:        make(chan *Client, 10),
@@ -151,7 +164,11 @@ func (manager *Manager) Start(ctx context.Context) {
 	for running {
 		select {
 		case <-ctx.Done():
-			log.Println("Dealer WebSocket Manager: Context cancelled, shutting down...")
+			// 只在有活躍連接時才輸出關閉訊息
+			clientCount := len(manager.clients)
+			if clientCount > 0 {
+				log.Println("Dealer WebSocket Manager: Context cancelled, shutting down...")
+			}
 			manager.cleanupAllConnections()
 			running = false
 
@@ -187,7 +204,10 @@ func (manager *Manager) Start(ctx context.Context) {
 		}
 	}
 
-	log.Println("Dealer WebSocket Manager: Event loop terminated")
+	// 只在有活躍連接時才輸出關閉訊息
+	if len(manager.clients) > 0 {
+		log.Println("Dealer WebSocket Manager: Event loop terminated")
+	}
 }
 
 // 清理所有連接
@@ -195,7 +215,11 @@ func (manager *Manager) cleanupAllConnections() {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
 
-	log.Printf("Dealer WebSocket Manager: Cleaning up all %d connections", len(manager.clients))
+	clientCount := len(manager.clients)
+	// 只在有連接需要清理時才輸出日誌
+	if clientCount > 0 {
+		log.Printf("Dealer WebSocket Manager: Cleaning up all %d connections", clientCount)
+	}
 
 	for client := range manager.clients {
 		if client.heartbeatTicker != nil {
@@ -219,72 +243,84 @@ func (manager *Manager) cleanupAllConnections() {
 	// 重置連接計數
 	if manager.wsHandler != nil {
 		atomic.StoreInt64(&manager.wsHandler.connections, 0)
-		log.Printf("Dealer WebSocket Handler: Reset active connections to 0")
+		// 只有在之前有連接時才輸出
+		if clientCount > 0 {
+			log.Printf("Dealer WebSocket Handler: Reset active connections to 0")
+		}
 	}
 }
 
 // 移除指定客戶端
 func (manager *Manager) removeClient(client *Client) {
-	if _, ok := manager.clients[client]; !ok {
+	if client == nil {
 		return
 	}
 
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
 
-	// 從用戶-客戶端映射中移除
-	if client.IsAuthed {
-		// 從 authClients 映射中移除
-		clients := manager.authClients[client.UserID]
-		for i, c := range clients {
-			if c == client {
-				// 從切片中移除元素
-				clients = append(clients[:i], clients[i+1:]...)
-				break
+	// 檢查客戶端是否存在
+	if _, exists := manager.clients[client]; !exists {
+		return // 客戶端已經被移除
+	}
+
+	// 刪除客戶端
+	delete(manager.clients, client)
+
+	// 降低活躍連接計數
+	if manager.wsHandler != nil {
+		currentConnections := atomic.AddInt64(&manager.wsHandler.connections, -1)
+		// 只在連接數較少或者每10個連接減少時輸出日誌
+		if currentConnections < 10 || currentConnections%10 == 0 {
+			log.Printf("Dealer WebSocket Handler: Decreased active connections to %d", currentConnections)
+		}
+	}
+
+	// 刪除認證客戶端
+	if client.UserID > 0 {
+		// 從用戶ID映射中刪除
+		if clients, exists := manager.authClients[client.UserID]; exists {
+			newClients := make([]*Client, 0, len(clients)-1)
+			for _, c := range clients {
+				if c != client {
+					newClients = append(newClients, c)
+				}
+			}
+
+			if len(newClients) > 0 {
+				manager.authClients[client.UserID] = newClients
+			} else {
+				delete(manager.authClients, client.UserID)
 			}
 		}
-		// 更新或刪除映射
-		if len(clients) == 0 {
-			delete(manager.authClients, client.UserID)
-		} else {
-			manager.authClients[client.UserID] = clients
-		}
 
-		// 從 userClients 映射中移除
+		// 從用戶ID和客戶端ID映射中刪除
 		if clientsMap, exists := manager.userClients[client.UserID]; exists {
-			delete(clientsMap, client.ID)
+			if _, exists := clientsMap[client.ID]; exists {
+				delete(clientsMap, client.ID)
+			}
+
 			if len(clientsMap) == 0 {
 				delete(manager.userClients, client.UserID)
 			}
 		}
 	}
 
-	// 停止心跳
+	// 停止心跳協程和關閉通道
 	if client.heartbeatTicker != nil {
 		client.heartbeatTicker.Stop()
 	}
-
-	// 關閉信號通道
 	if client.closeChan != nil {
 		close(client.closeChan)
 	}
 
-	// 關閉連接
-	client.Conn.Close()
-
 	// 關閉發送通道
 	close(client.Send)
 
-	// 從客戶端列表中刪除
-	delete(manager.clients, client)
-
-	// 減少連接計數
-	if manager.wsHandler != nil {
-		atomic.AddInt64(&manager.wsHandler.connections, -1)
-		log.Printf("Dealer WebSocket Handler: Active connections: %d", atomic.LoadInt64(&manager.wsHandler.connections))
+	// 只有在連接非正常關閉時才輸出日誌
+	if client.closeReason != "" && client.closeReason != "normal closure" {
+		log.Printf("Dealer WebSocket Manager: Client %s removed: %s", client.ID, client.closeReason)
 	}
-
-	log.Printf("Dealer WebSocket Manager: Client %s unregistered\n", client.ID)
 }
 
 // 廣播消息到所有客戶端
@@ -297,7 +333,7 @@ func (manager *Manager) broadcastMessage(message []byte) {
 	for client := range manager.clients {
 		select {
 		case client.Send <- message:
-			// 消息已送入通道
+			// 消息已送入通道 - 不記錄日誌
 		default:
 			// 發送通道已滿或已關閉，記錄待移除的客戶端
 			failedClients = append(failedClients, client)
@@ -309,8 +345,14 @@ func (manager *Manager) broadcastMessage(message []byte) {
 		manager.mutex.RUnlock()
 		manager.mutex.Lock()
 
+		// 只記錄總體數量而不是每個客戶端
+		if len(failedClients) > 0 {
+			log.Printf("Dealer WebSocket Manager: Removing %d clients due to full send buffer", len(failedClients))
+		}
+
 		for _, client := range failedClients {
-			log.Printf("Dealer WebSocket Manager: Removing client %s due to full send buffer", client.ID)
+			// 設置關閉原因
+			client.closeReason = "broadcast buffer full"
 
 			// 停止心跳
 			if client.heartbeatTicker != nil {
@@ -362,8 +404,13 @@ func (manager *Manager) broadcastMessage(message []byte) {
 			// 減少連接計數
 			if manager.wsHandler != nil {
 				atomic.AddInt64(&manager.wsHandler.connections, -1)
-				log.Printf("Dealer WebSocket Handler: Active connections: %d", atomic.LoadInt64(&manager.wsHandler.connections))
 			}
+		}
+
+		// 只在有較多客戶端被移除時記錄連接數
+		if len(failedClients) >= 5 && manager.wsHandler != nil {
+			log.Printf("Dealer WebSocket Handler: Active connections after broadcast cleanup: %d",
+				atomic.LoadInt64(&manager.wsHandler.connections))
 		}
 
 		manager.mutex.Unlock()
@@ -373,74 +420,75 @@ func (manager *Manager) broadcastMessage(message []byte) {
 
 // 清理非活躍連接
 func (manager *Manager) cleanupInactiveConnections() {
-	threshold := time.Now().Add(-inactivityTimeout)
-
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
 
+	now := time.Now()
 	inactiveCount := 0
 
 	for client := range manager.clients {
-		if client.LastActivity.Before(threshold) {
+		// 檢查最後活動時間
+		if now.Sub(client.LastActivity) > inactivityTimeout {
 			inactiveCount++
-			log.Printf("Dealer WebSocket Manager: Client %s inactive for too long, closing connection", client.ID)
+
+			// 關閉非活躍客戶端
+			client.closeReason = "inactivity timeout"
+			delete(manager.clients, client)
+
+			// 降低活躍連接計數
+			if manager.wsHandler != nil {
+				atomic.AddInt64(&manager.wsHandler.connections, -1)
+			}
 
 			// 停止心跳
 			if client.heartbeatTicker != nil {
 				client.heartbeatTicker.Stop()
 			}
-
-			// 關閉信號通道
 			if client.closeChan != nil {
 				close(client.closeChan)
-			}
-
-			// 關閉連接
-			client.Conn.Close()
-
-			// 從用戶映射中移除
-			if client.IsAuthed {
-				// 從 authClients 映射中移除
-				clients := manager.authClients[client.UserID]
-				for i, c := range clients {
-					if c == client {
-						// 從切片中移除元素
-						clients = append(clients[:i], clients[i+1:]...)
-						break
-					}
-				}
-				// 更新或刪除映射
-				if len(clients) == 0 {
-					delete(manager.authClients, client.UserID)
-				} else {
-					manager.authClients[client.UserID] = clients
-				}
-
-				// 從 userClients 映射中移除
-				if clientsMap, exists := manager.userClients[client.UserID]; exists {
-					delete(clientsMap, client.ID)
-					if len(clientsMap) == 0 {
-						delete(manager.userClients, client.UserID)
-					}
-				}
 			}
 
 			// 關閉發送通道
 			close(client.Send)
 
-			// 從客戶端列表中刪除
-			delete(manager.clients, client)
+			// 移除從認證客戶端映射中
+			if client.UserID > 0 {
+				// 從用戶ID映射中刪除
+				if clients, exists := manager.authClients[client.UserID]; exists {
+					newClients := make([]*Client, 0, len(clients)-1)
+					for _, c := range clients {
+						if c != client {
+							newClients = append(newClients, c)
+						}
+					}
 
-			// 減少連接計數
-			if manager.wsHandler != nil {
-				atomic.AddInt64(&manager.wsHandler.connections, -1)
-				log.Printf("Dealer WebSocket Handler: Active connections: %d", atomic.LoadInt64(&manager.wsHandler.connections))
+					if len(newClients) > 0 {
+						manager.authClients[client.UserID] = newClients
+					} else {
+						delete(manager.authClients, client.UserID)
+					}
+				}
+
+				// 從用戶ID和客戶端ID映射中刪除
+				if clientsMap, exists := manager.userClients[client.UserID]; exists {
+					if _, exists := clientsMap[client.ID]; exists {
+						delete(clientsMap, client.ID)
+					}
+
+					if len(clientsMap) == 0 {
+						delete(manager.userClients, client.UserID)
+					}
+				}
 			}
 		}
 	}
 
+	// 只有在實際清理了連接時才輸出日誌
 	if inactiveCount > 0 {
-		log.Printf("Dealer WebSocket Manager: Removed %d inactive connections", inactiveCount)
+		log.Printf("Dealer WebSocket Manager: Cleaned up %d inactive connections", inactiveCount)
+		if manager.wsHandler != nil {
+			log.Printf("Dealer WebSocket Handler: Active connections after cleanup: %d", atomic.LoadInt64(&manager.wsHandler.connections))
+		}
 	}
 }
 
@@ -497,14 +545,21 @@ func (manager *Manager) SendToUser(userID uint, message interface{}) error {
 		return fmt.Errorf("no connected clients for user %d", userID)
 	}
 
+	failedClients := 0 // 記錄失敗客戶端數量而不是每個都輸出日誌
+	totalClients := 0  // 總客戶端數量
+
 	// 發送訊息給用戶的所有客戶端
 	for _, client := range clientMap {
 		if client.IsAuthed {
+			totalClients++
 			select {
 			case client.Send <- msgBytes:
-				// 訊息已送入通道
+				// 訊息已送入通道 - 不記錄日誌
 			default:
 				// 發送通道已滿或已關閉，移除客戶端
+				failedClients++
+				client.closeReason = "send buffer full"
+
 				client.connMutex.Lock()
 				if client.heartbeatTicker != nil {
 					client.heartbeatTicker.Stop()
@@ -528,12 +583,15 @@ func (manager *Manager) SendToUser(userID uint, message interface{}) error {
 				// 減少連接計數
 				if manager.wsHandler != nil {
 					atomic.AddInt64(&manager.wsHandler.connections, -1)
-					log.Printf("Dealer WebSocket Handler: Active connections: %d", atomic.LoadInt64(&manager.wsHandler.connections))
 				}
-
-				log.Printf("Dealer WebSocket Manager: Client %s removed (failed to send to user)\n", client.ID)
 			}
 		}
+	}
+
+	// 只在有失敗的客戶端時輸出一條匯總日誌
+	if failedClients > 0 {
+		log.Printf("Dealer WebSocket Manager: Failed to send to %d/%d clients for user %d",
+			failedClients, totalClients, userID)
 	}
 
 	return nil
@@ -550,12 +608,13 @@ func (client *Client) ReadPump() {
 		if r := recover(); r != nil {
 			log.Printf("Dealer WebSocket Manager: Client %s ReadPump recovered from panic: %v\n", client.ID, r)
 		}
-		log.Printf("Dealer WebSocket Manager: Client %s ReadPump exiting\n", client.ID)
+		// 客戶端斷開連接
+		client.closeReason = "read pump exiting"
 		client.manager.unregister <- client
 		client.Conn.Close()
 	}()
 
-	// 設置讀取參數
+	// 設置讀取參數 - 確保使用一致的超時設置
 	client.Conn.SetReadLimit(maxMessageSize)
 	client.Conn.SetReadDeadline(time.Now().Add(pongWait))
 
@@ -566,7 +625,8 @@ func (client *Client) ReadPump() {
 
 		client.Conn.SetReadDeadline(time.Now().Add(pongWait))
 		client.LastActivity = time.Now()
-		log.Printf("Dealer WebSocket Manager: Client %s received pong, updated activity time\n", client.ID)
+		// 在日誌級別為Debug時記錄pong消息
+		log.Printf("Dealer WebSocket Manager: Client %s received pong\n", client.ID)
 		return nil
 	})
 
@@ -576,14 +636,16 @@ func (client *Client) ReadPump() {
 	for {
 		select {
 		case <-client.closeChan:
-			log.Printf("Dealer WebSocket Manager: Client %s received close signal\n", client.ID)
+			// 收到關閉信號，靜默退出
 			return
 		default:
 			messageType, message, err := client.Conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					log.Printf("Dealer WebSocket Manager: Client %s unexpected close: %v\n", client.ID, err)
-				} else {
+				} else if !strings.Contains(err.Error(), "use of closed network connection") &&
+					!strings.Contains(err.Error(), "websocket: close") {
+					// 只記錄非正常關閉的錯誤
 					log.Printf("Dealer WebSocket Manager: Client %s read error: %v\n", client.ID, err)
 				}
 				return
@@ -603,12 +665,12 @@ func (client *Client) ReadPump() {
 			// 處理接收到的訊息
 			var msg Message
 			if err := json.Unmarshal(message, &msg); err != nil {
+				// 記錄錯誤，但不記錄原始消息內容以減少日誌量
 				log.Printf("Dealer WebSocket Manager: Error unmarshaling message from client %s: %v\n", client.ID, err)
-				log.Printf("Dealer WebSocket Manager: Raw message: %s\n", string(message))
 				continue
 			}
 
-			// 處理心跳訊息
+			// 處理心跳訊息 - 不記錄日誌
 			if msg.Type == "heartbeat" {
 				// 客戶端發送的心跳，直接回應
 				heartbeatResponse := HeartbeatMessage{
@@ -619,17 +681,16 @@ func (client *Client) ReadPump() {
 
 				select {
 				case client.Send <- responseBytes:
-					// 心跳已送入通道
+					// 心跳已送入通道，不記錄日誌
 				default:
+					// 只在發送通道滿時記錄
 					log.Printf("Dealer WebSocket Manager: Client %s send channel full for heartbeat\n", client.ID)
 				}
 				continue
 			}
 
-			// 處理基準測試訊息
+			// 處理基準測試訊息 - 不記錄日誌
 			if msg.Type == "benchmark" {
-				// 確保我們返回一個與發送格式相同的消息
-				// 直接使用收到的消息
 				responseMsg := struct {
 					Type      string `json:"type"`
 					Timestamp int64  `json:"timestamp"`
@@ -638,113 +699,86 @@ func (client *Client) ReadPump() {
 					Timestamp: time.Now().UnixNano(),
 				}
 
-				// 直接使用相同的消息結構，確保格式一致
 				responseBytes, err := json.Marshal(responseMsg)
 				if err != nil {
 					log.Printf("Dealer WebSocket Manager: Error marshaling benchmark response: %v\n", err)
 					continue
 				}
 
-				// 發送回客戶端
 				select {
 				case client.Send <- responseBytes:
-					// 成功發送
-					log.Printf("Dealer WebSocket Manager: Processed benchmark message from client %s\n", client.ID)
+					// 成功發送，不記錄日誌
 				default:
+					// 只在發送通道滿時記錄
 					log.Printf("Dealer WebSocket Manager: Failed to send benchmark response, buffer full for client %s\n", client.ID)
 				}
 				continue
 			}
 
-			// 處理其他訊息...
-			log.Printf("Dealer WebSocket Manager: Received message from client %s: %s\n", client.ID, message)
+			// 處理其他訊息 - 只記錄重要的非心跳非基準測試消息
+			if msg.Type != "heartbeat" && msg.Type != "benchmark" {
+				log.Printf("Dealer WebSocket Manager: Received %s message from client %s\n", msg.Type, client.ID)
+			}
 		}
 	}
 }
 
 // 客戶端寫入訊息
 func (client *Client) WritePump() {
+	ticker := time.NewTicker(pingPeriod)
 	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Dealer WebSocket Manager: Client %s WritePump recovered from panic: %v\n", client.ID, r)
-		}
-		log.Printf("Dealer WebSocket Manager: Client %s WritePump exiting\n", client.ID)
+		ticker.Stop()
 		client.Conn.Close()
 	}()
 
-	// 確保 closeChan 已初始化
-	if client.closeChan == nil {
-		client.closeChan = make(chan struct{})
-	}
-
 	for {
 		select {
-		case <-client.closeChan:
-			log.Printf("Dealer WebSocket Manager: Client %s writer received close signal\n", client.ID)
-			return
 		case message, ok := <-client.Send:
+			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// 通道已關閉
-				log.Printf("Dealer WebSocket Manager: Client %s send channel closed\n", client.ID)
-				client.connMutex.Lock()
-				err := client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-				client.connMutex.Unlock()
-				if err != nil {
-					log.Printf("Dealer WebSocket Manager: Client %s error sending close message: %v\n", client.ID, err)
-				}
+				client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
-			client.connMutex.Lock()
-			// 檢查連接是否有效
-			if client.Conn == nil {
-				client.connMutex.Unlock()
-				log.Printf("Dealer WebSocket Manager: Client %s connection is nil\n", client.ID)
-				return
-			}
-
-			client.Conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 			w, err := client.Conn.NextWriter(websocket.TextMessage)
 			if err != nil {
-				client.connMutex.Unlock()
-				log.Printf("Dealer WebSocket Manager: Client %s error getting writer: %v\n", client.ID, err)
-				return
-			}
-
-			_, err = w.Write(message)
-			if err != nil {
-				client.connMutex.Unlock()
-				log.Printf("Dealer WebSocket Manager: Client %s error writing message: %v\n", client.ID, err)
-				return
-			}
-
-			// 將佇列中的其他訊息也一起發送，但限制數量
-			n := len(client.Send)
-			maxMessages := 10 // 每次最多處理10條消息
-			if n > maxMessages {
-				n = maxMessages
-			}
-
-			for i := 0; i < n; i++ {
-				nextMsg, ok := <-client.Send
-				if !ok {
-					break
+				// 只在連接已關閉以外的錯誤情況下記錄日誌
+				if !strings.Contains(err.Error(), "closed") &&
+					!strings.Contains(err.Error(), "broken pipe") {
+					log.Printf("Dealer WebSocket Error (NextWriter): %v", err)
 				}
-				w.Write([]byte{'\n'})
-				w.Write(nextMsg)
+				return
+			}
+			w.Write(message)
+
+			// 添加隊列中的所有消息
+			n := len(client.Send)
+			for i := 0; i < n; i++ {
+				w.Write(newline)
+				w.Write(<-client.Send)
 			}
 
 			if err := w.Close(); err != nil {
-				client.connMutex.Unlock()
-				log.Printf("Dealer WebSocket Manager: Client %s error closing writer: %v\n", client.ID, err)
+				// 只在連接已關閉以外的錯誤情況下記錄日誌
+				if !strings.Contains(err.Error(), "closed") &&
+					!strings.Contains(err.Error(), "broken pipe") {
+					log.Printf("Dealer WebSocket Error (Close Writer): %v", err)
+				}
 				return
 			}
-			client.connMutex.Unlock()
-
-			// 更新最後活動時間
-			client.connMutex.Lock()
-			client.LastActivity = time.Now()
-			client.connMutex.Unlock()
+		case <-ticker.C:
+			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := client.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				// 只在連接已關閉以外的錯誤情況下記錄日誌
+				if !strings.Contains(err.Error(), "closed") &&
+					!strings.Contains(err.Error(), "broken pipe") {
+					log.Printf("Dealer WebSocket Error (Ping): %v", err)
+				}
+				return
+			}
+		case <-client.closeChan:
+			return
 		}
 	}
 }
@@ -762,7 +796,7 @@ func (client *Client) StartHeartbeat() {
 
 	// 創建新的心跳計時器
 	client.heartbeatTicker = time.NewTicker(heartbeatInterval)
-	log.Printf("Dealer WebSocket Manager: Started heartbeat for client %s\n", client.ID)
+	// 不再輸出每個客戶端的心跳啟動日誌
 
 	// 創建本地副本
 	localCloseChan := client.closeChan
@@ -772,20 +806,24 @@ func (client *Client) StartHeartbeat() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("Dealer WebSocket Manager: Heartbeat routine for client %s recovered from panic: %v\n", client.ID, r)
+				log.Printf("Dealer WebSocket Manager: Heartbeat routine for client %s recovered from panic: %v", client.ID, r)
 			}
-			log.Printf("Dealer WebSocket Manager: Heartbeat routine for client %s exiting\n", client.ID)
+			// 不再輸出心跳協程退出的日誌
 		}()
 
 		for {
 			select {
 			case <-localCloseChan:
-				log.Printf("Dealer WebSocket Manager: Client %s heartbeat received close signal\n", client.ID)
+				// 不再輸出關閉信號的日誌
 				return
 			case <-heartbeatTicker.C:
 				// 使用本地副本確保即使 client 被修改也能正確工作
 				if err := client.sendPing(); err != nil {
-					log.Printf("Dealer WebSocket Manager: Client %s ping failed: %v\n", client.ID, err)
+					// 只在異常錯誤時輸出日誌
+					if !strings.Contains(err.Error(), "connection is nil") &&
+						!strings.Contains(err.Error(), "use of closed network connection") {
+						log.Printf("Dealer WebSocket Manager: Client %s ping failed: %v", client.ID, err)
+					}
 					return
 				}
 			}
@@ -811,13 +849,14 @@ func (client *Client) sendPing() error {
 		if pingErr == nil {
 			break
 		}
-		log.Printf("Dealer WebSocket Manager: Client %s ping attempt %d failed: %v\n", client.ID, i+1, pingErr)
+		// 只在第三次嘗試失敗時記錄日誌
+		if i == 2 {
+			log.Printf("Dealer WebSocket Manager: Client %s all ping attempts failed: %v", client.ID, pingErr)
+		}
 		time.Sleep(100 * time.Millisecond) // 短暫延遲後重試
 	}
 
 	if pingErr != nil {
-		log.Printf("Dealer WebSocket Manager: Client %s all ping attempts failed: %v\n", client.ID, pingErr)
-
 		// 直接調用 attemptReconnect (已在 goroutine 中)
 		client.connMutex.Unlock() // 先解鎖以避免死鎖
 		client.attemptReconnect() // 直接調用而不是啟動新的 goroutine
@@ -834,11 +873,10 @@ func (client *Client) sendPing() error {
 
 	select {
 	case client.Send <- heartbeatBytes:
-		// 心跳已送入通道
-		log.Printf("Dealer WebSocket Manager: Client %s heartbeat sent successfully\n", client.ID)
+		// 心跳已送入通道，不輸出日誌
 	default:
-		// 發送通道已滿，可能需要處理
-		log.Printf("Dealer WebSocket Manager: Client %s send channel full, cannot send heartbeat\n", client.ID)
+		// 僅在通道已滿時輸出警告
+		log.Printf("Dealer WebSocket Manager: Client %s send channel full, cannot send heartbeat", client.ID)
 	}
 
 	return nil
@@ -846,8 +884,8 @@ func (client *Client) sendPing() error {
 
 // 嘗試重連
 func (client *Client) attemptReconnect() {
-	// 不再嘗試重連，直接關閉連接
-	log.Printf("Dealer WebSocket Manager: Client %s connection terminated, waiting for client to reconnect\n", client.ID)
+	// 設置關閉原因
+	client.closeReason = "connection terminated"
 
 	// 清理客戶端資源
 	client.connMutex.Lock()
@@ -877,14 +915,23 @@ func (client *Client) attemptReconnect() {
 
 // 關閉連接
 func (manager *Manager) Shutdown() {
-	log.Println("Dealer WebSocket Manager: Shutdown initiated, closing all connections...")
+	// 檢查是否有活躍連接，只有在有連接時才記錄關閉訊息
+	manager.mutex.RLock()
+	clientCount := len(manager.clients)
+	manager.mutex.RUnlock()
+
+	if clientCount > 0 {
+		log.Println("Dealer WebSocket Manager: Shutdown initiated, closing all connections...")
+	}
 
 	// 通知所有客戶端關閉
 	manager.mutex.Lock()
-	clientCount := len(manager.clients)
 
 	for client := range manager.clients {
-		log.Printf("Dealer WebSocket Manager: Closing connection for client %s", client.ID)
+		// 只有在有大量連接時才詳細記錄每個客戶端的關閉
+		if clientCount < 10 {
+			log.Printf("Dealer WebSocket Manager: Closing connection for client %s", client.ID)
+		}
 
 		if client.heartbeatTicker != nil {
 			client.heartbeatTicker.Stop()
@@ -911,11 +958,298 @@ func (manager *Manager) Shutdown() {
 	// 重置連接計數
 	if manager.wsHandler != nil {
 		atomic.StoreInt64(&manager.wsHandler.connections, 0)
-		log.Printf("Dealer WebSocket Handler: Reset active connections to 0")
+		if clientCount > 0 {
+			log.Printf("Dealer WebSocket Handler: Reset active connections to 0")
+		}
 	}
 
 	// 關閉管理器的shutdown通道
 	close(manager.shutdown)
 
-	log.Printf("Dealer WebSocket Manager: Successfully closed %d connections", clientCount)
+	// 只有在實際關閉了連接時才輸出
+	if clientCount > 0 {
+		log.Printf("Dealer WebSocket Manager: Successfully closed %d connections", clientCount)
+	}
+}
+
+// 廣播消息到特定房間
+func (manager *Manager) broadcastToRoom(roomID string, message []byte) {
+	manager.mutex.RLock()
+	defer manager.mutex.RUnlock()
+
+	failedCount := 0
+	totalClients := 0
+
+	// 檢查房間是否存在
+	clients, exists := manager.roomClients[roomID]
+	if !exists {
+		// 房間不存在，沒有客戶端可廣播
+		return
+	}
+
+	// 廣播消息到房間中的所有客戶端
+	for client := range clients {
+		totalClients++
+		select {
+		case client.Send <- message:
+			// 消息發送成功 - 不記錄日誌
+		default:
+			// 客戶端發送通道已滿，跳過並計數
+			failedCount++
+		}
+	}
+
+	// 只在有發送失敗時記錄日誌
+	if failedCount > 0 {
+		log.Printf("Dealer WebSocket Manager: Failed to send to %d/%d clients in room %s",
+			failedCount, totalClients, roomID)
+	}
+}
+
+// 廣播消息到特定遊戲
+func (manager *Manager) broadcastToGame(gameID string, message []byte) {
+	manager.mutex.RLock()
+	defer manager.mutex.RUnlock()
+
+	failedCount := 0
+	totalClients := 0
+
+	// 檢查遊戲是否存在
+	clients, exists := manager.gameClients[gameID]
+	if !exists {
+		// 遊戲不存在，沒有客戶端可廣播
+		return
+	}
+
+	// 廣播消息到遊戲中的所有客戶端
+	for client := range clients {
+		totalClients++
+		select {
+		case client.Send <- message:
+			// 消息發送成功 - 不記錄日誌
+		default:
+			// 客戶端發送通道已滿，跳過並計數
+			failedCount++
+		}
+	}
+
+	// 只在有發送失敗時記錄日誌
+	if failedCount > 0 {
+		log.Printf("Dealer WebSocket Manager: Failed to send to %d/%d clients in game %s",
+			failedCount, totalClients, gameID)
+	}
+}
+
+// AddClientToRoom 將客戶端添加到指定房間
+func (m *Manager) AddClientToRoom(client *Client, roomID string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	// 檢查此客戶端是否已在該房間中
+	for _, id := range client.rooms {
+		if id == roomID {
+			return // 客戶端已在房間中，不需再添加
+		}
+	}
+
+	// 若房間不存在，則創建它
+	if _, exists := m.roomClients[roomID]; !exists {
+		m.roomClients[roomID] = make(map[*Client]bool)
+	}
+
+	// 將客戶端加入到房間
+	m.roomClients[roomID][client] = true
+	client.rooms = append(client.rooms, roomID)
+
+	log.Printf("Dealer WebSocket Manager: 客戶端 %s 已加入房間 %s", client.ID, roomID)
+}
+
+// RemoveClientFromRoom 將客戶端從指定房間移除
+func (m *Manager) RemoveClientFromRoom(client *Client, roomID string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	// 檢查房間是否存在
+	clients, exists := m.roomClients[roomID]
+	if !exists {
+		return // 房間不存在，不需處理
+	}
+
+	// 從房間中移除客戶端
+	delete(clients, client)
+
+	// 若房間為空，則移除該房間
+	if len(clients) == 0 {
+		delete(m.roomClients, roomID)
+	}
+
+	// 從客戶端的房間列表中移除
+	for i, id := range client.rooms {
+		if id == roomID {
+			client.rooms = append(client.rooms[:i], client.rooms[i+1:]...)
+			break
+		}
+	}
+
+	log.Printf("Dealer WebSocket Manager: 客戶端 %s 已離開房間 %s", client.ID, roomID)
+}
+
+// AddClientToGame 將客戶端添加到指定遊戲
+func (m *Manager) AddClientToGame(client *Client, gameID string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	// 檢查此客戶端是否已在該遊戲中
+	for _, id := range client.games {
+		if id == gameID {
+			return // 客戶端已在遊戲中，不需再添加
+		}
+	}
+
+	// 若遊戲不存在，則創建它
+	if _, exists := m.gameClients[gameID]; !exists {
+		m.gameClients[gameID] = make(map[*Client]bool)
+	}
+
+	// 將客戶端加入到遊戲
+	m.gameClients[gameID][client] = true
+	client.games = append(client.games, gameID)
+
+	log.Printf("Dealer WebSocket Manager: 客戶端 %s 已加入遊戲 %s", client.ID, gameID)
+}
+
+// RemoveClientFromGame 將客戶端從指定遊戲移除
+func (m *Manager) RemoveClientFromGame(client *Client, gameID string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	// 檢查遊戲是否存在
+	clients, exists := m.gameClients[gameID]
+	if !exists {
+		return // 遊戲不存在，不需處理
+	}
+
+	// 從遊戲中移除客戶端
+	delete(clients, client)
+
+	// 若遊戲為空，則移除該遊戲
+	if len(clients) == 0 {
+		delete(m.gameClients, gameID)
+	}
+
+	// 從客戶端的遊戲列表中移除
+	for i, id := range client.games {
+		if id == gameID {
+			client.games = append(client.games[:i], client.games[i+1:]...)
+			break
+		}
+	}
+
+	log.Printf("Dealer WebSocket Manager: 客戶端 %s 已離開遊戲 %s", client.ID, gameID)
+}
+
+// BroadcastToRoom 向特定房間內所有客戶端廣播消息
+func (m *Manager) BroadcastToRoom(roomID string, message []byte) {
+	m.mutex.RLock()
+	clients, exists := m.roomClients[roomID]
+	m.mutex.RUnlock()
+
+	if !exists {
+		// 只有當房間存在但沒有客戶端時才記錄
+		log.Printf("Dealer WebSocket Manager: 嘗試廣播到不存在的房間: %s", roomID)
+		return
+	}
+
+	failCount := 0
+	for client := range clients {
+		if client.Send == nil || len(client.Send) >= cap(client.Send) {
+			failCount++
+			continue
+		}
+
+		select {
+		case client.Send <- message:
+			// 成功發送，不需處理
+		default:
+			// 發送緩衝區已滿，移除客戶端
+			failCount++
+			m.removeClientFromRooms(client)
+			m.removeClientFromGames(client)
+			m.removeClient(client)
+		}
+	}
+
+	// 只有當有失敗時才記錄
+	if failCount > 0 {
+		log.Printf("Dealer WebSocket Manager: 向房間 %s 廣播時，有 %d 個客戶端發送失敗", roomID, failCount)
+	}
+}
+
+// BroadcastToGame 向特定遊戲內所有客戶端廣播消息
+func (m *Manager) BroadcastToGame(gameID string, message []byte) {
+	m.mutex.RLock()
+	clients, exists := m.gameClients[gameID]
+	m.mutex.RUnlock()
+
+	if !exists {
+		// 只有當遊戲存在但沒有客戶端時才記錄
+		log.Printf("Dealer WebSocket Manager: 嘗試廣播到不存在的遊戲: %s", gameID)
+		return
+	}
+
+	failCount := 0
+	for client := range clients {
+		if client.Send == nil || len(client.Send) >= cap(client.Send) {
+			failCount++
+			continue
+		}
+
+		select {
+		case client.Send <- message:
+			// 成功發送，不需處理
+		default:
+			// 發送緩衝區已滿，移除客戶端
+			failCount++
+			m.removeClientFromRooms(client)
+			m.removeClientFromGames(client)
+			m.removeClient(client)
+		}
+	}
+
+	// 只有當有失敗時才記錄
+	if failCount > 0 {
+		log.Printf("Dealer WebSocket Manager: 向遊戲 %s 廣播時，有 %d 個客戶端發送失敗", gameID, failCount)
+	}
+}
+
+// removeClientFromRooms 從所有房間中移除客戶端
+func (m *Manager) removeClientFromRooms(client *Client) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	for _, roomID := range client.rooms {
+		if clients, exists := m.roomClients[roomID]; exists {
+			delete(clients, client)
+			if len(clients) == 0 {
+				delete(m.roomClients, roomID)
+			}
+		}
+	}
+	client.rooms = []string{}
+}
+
+// removeClientFromGames 從所有遊戲中移除客戶端
+func (m *Manager) removeClientFromGames(client *Client) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	for _, gameID := range client.games {
+		if clients, exists := m.gameClients[gameID]; exists {
+			delete(clients, client)
+			if len(clients) == 0 {
+				delete(m.gameClients, gameID)
+			}
+		}
+	}
+	client.games = []string{}
 }
