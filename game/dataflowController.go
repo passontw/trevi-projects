@@ -616,3 +616,45 @@ func (dfc *DataFlowController) StartDrawing() error {
 	log.Printf("遊戲狀態已從 %s 變更為 %s (開始抽球)", oldState, StateDrawing)
 	return nil
 }
+
+// StartExtraBetting 開始額外球投注階段
+func (dfc *DataFlowController) StartExtraBetting() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始額外球投注階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許開始額外球投注
+	if dfc.currentState != StateDrawing {
+		return fmt.Errorf("當前狀態 %s 不允許開始額外球投注", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateExtraBet
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (開始額外球投注)", oldState, StateExtraBet)
+	return nil
+}
+
+// FinishExtraBetting 結束額外球投注階段，開始額外球抽取
+func (dfc *DataFlowController) FinishExtraBetting() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("結束額外球投注階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許結束額外球投注
+	if dfc.currentState != StateExtraBet {
+		return fmt.Errorf("當前狀態 %s 不允許結束額外球投注", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateExtraDraw
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (結束額外球投注，開始額外球抽取)", oldState, StateExtraDraw)
+	return nil
+}
