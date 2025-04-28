@@ -1,10 +1,7 @@
 package main
 
 import (
-<<<<<<< Updated upstream
-=======
 	"bytes"
->>>>>>> Stashed changes
 	"context"
 	"encoding/json"
 	"flag"
@@ -21,8 +18,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-<<<<<<< Updated upstream
-=======
 // 定義 WebSocket 連接常量
 const (
 	// 允許客戶端不發送 pong 的最大時間
@@ -35,7 +30,6 @@ const (
 	writeWait = 10 * time.Second
 )
 
->>>>>>> Stashed changes
 // Command 定義一個通用的命令結構
 type Command struct {
 	Type      string                 `json:"type"`
@@ -79,6 +73,26 @@ var WebSocketErrorCodes = map[int]WebSocketError{
 	1015: {1015, "TLS握手失敗", "TLS握手失敗", "檢查SSL/TLS配置或證書是否有效"},
 }
 
+// 追蹤命令發送狀態的全局變數
+var (
+	bettingClosedSent = make(map[string]bool) // 使用 gameID 作為 key
+	commandLock       sync.Mutex              // 用於保護上面的 map
+)
+
+// 檢查並標記命令是否已發送
+func markCommandSent(gameID string, commandType string) bool {
+	commandLock.Lock()
+	defer commandLock.Unlock()
+
+	key := gameID + ":" + commandType
+	if bettingClosedSent[key] {
+		return true // 已發送過
+	}
+
+	bettingClosedSent[key] = true
+	return false // 尚未發送過
+}
+
 // 客戶端結構體
 type ClientState struct {
 	conn          *websocket.Conn
@@ -115,11 +129,7 @@ func GameStartCommand() Command {
 // HeartbeatCommand 創建一個心跳命令
 func HeartbeatCommand(clientID string) Command {
 	return Command{
-<<<<<<< Updated upstream
 		Type: "HEARTBEAT",
-=======
-		Type: "heartbeat",
->>>>>>> Stashed changes
 		Data: map[string]interface{}{
 			"clientId": clientID,
 		},
@@ -271,8 +281,6 @@ func (c *ClientState) Connect(ctx context.Context) error {
 	c.conn = conn
 	c.isConnected.Store(true)
 
-<<<<<<< Updated upstream
-=======
 	// 設置讀取限制
 	c.conn.SetReadLimit(512 * 1024) // 512KB
 
@@ -289,7 +297,6 @@ func (c *ClientState) Connect(ctx context.Context) error {
 		return nil
 	})
 
->>>>>>> Stashed changes
 	return nil
 }
 
@@ -299,21 +306,6 @@ func (c *ClientState) Disconnect() {
 	defer c.connMutex.Unlock()
 
 	if c.conn == nil {
-<<<<<<< Updated upstream
-		return // 已經斷開連接
-	}
-
-	// 發送關閉消息
-	closeMessage := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "客戶端主動關閉連接")
-	err := c.conn.WriteMessage(websocket.CloseMessage, closeMessage)
-	if err != nil {
-		log.Printf("發送關閉消息失敗: %v", err)
-	}
-
-	// 關閉連接
-	err = c.conn.Close()
-	if err != nil {
-=======
 		c.isConnected.Store(false)
 		return // 已經斷開連接
 	}
@@ -359,7 +351,6 @@ func (c *ClientState) Disconnect() {
 	// 關閉連接
 	err := c.conn.Close()
 	if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
->>>>>>> Stashed changes
 		log.Printf("關閉連接失敗: %v", err)
 	}
 
@@ -370,11 +361,6 @@ func (c *ClientState) Disconnect() {
 
 // reconnect 重新連接到WebSocket服務器
 func (c *ClientState) reconnect(ctx context.Context) error {
-<<<<<<< Updated upstream
-	// 先斷開現有連接
-	c.Disconnect()
-
-=======
 	// 先標記連接為已斷開
 	c.isConnected.Store(false)
 
@@ -383,7 +369,6 @@ func (c *ClientState) reconnect(ctx context.Context) error {
 
 	log.Println("準備重新連接到服務器...")
 
->>>>>>> Stashed changes
 	// 嘗試重新連接
 	maxRetries := c.config.maxRetries
 	if c.config.permanentRetry {
@@ -391,14 +376,6 @@ func (c *ClientState) reconnect(ctx context.Context) error {
 	}
 
 	retryCount := 0
-<<<<<<< Updated upstream
-	for {
-		if maxRetries >= 0 && retryCount >= maxRetries {
-			return fmt.Errorf("達到最大重試次數 %d", maxRetries)
-		}
-
-		log.Printf("嘗試重新連接 (嘗試 %d)", retryCount+1)
-=======
 	var lastError error
 
 	// 設置指數退避重試
@@ -413,24 +390,10 @@ func (c *ClientState) reconnect(ctx context.Context) error {
 		}
 
 		log.Printf("嘗試重新連接 (嘗試 %d)...", retryCount+1)
->>>>>>> Stashed changes
 		err := c.Connect(ctx)
 		if err == nil {
 			log.Printf("重新連接成功 (嘗試 %d)", retryCount+1)
 
-<<<<<<< Updated upstream
-			// 重新發送緩衝區中的消息
-			if len(c.messageBuffer) > 0 {
-				log.Printf("重新發送 %d 個緩衝消息", len(c.messageBuffer))
-				for _, cmd := range c.messageBuffer {
-					err := c.SendCommand(cmd)
-					if err != nil {
-						log.Printf("重新發送消息失敗: %v", err)
-					}
-				}
-				// 清空緩衝區
-				c.messageBuffer = make([]Command, 0)
-=======
 			// 確保標記為已連接
 			c.isConnected.Store(true)
 
@@ -458,20 +421,11 @@ func (c *ClientState) reconnect(ctx context.Context) error {
 						log.Printf("成功重新發送消息: %v", cmd.Type)
 					}
 				}
->>>>>>> Stashed changes
 			}
 
 			return nil
 		}
 
-<<<<<<< Updated upstream
-		retryCount++
-		log.Printf("重新連接失敗: %v，將在 %v 後重試", err, c.config.reconnectDelay)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(c.config.reconnectDelay):
-=======
 		lastError = err
 		retryCount++
 
@@ -488,7 +442,6 @@ func (c *ClientState) reconnect(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(backoff):
->>>>>>> Stashed changes
 			// 繼續重試
 		}
 	}
@@ -522,12 +475,6 @@ func (c *ClientState) SendCommand(cmd Command) error {
 		return fmt.Errorf("連接為空，消息已加入緩衝區")
 	}
 
-<<<<<<< Updated upstream
-	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-		// 將消息加入緩衝區，等待重連後發送
-		c.messageBuffer = append(c.messageBuffer, cmd)
-		return fmt.Errorf("發送消息失敗: %w", err)
-=======
 	// 設置寫入超時
 	c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 
@@ -559,7 +506,6 @@ func (c *ClientState) SendCommand(cmd Command) error {
 		}
 
 		return fmt.Errorf("發送消息失敗: %w", sendErr)
->>>>>>> Stashed changes
 	}
 
 	return nil
@@ -575,12 +521,8 @@ func (c *ClientState) StartHeartbeat(ctx context.Context) {
 		c.config.heartbeatTicker.Stop()
 	}
 
-<<<<<<< Updated upstream
-	c.config.heartbeatTicker = time.NewTicker(15 * time.Second)
-=======
 	// 使用 pingPeriod 常量代替硬編碼的 15 秒
 	c.config.heartbeatTicker = time.NewTicker(pingPeriod)
->>>>>>> Stashed changes
 
 	go func() {
 		defer func() {
@@ -597,17 +539,12 @@ func (c *ClientState) StartHeartbeat(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-c.config.heartbeatTicker.C:
-<<<<<<< Updated upstream
-=======
 				// 發送應用層心跳消息
->>>>>>> Stashed changes
 				cmd := HeartbeatCommand(c.config.clientID)
 				err := c.SendCommand(cmd)
 				if err != nil && c.config.debug {
 					log.Printf("發送心跳失敗: %v", err)
 				}
-<<<<<<< Updated upstream
-=======
 
 				// 發送 WebSocket 協議層的 Ping
 				c.connMutex.Lock()
@@ -623,7 +560,6 @@ func (c *ClientState) StartHeartbeat(ctx context.Context) {
 					}
 				}
 				c.connMutex.Unlock()
->>>>>>> Stashed changes
 			}
 		}
 	}()
@@ -688,12 +624,9 @@ func (c *ClientState) ReadMessages(ctx context.Context, msgChan chan<- []byte, e
 					continue
 				}
 
-<<<<<<< Updated upstream
-=======
 				// 成功讀取消息後，更新讀取截止時間
 				_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 
->>>>>>> Stashed changes
 				// 檢查是否為心跳消息，如果是則靜默處理
 				if isHeartbeatMessage(message) {
 					if c.config.debug {
@@ -702,9 +635,6 @@ func (c *ClientState) ReadMessages(ctx context.Context, msgChan chan<- []byte, e
 					continue
 				}
 
-<<<<<<< Updated upstream
-				msgChan <- message
-=======
 				// 處理可能包含多個JSON消息的情況
 				messages := bytes.Split(message, []byte{'\n'})
 				for _, msg := range messages {
@@ -715,7 +645,6 @@ func (c *ClientState) ReadMessages(ctx context.Context, msgChan chan<- []byte, e
 					// 發送至消息通道進行處理
 					msgChan <- msg
 				}
->>>>>>> Stashed changes
 			}
 		}
 	}()
@@ -723,25 +652,26 @@ func (c *ClientState) ReadMessages(ctx context.Context, msgChan chan<- []byte, e
 
 // isHeartbeatMessage 檢查消息是否為心跳消息
 func isHeartbeatMessage(message []byte) bool {
-	// 快速檢查是否包含heartbeat關鍵字
-	if !strings.Contains(string(message), "heartbeat") {
+	// 快速檢查是否包含HEARTBEAT關鍵字
+	if !strings.Contains(string(message), "HEARTBEAT") {
 		return false
 	}
 
-	// 進一步解析消息內容
-	var msgMap map[string]interface{}
-	if err := json.Unmarshal(message, &msgMap); err != nil {
+	// 更詳細的檢查
+	var msg map[string]interface{}
+	if err := json.Unmarshal(message, &msg); err != nil {
+		// 如果解析失敗，不是有效的JSON，不是心跳消息
 		return false
 	}
 
-	// 檢查type字段
-	if msgType, ok := msgMap["type"]; ok {
-		if msgTypeStr, ok := msgType.(string); ok {
-			return strings.ToLower(msgTypeStr) == "heartbeat"
-		}
+	// 檢查消息類型
+	msgTypeStr, ok := msg["type"].(string)
+	if !ok {
+		return false
 	}
 
-	return false
+	// 檢查類型是否為heartbeat
+	return strings.ToUpper(msgTypeStr) == "HEARTBEAT"
 }
 
 func main() {
@@ -830,12 +760,18 @@ func main() {
 	gameStartTimer := time.NewTimer(5 * time.Second)
 	defer gameStartTimer.Stop()
 
+	// 設置一個定時器，每隔30秒打印命令發送狀態
+	statusTimer := time.NewTicker(30 * time.Second)
+	defer statusTimer.Stop()
+
 	// 主循環
 	for {
 		select {
 		case <-ctx.Done():
 			client.Disconnect()
 			return
+		case <-statusTimer.C:
+			printCommandStatus()
 		case msg := <-msgChan:
 			// 嘗試解析回應
 			var rawJSON map[string]interface{}
@@ -844,13 +780,10 @@ func main() {
 				continue
 			}
 
-<<<<<<< Updated upstream
-			// 首先檢查是否為標準Response結構
-=======
 			// 檢查消息類型
 			if msgType, ok := rawJSON["type"].(string); ok {
 				// 心跳檢測
-				if strings.ToLower(msgType) == "heartbeat" {
+				if strings.ToUpper(msgType) == "HEARTBEAT" {
 					if client.config.debug {
 						log.Printf("收到心跳回應: %s", msg)
 					}
@@ -930,53 +863,74 @@ func main() {
 					log.Printf("遊戲事件 (%s): %s", msgType, prettyJSON(msg))
 					continue
 				} else if msgType == "BETTING_STARTED" {
-					log.Printf("遊戲事件 (%s): %s", msgType, prettyJSON(msg))
+					log.Printf("收到類型為 'BETTING_STARTED' 的消息: %s", string(msg))
 
-					// 獲取遊戲數據
-					gameData, ok := rawJSON["data"].(map[string]interface{})
-					if !ok {
-						log.Printf("無法獲取遊戲數據")
-						continue
-					}
-
-					gameInfo, ok := gameData["game"].(map[string]interface{})
-					if !ok {
-						log.Printf("無法獲取遊戲信息")
-						continue
-					}
-
-					// 創建一個發送BETTING_CLOSED事件的計時器，5秒後觸發
-					go func() {
-						log.Println("5秒後將發送BETTING_CLOSED命令...")
-						time.Sleep(5 * time.Second)
-
-						// 創建BETTING_CLOSED事件
-						bettingClosedCmd := Command{
-							Type: "BETTING_CLOSED",
-							Data: map[string]interface{}{
-								"game": map[string]interface{}{
-									"id":         gameInfo["id"],
-									"state":      gameInfo["state"],
-									"hasJackpot": gameInfo["hasJackpot"],
-								},
-								"betting": map[string]interface{}{
-									"playerCount": 15,
-									"totalAmount": 1500,
-								},
-							},
-							Timestamp: time.Now().Format(time.RFC3339),
+					// 獲取遊戲ID和狀態信息
+					if rawJSON["data"] != nil {
+						gameData, ok := rawJSON["data"].(map[string]interface{})
+						if !ok {
+							log.Printf("無法獲取遊戲數據")
+							continue
 						}
 
-						// 發送命令
-						err := client.SendCommand(bettingClosedCmd)
-						if err != nil {
-							log.Printf("發送BETTING_CLOSED事件失敗: %v", err)
-						} else {
-							log.Printf("已發送BETTING_CLOSED事件，遊戲ID: %v", gameInfo["id"])
+						gameInfo, ok := gameData["game"].(map[string]interface{})
+						if !ok {
+							log.Printf("無法獲取遊戲信息")
+							continue
 						}
-					}()
 
-					continue
+						gameID := gameInfo["id"]
+						gameState := gameInfo["state"]
+						hasJackpot := gameInfo["hasJackpot"]
+
+						gameIDStr := fmt.Sprintf("%v", gameID)
+						log.Printf("遊戲ID: %v, 遊戲狀態: %v, 是否有彩池: %v",
+							gameID, gameState, hasJackpot)
+
+						// 設置5秒後發送BETTING_CLOSED命令
+						go func(gameID interface{}, gameState interface{}, hasJackpot interface{}, gameIDStr string) {
+							time.Sleep(5 * time.Second)
+
+							// 檢查該遊戲的BETTING_CLOSED命令是否已發送
+							if markCommandSent(gameIDStr, "BETTING_CLOSED") {
+								log.Printf("BETTING_CLOSED命令已經為遊戲ID %s 發送過，跳過重複發送", gameIDStr)
+								return
+							}
+
+							// 創建BETTING_CLOSED命令
+							bettingClosedCmd := Command{
+								Type: "BETTING_CLOSED",
+								Data: map[string]interface{}{
+									"game": map[string]interface{}{
+										"id":         gameID,
+										"state":      gameState,
+										"hasJackpot": hasJackpot,
+									},
+									"betting_summary": map[string]interface{}{
+										"player_count": 15,
+										"total_amount": 1500.00,
+										"timestamp":    time.Now().Format(time.RFC3339),
+									},
+								},
+								Timestamp: time.Now().Format(time.RFC3339),
+							}
+
+							log.Printf("5秒計時結束，準備發送BETTING_CLOSED命令")
+
+							// 重試機制，確保命令發送成功
+							maxRetries := 3
+							for i := 0; i < maxRetries; i++ {
+								err := client.SendCommand(bettingClosedCmd)
+								if err != nil {
+									log.Printf("發送BETTING_CLOSED失敗 (嘗試 %d/%d): %v", i+1, maxRetries, err)
+									time.Sleep(1 * time.Second)
+								} else {
+									log.Printf("已成功發送BETTING_CLOSED命令，遊戲ID: %v", gameID)
+									break
+								}
+							}
+						}(gameID, gameState, hasJackpot, gameIDStr)
+					}
 				} else if msgType == "DRAW_RESULT_RESPONSE" {
 					log.Printf("收到類型為 'DRAW_RESULT_RESPONSE' 的消息: %s", string(msg))
 
@@ -1025,14 +979,28 @@ func main() {
 				} else if msgType == "ERROR" {
 					log.Printf("收到類型為 'ERROR' 的消息: %s", string(msg))
 				} else {
-					// 處理其他類型的消息
-					log.Printf("收到類型為 '%s' 的消息: %s", msgType, msg)
-					continue
+					// 檢查是否為GAME_STATE_CHANGED消息
+					var stateChangedMsg map[string]interface{}
+					if err := json.Unmarshal(msg, &stateChangedMsg); err == nil {
+						if msgType, ok := stateChangedMsg["type"].(string); ok && msgType == "GAME_STATE_CHANGED" {
+							log.Printf("收到遊戲狀態變更消息: %s", string(msg))
+							continue
+						}
+					}
+
+					log.Printf("收到錯誤回應: %s", msg)
+					// 嘗試解析錯誤信息
+					var errResponse map[string]interface{}
+					if err := json.Unmarshal(msg, &errResponse); err == nil {
+						if message, ok := errResponse["message"].(string); ok && message != "" {
+							log.Printf("錯誤信息: %s", message)
+							log.Println("建議檢查命令格式或服務器處理邏輯")
+						}
+					}
 				}
 			}
 
 			// 檢查是否為標準Response結構
->>>>>>> Stashed changes
 			var response Response
 			if err := json.Unmarshal(msg, &response); err == nil && (response.Type != "" || response.Success) {
 				if response.Success {
@@ -1040,10 +1008,6 @@ func main() {
 						log.Printf("遊戲創建成功: %s", msg)
 						log.Println("遊戲已成功創建！系統已在TiDB中建立新遊戲記錄。")
 						log.Println("初始階段 has_jackpot 欄位設置為 false")
-<<<<<<< Updated upstream
-					} else {
-						log.Printf("收到成功回應: %s", msg)
-=======
 					} else if response.Type == "BETTING_STARTED_RESPONSE" {
 						log.Printf("收到類型為 'BETTING_STARTED_RESPONSE' 的消息: %s", string(msg))
 
@@ -1052,6 +1016,19 @@ func main() {
 							gameID := response.Data["game_id"]
 							gameState := response.Data["state"]
 							hasJackpot := response.Data["hasJackpot"]
+
+							// 檢查是否已經發送過 BETTING_CLOSED 命令
+							gameIDStr := ""
+							if gid, ok := gameID.(string); ok {
+								gameIDStr = gid
+							} else if gameID != nil {
+								gameIDStr = fmt.Sprintf("%v", gameID)
+							}
+
+							if gameIDStr != "" && markCommandSent(gameIDStr, "BETTING_CLOSED") {
+								log.Printf("已經發送過 BETTING_CLOSED 命令，遊戲ID: %v, 跳過此次發送", gameIDStr)
+								continue
+							}
 
 							// 設置5秒後發送BETTING_CLOSED命令
 							go func(gameID interface{}, gameState interface{}, hasJackpot interface{}) {
@@ -1198,7 +1175,6 @@ func main() {
 					} else {
 						// 處理其他類型的消息
 						log.Printf("收到類型為 '%s' 的消息: %s", response.Type, string(msg))
->>>>>>> Stashed changes
 					}
 				} else {
 					log.Printf("收到錯誤回應: %s", msg)
@@ -1210,22 +1186,6 @@ func main() {
 				continue
 			}
 
-<<<<<<< Updated upstream
-			// 檢查是否有type字段但不是標準Response結構
-			if msgType, ok := rawJSON["type"].(string); ok {
-				if msgType == "heartbeat" {
-					// 這應該在ReadMessages中過濾，但再次檢查以防萬一
-					if client.config.debug {
-						log.Printf("收到心跳回應: %s", msg)
-					}
-				} else {
-					log.Printf("收到類型為 '%s' 的消息: %s", msgType, msg)
-				}
-				continue
-			}
-
-=======
->>>>>>> Stashed changes
 			// 其他未識別的消息
 			log.Printf("收到未識別格式的消息: %s", msg)
 		case err := <-errChan:
@@ -1251,8 +1211,6 @@ func main() {
 		}
 	}
 }
-<<<<<<< Updated upstream
-=======
 
 // 添加一個工具函數用於美化JSON輸出
 func prettyJSON(data []byte) string {
@@ -1263,4 +1221,20 @@ func prettyJSON(data []byte) string {
 	}
 	return out.String()
 }
->>>>>>> Stashed changes
+
+// 定期打印命令發送狀態
+func printCommandStatus() {
+	commandLock.Lock()
+	defer commandLock.Unlock()
+
+	log.Println("=== 命令發送狀態 ===")
+	if len(bettingClosedSent) == 0 {
+		log.Println("尚未發送任何被標記的命令")
+		return
+	}
+
+	for key, sent := range bettingClosedSent {
+		log.Printf("命令 %s 發送狀態: %v", key, sent)
+	}
+	log.Println("===================")
+}

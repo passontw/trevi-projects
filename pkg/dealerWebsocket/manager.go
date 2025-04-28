@@ -628,11 +628,7 @@ func (c *Client) ReadPump() {
 		var cmd struct {
 			Type      string          `json:"type"`
 			Data      json.RawMessage `json:"data"`
-<<<<<<< Updated upstream
-			Timestamp int64           `json:"timestamp"`
-=======
 			Timestamp string          `json:"timestamp"`
->>>>>>> Stashed changes
 		}
 
 		if err := json.Unmarshal(message, &cmd); err == nil && cmd.Type != "" {
@@ -743,8 +739,6 @@ func (c *Client) ReadPump() {
 		} else {
 			// 記錄重要消息
 			log.Printf("收到消息: %v", msg)
-<<<<<<< Updated upstream
-=======
 
 			// 處理特殊消息類型
 			// 對於BETTING_STARTED消息，確保它能被正確處理
@@ -753,7 +747,6 @@ func (c *Client) ReadPump() {
 				// 調用消息處理器處理BETTING_STARTED消息
 				c.manager.messageHandler.HandleMessage(c, msg.Type, msg.Data)
 			}
->>>>>>> Stashed changes
 		}
 	}
 }

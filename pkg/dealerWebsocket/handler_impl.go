@@ -37,15 +37,12 @@ func (h *DealerMessageHandler) HandleMessage(client *Client, messageType string,
 		h.handleStartJPGame(client, data)
 	case MessageTypeDrawJPBall:
 		h.handleDrawJPBall(client)
-<<<<<<< Updated upstream
-=======
 	case MessageTypeBettingStarted:
 		h.handleBettingStarted(client, data)
 	case MessageTypeBettingClosed:
 		h.handleBettingClosed(client, data)
 	case MessageTypeDrawResult:
 		h.handleDrawResult(client, data)
->>>>>>> Stashed changes
 	default:
 		log.Printf("未知消息類型: %s", messageType)
 		response := NewErrorResponse("不支持的消息類型")
@@ -224,15 +221,6 @@ func (h *DealerMessageHandler) handleShowLuckyNumbers(client *Client, data inter
 
 	log.Printf("已設置並通知幸運號碼: %v，遊戲ID: %s", luckyNumbers, status.Game.ID)
 
-<<<<<<< Updated upstream
-	// 更改遊戲狀態為投注階段
-	if err := h.gameService.ChangeState(game.StateBetting); err != nil {
-		log.Printf("更改遊戲狀態失敗: %v", err)
-		return
-	}
-
-	log.Printf("遊戲狀態已更改為投注階段: %s", game.StateBetting)
-=======
 	// 記錄當前狀態
 	currentState := h.gameService.GetCurrentState()
 	log.Printf("顯示幸運號碼後的當前遊戲狀態: %s", currentState)
@@ -271,27 +259,11 @@ func (h *DealerMessageHandler) handleShowLuckyNumbers(client *Client, data inter
 
 		log.Printf("已自動開始投注階段並廣播狀態變更")
 	}
->>>>>>> Stashed changes
 }
 
 // handleDrawBall 處理抽球命令
 func (h *DealerMessageHandler) handleDrawBall(client *Client) {
 	log.Println("處理 DRAW_BALL 命令")
-<<<<<<< Updated upstream
-	// 這個方法的實現將在後續加入
-	response := NewErrorResponse("DRAW_BALL 功能尚未實現")
-	responseJSON, _ := json.Marshal(response)
-	client.Send <- responseJSON
-}
-
-// handleDrawExtraBall 處理抽額外球命令
-func (h *DealerMessageHandler) handleDrawExtraBall(client *Client) {
-	log.Println("處理 DRAW_EXTRA_BALL 命令")
-	// 這個方法的實現將在後續加入
-	response := NewErrorResponse("DRAW_EXTRA_BALL 功能尚未實現")
-	responseJSON, _ := json.Marshal(response)
-	client.Send <- responseJSON
-=======
 
 	// 獲取當前遊戲狀態
 	currentState := h.gameService.GetCurrentState()
@@ -536,7 +508,6 @@ func convertDrawResultsToExtraBallInfo(results []game.DrawResult) []map[string]i
 		}
 	}
 	return balls
->>>>>>> Stashed changes
 }
 
 // handleStartJPGame 處理開始JP遊戲命令
@@ -556,8 +527,6 @@ func (h *DealerMessageHandler) handleDrawJPBall(client *Client) {
 	responseJSON, _ := json.Marshal(response)
 	client.Send <- responseJSON
 }
-<<<<<<< Updated upstream
-=======
 
 // handleBettingStarted 處理投注開始命令
 func (h *DealerMessageHandler) handleBettingStarted(client *Client, data interface{}) {
@@ -784,4 +753,3 @@ func (h *DealerMessageHandler) handleDrawResult(client *Client, data interface{}
 		log.Printf("遊戲已結束，進入空閒狀態等待下一場遊戲開始")
 	}
 }
->>>>>>> Stashed changes

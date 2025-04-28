@@ -107,10 +107,7 @@ func (dfc *DataFlowController) ChangeState(newState GameState) error {
 	defer dfc.mu.Unlock()
 
 	oldState := dfc.currentState
-<<<<<<< Updated upstream
-=======
 	log.Printf("嘗試變更遊戲狀態: %s -> %s", oldState, newState)
->>>>>>> Stashed changes
 
 	// 檢查狀態轉換是否合法
 	if !dfc.isValidStateTransition(dfc.currentState, newState) {
@@ -556,8 +553,6 @@ func (dfc *DataFlowController) ResetGame() {
 
 	dfc.resetGame()
 }
-<<<<<<< Updated upstream
-=======
 
 // StartBetting 開始投注階段
 func (dfc *DataFlowController) StartBetting() error {
@@ -621,4 +616,3 @@ func (dfc *DataFlowController) StartDrawing() error {
 	log.Printf("遊戲狀態已從 %s 變更為 %s (開始抽球)", oldState, StateDrawing)
 	return nil
 }
->>>>>>> Stashed changes

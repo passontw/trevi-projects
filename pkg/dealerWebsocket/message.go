@@ -9,7 +9,7 @@ import (
 // 消息類型常量
 const (
 	// 系統消息類型
-	MessageTypeHeartbeat      = "heartbeat"      // 心跳消息
+	MessageTypeHeartbeat      = "HEARTBEAT"      // 心跳消息
 	MessageTypeAuthentication = "authentication" // 認證消息
 	MessageTypeAuthSuccess    = "auth_success"   // 認證成功
 	MessageTypeAuthFailure    = "auth_failure"   // 認證失敗
@@ -30,11 +30,8 @@ const (
 	MessageTypeDrawExtraBall    = "DRAW_EXTRA_BALL"     // 抽額外球命令
 	MessageTypeStartJPGame      = "START_JP_GAME"       // 開始JP遊戲命令
 	MessageTypeDrawJPBall       = "DRAW_JP_BALL"        // 抽JP球命令
-<<<<<<< Updated upstream
-=======
 	MessageTypeBettingStarted   = "BETTING_STARTED"     // 投注開始命令
 	MessageTypeBettingClosed    = "BETTING_CLOSED"      // 投注關閉命令
->>>>>>> Stashed changes
 
 	// 遊戲事件類型
 	MessageTypeLuckyNumbersSet = "LUCKY_NUMBERS_SET" // 幸運號碼設置事件
