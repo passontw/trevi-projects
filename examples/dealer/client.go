@@ -77,6 +77,7 @@ var WebSocketErrorCodes = map[int]WebSocketError{
 var (
 	bettingClosedSent = make(map[string]bool) // 使用 gameID 作為 key
 	commandLock       sync.Mutex              // 用於保護上面的 map
+	currentGameID     string                  // 保存當前遊戲ID
 )
 
 // 檢查並標記命令是否已發送
@@ -1077,6 +1078,17 @@ func main() {
 							gameState := response.Data["state"]
 							hasJackpot := response.Data["hasJackpot"]
 
+							// 保存當前遊戲ID用於後續命令
+							if gameID != nil {
+								if gid, ok := gameID.(string); ok {
+									currentGameID = gid
+									log.Printf("保存當前遊戲ID: %s", currentGameID)
+								} else {
+									currentGameID = fmt.Sprintf("%v", gameID)
+									log.Printf("保存當前遊戲ID(轉換格式): %s", currentGameID)
+								}
+							}
+
 							// 設置2秒後發送DRAW_BALL命令
 							go func(gameID interface{}, gameState interface{}, hasJackpot interface{}) {
 								time.Sleep(2 * time.Second)
@@ -1110,63 +1122,88 @@ func main() {
 
 						// 獲取遊戲ID和相關數據
 						if response.Data != nil {
-							gameID := response.Data["game_id"]
-							drawnNumbers := response.Data["drawnNumbers"]
-							remainingCount := response.Data["remainingCount"]
+							// 正確獲取伺服器回應中的字段
+							var gameID interface{} = response.Data["game_id"]
+							ballNumber := response.Data["ball_number"]
+							sequence := response.Data["sequence"]
+							totalDrawn := response.Data["total_drawn"]
 
-							log.Printf("遊戲ID: %v, 已抽出的號碼: %v, 剩餘號碼數: %v",
-								gameID, drawnNumbers, remainingCount)
+							// 如果伺服器回應沒有game_id，則使用之前保存的遊戲ID
+							if gameID == nil && currentGameID != "" {
+								gameID = currentGameID
+								log.Printf("使用之前保存的遊戲ID: %s", currentGameID)
+							}
 
-							// 模擬不斷抽球的過程
-							if remainingCount != nil {
-								if count, ok := remainingCount.(float64); ok && count > 0 {
-									// 設置適當延遲後再次發送抽球命令
-									go func(gameID interface{}, drawnNums interface{}) {
-										time.Sleep(800 * time.Millisecond)
-
-										// 建立下一次抽球命令
-										nextDrawBallCmd := Command{
-											Type: "DRAW_BALL",
-											Data: map[string]interface{}{
-												"game_id":      gameID,
-												"drawnNumbers": drawnNums,
-											},
-											Timestamp: time.Now().Format(time.RFC3339),
-										}
-
-										// 發送命令
-										err := client.SendCommand(nextDrawBallCmd)
-										if err != nil {
-											log.Printf("發送下一次DRAW_BALL命令失敗: %v", err)
-										} else {
-											log.Printf("已發送下一次DRAW_BALL命令，遊戲ID: %v", gameID)
-										}
-									}(gameID, drawnNumbers)
-								} else if count == 0 {
-									// 當所有球都抽完後，發送DRAW_RESULT命令
-									go func(gameID interface{}) {
-										time.Sleep(1 * time.Second)
-
-										// 建立抽獎結果命令
-										drawResultCmd := Command{
-											Type: "DRAW_RESULT",
-											Data: map[string]interface{}{
-												"game_id":      gameID,
-												"drawnNumbers": drawnNumbers,
-											},
-											Timestamp: time.Now().Format(time.RFC3339),
-										}
-
-										// 發送命令
-										err := client.SendCommand(drawResultCmd)
-										if err != nil {
-											log.Printf("發送DRAW_RESULT命令失敗: %v", err)
-										} else {
-											log.Printf("已發送DRAW_RESULT命令，遊戲ID: %v", gameID)
-										}
-									}(gameID)
+							// 計算剩餘球數 (假設總球數為 30)
+							var remainingCount float64 = 0
+							if totalDrawn != nil {
+								if count, ok := totalDrawn.(float64); ok {
+									remainingCount = 30 - count
+									if remainingCount < 0 {
+										remainingCount = 0
+									}
 								}
 							}
+
+							// 使用預設值避免nil值輸出
+							if gameID == nil {
+								gameID = "未知遊戲ID"
+							}
+
+							// 建立已抽出號碼的描述
+							drawnDescription := fmt.Sprintf("球號: %v, 序號: %v", ballNumber, sequence)
+
+							log.Printf("遊戲ID: %v, 已抽出的號碼: %v, 剩餘號碼數: %.0f",
+								gameID, drawnDescription, remainingCount)
+
+							// 模擬不斷抽球的過程
+							if remainingCount > 0 {
+								// 設置適當延遲後再次發送抽球命令
+								go func(gameID interface{}) {
+									time.Sleep(800 * time.Millisecond)
+
+									// 建立下一次抽球命令
+									nextDrawBallCmd := Command{
+										Type: "DRAW_BALL",
+										Data: map[string]interface{}{
+											"game_id": gameID,
+										},
+										Timestamp: time.Now().Format(time.RFC3339),
+									}
+
+									// 發送命令
+									err := client.SendCommand(nextDrawBallCmd)
+									if err != nil {
+										log.Printf("發送下一次DRAW_BALL命令失敗: %v", err)
+									} else {
+										log.Printf("已發送下一次DRAW_BALL命令，遊戲ID: %v", gameID)
+									}
+								}(gameID)
+							} else {
+								// 當所有球都抽完後，發送DRAW_RESULT命令
+								go func(gameID interface{}) {
+									time.Sleep(1 * time.Second)
+
+									// 建立抽獎結果命令
+									drawResultCmd := Command{
+										Type: "DRAW_RESULT",
+										Data: map[string]interface{}{
+											"game_id": gameID,
+										},
+										Timestamp: time.Now().Format(time.RFC3339),
+									}
+
+									// 發送命令
+									err := client.SendCommand(drawResultCmd)
+									if err != nil {
+										log.Printf("發送DRAW_RESULT命令失敗: %v", err)
+									} else {
+										log.Printf("已發送DRAW_RESULT命令，遊戲ID: %v", gameID)
+									}
+								}(gameID)
+							}
+						} else {
+							log.Printf("警告: DRAW_BALL_RESPONSE 缺少數據欄位")
 						}
 					} else if response.Type == "GAME_STATE_CHANGED" {
 						log.Printf("收到類型為 'GAME_STATE_CHANGED' 的消息: %s", string(msg))
