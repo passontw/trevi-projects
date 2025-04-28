@@ -16,7 +16,8 @@ import (
 )
 
 type SuccessResponse struct {
-	Message string `json:"message"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
 }
 
 type ErrorResponse struct {
@@ -74,6 +75,7 @@ func configureAuthenticatedRoutes(api *gin.RouterGroup, gameHandler *GameHandler
 	authorized := api.Group("/")
 
 	authorized.POST("/game/state", gameHandler.ChangeGameState)
+	authorized.POST("/game/test-flow", gameHandler.TestGameFlow)
 }
 
 func StartServer(

@@ -26,6 +26,12 @@ type GameService interface {
 	GetCurrentState() game.GameState
 	// 更改遊戲狀態
 	ChangeState(state game.GameState) error
+	// 開始投注
+	StartBetting() error
+	// 關閉投注
+	CloseBetting() error
+	// 開始抽球
+	StartDrawing() error
 	// 設置JP觸發號碼
 	SetJPTriggerNumbers(numbers []int) error
 	// 驗證兩顆球的有效性
@@ -89,6 +95,21 @@ func (s *gameServiceImpl) GetCurrentState() game.GameState {
 // ChangeState 更改遊戲狀態
 func (s *gameServiceImpl) ChangeState(state game.GameState) error {
 	return s.controller.ChangeState(state)
+}
+
+// StartBetting 開始投注
+func (s *gameServiceImpl) StartBetting() error {
+	return s.controller.StartBetting()
+}
+
+// CloseBetting 關閉投注
+func (s *gameServiceImpl) CloseBetting() error {
+	return s.controller.CloseBetting()
+}
+
+// StartDrawing 開始抽球
+func (s *gameServiceImpl) StartDrawing() error {
+	return s.controller.StartDrawing()
 }
 
 // SetJPTriggerNumbers 設置JP觸發號碼

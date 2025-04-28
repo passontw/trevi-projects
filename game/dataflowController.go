@@ -107,14 +107,23 @@ func (dfc *DataFlowController) ChangeState(newState GameState) error {
 	defer dfc.mu.Unlock()
 
 	oldState := dfc.currentState
+<<<<<<< Updated upstream
+=======
+	log.Printf("嘗試變更遊戲狀態: %s -> %s", oldState, newState)
+>>>>>>> Stashed changes
 
 	// 檢查狀態轉換是否合法
 	if !dfc.isValidStateTransition(dfc.currentState, newState) {
+		log.Printf("錯誤: 不允許從 %s 到 %s 的狀態轉換", dfc.currentState, newState)
 		return fmt.Errorf("invalid state transition from %s to %s", dfc.currentState, newState)
 	}
 
+	// 將當前狀態添加到歷史記錄
 	dfc.stateHistory = append(dfc.stateHistory, dfc.currentState)
+
+	// 更新狀態
 	dfc.currentState = newState
+	log.Printf("遊戲狀態已變更: %s -> %s", oldState, newState)
 
 	// 新增更詳細的日誌
 	log.Printf("遊戲狀態已變更: %s -> %s", oldState, newState)
@@ -122,6 +131,7 @@ func (dfc *DataFlowController) ChangeState(newState GameState) error {
 	// 如果進入新遊戲，重置相關數據
 	if newState == StateStandby {
 		dfc.resetGame()
+		log.Printf("已重置遊戲數據（新遊戲準備階段）")
 	}
 
 	return nil
@@ -451,6 +461,12 @@ func (dfc *DataFlowController) GetGameStatus() *GameStatusResponse {
 
 // isValidStateTransition 檢查狀態轉換是否合法
 func (dfc *DataFlowController) isValidStateTransition(from, to GameState) bool {
+	// 特殊處理：允許從任何狀態轉換到BETTING（用於處理BETTING_STARTED消息）
+	if to == StateBetting {
+		log.Printf("允許從 %s 轉換到 BETTING 狀態", from)
+		return true
+	}
+
 	validTransitions := map[GameState][]GameState{
 		StateInitial:         {StateStandby, StateReady},
 		StateStandby:         {StateBetting},
@@ -540,3 +556,69 @@ func (dfc *DataFlowController) ResetGame() {
 
 	dfc.resetGame()
 }
+<<<<<<< Updated upstream
+=======
+
+// StartBetting 開始投注階段
+func (dfc *DataFlowController) StartBetting() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始投注階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許開始投注
+	if dfc.currentState != StateReady && dfc.currentState != StateShowLuckyNums {
+		return fmt.Errorf("當前狀態 %s 不允許開始投注", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateBetting
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (投注開始)", oldState, StateBetting)
+	return nil
+}
+
+// CloseBetting 關閉投注階段
+func (dfc *DataFlowController) CloseBetting() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("關閉投注階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許關閉投注
+	if dfc.currentState != StateBetting {
+		return fmt.Errorf("當前狀態 %s 不允許關閉投注", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateDrawing
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (投注關閉)", oldState, StateDrawing)
+	return nil
+}
+
+// StartDrawing 開始抽球階段
+func (dfc *DataFlowController) StartDrawing() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始抽球階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許開始抽球
+	if dfc.currentState != StateBetting {
+		return fmt.Errorf("當前狀態 %s 不允許開始抽球", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateDrawing
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (開始抽球)", oldState, StateDrawing)
+	return nil
+}
+>>>>>>> Stashed changes

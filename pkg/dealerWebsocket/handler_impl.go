@@ -37,6 +37,15 @@ func (h *DealerMessageHandler) HandleMessage(client *Client, messageType string,
 		h.handleStartJPGame(client, data)
 	case MessageTypeDrawJPBall:
 		h.handleDrawJPBall(client)
+<<<<<<< Updated upstream
+=======
+	case MessageTypeBettingStarted:
+		h.handleBettingStarted(client, data)
+	case MessageTypeBettingClosed:
+		h.handleBettingClosed(client, data)
+	case MessageTypeDrawResult:
+		h.handleDrawResult(client, data)
+>>>>>>> Stashed changes
 	default:
 		log.Printf("未知消息類型: %s", messageType)
 		response := NewErrorResponse("不支持的消息類型")
@@ -215,6 +224,7 @@ func (h *DealerMessageHandler) handleShowLuckyNumbers(client *Client, data inter
 
 	log.Printf("已設置並通知幸運號碼: %v，遊戲ID: %s", luckyNumbers, status.Game.ID)
 
+<<<<<<< Updated upstream
 	// 更改遊戲狀態為投注階段
 	if err := h.gameService.ChangeState(game.StateBetting); err != nil {
 		log.Printf("更改遊戲狀態失敗: %v", err)
@@ -222,11 +232,52 @@ func (h *DealerMessageHandler) handleShowLuckyNumbers(client *Client, data inter
 	}
 
 	log.Printf("遊戲狀態已更改為投注階段: %s", game.StateBetting)
+=======
+	// 記錄當前狀態
+	currentState := h.gameService.GetCurrentState()
+	log.Printf("顯示幸運號碼後的當前遊戲狀態: %s", currentState)
+
+	// 如果不是在投注階段，則自動開始投注階段
+	if currentState != game.StateBetting {
+		// 使用專用方法開始投注階段
+		if err := h.gameService.StartBetting(); err != nil {
+			log.Printf("開始投注階段失敗: %v", err)
+			return
+		}
+
+		// 驗證狀態是否已更改
+		newState := h.gameService.GetCurrentState()
+		log.Printf("遊戲狀態已更改: %s -> %s", currentState, newState)
+
+		// 獲取最新的遊戲狀態
+		updatedStatus := h.gameService.GetGameStatus()
+
+		// 廣播遊戲狀態變更事件給所有客戶端
+		broadcastMsg := map[string]interface{}{
+			"type": "GAME_STATE_CHANGED",
+			"data": map[string]interface{}{
+				"game": map[string]interface{}{
+					"id":         updatedStatus.Game.ID,
+					"state":      updatedStatus.Game.State,
+					"hasJackpot": updatedStatus.Game.HasJackpot,
+					"startTime":  time.Now().Format(time.RFC3339),
+				},
+			},
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+
+		broadcastJSON, _ := json.Marshal(broadcastMsg)
+		client.manager.broadcast <- broadcastJSON
+
+		log.Printf("已自動開始投注階段並廣播狀態變更")
+	}
+>>>>>>> Stashed changes
 }
 
 // handleDrawBall 處理抽球命令
 func (h *DealerMessageHandler) handleDrawBall(client *Client) {
 	log.Println("處理 DRAW_BALL 命令")
+<<<<<<< Updated upstream
 	// 這個方法的實現將在後續加入
 	response := NewErrorResponse("DRAW_BALL 功能尚未實現")
 	responseJSON, _ := json.Marshal(response)
@@ -240,6 +291,252 @@ func (h *DealerMessageHandler) handleDrawExtraBall(client *Client) {
 	response := NewErrorResponse("DRAW_EXTRA_BALL 功能尚未實現")
 	responseJSON, _ := json.Marshal(response)
 	client.Send <- responseJSON
+=======
+
+	// 獲取當前遊戲狀態
+	currentState := h.gameService.GetCurrentState()
+	log.Printf("抽球前的遊戲狀態: %s", currentState)
+
+	// 檢查當前狀態是否允許抽球
+	if currentState != game.StateDrawing {
+		log.Printf("當前狀態 %s 不允許抽球", currentState)
+		response := NewErrorResponse("當前遊戲狀態不允許抽球，目前狀態: " + string(currentState))
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	// 嘗試抽球
+	result, err := h.gameService.DrawBall()
+	if err != nil {
+		log.Printf("抽球失敗: %v", err)
+		response := NewErrorResponse("抽球失敗: " + err.Error())
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	log.Printf("成功抽出球: %d (順序: %d)", result.BallNumber, result.OrderIndex)
+
+	// 獲取當前遊戲狀態和已抽出的球
+	status := h.gameService.GetGameStatus()
+	drawnBalls := h.gameService.GetDrawnBalls()
+
+	// 創建抽球結果通知
+	notification := map[string]interface{}{
+		"type": "BALL_DRAWN",
+		"data": map[string]interface{}{
+			"game": map[string]interface{}{
+				"id":             status.Game.ID,
+				"state":          status.Game.State,
+				"hasJackpot":     status.Game.HasJackpot,
+				"extraBallCount": status.Game.ExtraBallCount,
+			},
+			"ball": map[string]interface{}{
+				"number":   result.BallNumber,
+				"drawTime": result.DrawTime.Format(time.RFC3339),
+				"sequence": result.OrderIndex,
+			},
+			"totalDrawn": len(drawnBalls),
+			"drawnBalls": convertDrawResultsToBallInfo(drawnBalls),
+		},
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	// 將通知序列化為JSON
+	notificationJSON, err := json.Marshal(notification)
+	if err != nil {
+		log.Printf("序列化抽球結果通知失敗: %v", err)
+		response := NewErrorResponse("序列化抽球結果通知失敗: " + err.Error())
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	// 向當前客戶端發送響應
+	client.Send <- notificationJSON
+
+	// 廣播通知給所有連接的客戶端
+	client.manager.broadcast <- notificationJSON
+
+	log.Printf("已通知抽球結果: 球號 %d, 遊戲ID: %s, 總計已抽出 %d 個球",
+		result.BallNumber, status.Game.ID, len(drawnBalls))
+
+	// 創建成功回應
+	response := NewSuccessResponse("DRAW_BALL_RESPONSE", "抽球成功", map[string]interface{}{
+		"ball_number": result.BallNumber,
+		"sequence":    result.OrderIndex,
+		"draw_time":   result.DrawTime.Format(time.RFC3339),
+		"total_drawn": len(drawnBalls),
+	})
+
+	// 將回應序列化為JSON
+	responseJSON, _ := json.Marshal(response)
+
+	// 發送回應給客戶端
+	client.Send <- responseJSON
+}
+
+// convertDrawResultsToBallInfo 將DrawResult數組轉換為前端格式的球信息
+func convertDrawResultsToBallInfo(results []game.DrawResult) []map[string]interface{} {
+	balls := make([]map[string]interface{}, len(results))
+	for i, result := range results {
+		balls[i] = map[string]interface{}{
+			"number":   result.BallNumber,
+			"drawTime": result.DrawTime.Format(time.RFC3339),
+			"sequence": result.OrderIndex,
+		}
+	}
+	return balls
+}
+
+// handleDrawExtraBall 處理抽額外球命令
+func (h *DealerMessageHandler) handleDrawExtraBall(client *Client) {
+	log.Println("處理 DRAW_EXTRA_BALL 命令")
+
+	// 獲取當前遊戲狀態
+	currentState := h.gameService.GetCurrentState()
+	log.Printf("抽額外球前的遊戲狀態: %s", currentState)
+
+	// 檢查當前狀態是否允許抽額外球
+	if currentState != game.StateExtraDraw && currentState != game.StateChooseExtraBall {
+		log.Printf("當前狀態 %s 不允許抽額外球", currentState)
+		response := NewErrorResponse("當前遊戲狀態不允許抽額外球，目前狀態: " + string(currentState))
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	// 嘗試抽額外球
+	result, err := h.gameService.DrawExtraBall()
+	if err != nil {
+		log.Printf("抽額外球失敗: %v", err)
+		response := NewErrorResponse("抽額外球失敗: " + err.Error())
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	log.Printf("成功抽出額外球: %d (順序: %d)", result.BallNumber, result.OrderIndex)
+
+	// 獲取當前遊戲狀態和已抽出的額外球
+	status := h.gameService.GetGameStatus()
+	extraBalls := h.gameService.GetExtraBalls()
+
+	// 確定側邊位置 - 依據順序
+	side := "LEFT"
+	if result.OrderIndex%2 == 0 {
+		side = "RIGHT"
+	}
+
+	// 創建抽球結果通知
+	notification := map[string]interface{}{
+		"type": "EXTRA_BALL_DRAWN",
+		"data": map[string]interface{}{
+			"game": map[string]interface{}{
+				"id":             status.Game.ID,
+				"state":          status.Game.State,
+				"hasJackpot":     status.Game.HasJackpot,
+				"extraBallCount": status.Game.ExtraBallCount,
+			},
+			"ball": map[string]interface{}{
+				"number":   result.BallNumber,
+				"drawTime": result.DrawTime.Format(time.RFC3339),
+				"sequence": result.OrderIndex,
+				"side":     side,
+			},
+			"totalDrawn": len(extraBalls),
+			"extraBalls": convertDrawResultsToExtraBallInfo(extraBalls),
+		},
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	// 將通知序列化為JSON
+	notificationJSON, err := json.Marshal(notification)
+	if err != nil {
+		log.Printf("序列化額外球結果通知失敗: %v", err)
+		response := NewErrorResponse("序列化額外球結果通知失敗: " + err.Error())
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	// 向當前客戶端發送響應
+	client.Send <- notificationJSON
+
+	// 廣播通知給所有連接的客戶端
+	client.manager.broadcast <- notificationJSON
+
+	log.Printf("已通知額外球結果: 球號 %d, 遊戲ID: %s, 總計已抽出 %d 個額外球",
+		result.BallNumber, status.Game.ID, len(extraBalls))
+
+	// 創建成功回應
+	response := NewSuccessResponse("DRAW_EXTRA_BALL_RESPONSE", "抽額外球成功", map[string]interface{}{
+		"ball_number": result.BallNumber,
+		"sequence":    result.OrderIndex,
+		"draw_time":   result.DrawTime.Format(time.RFC3339),
+		"side":        side,
+		"total_drawn": len(extraBalls),
+	})
+
+	// 將回應序列化為JSON
+	responseJSON, _ := json.Marshal(response)
+
+	// 發送回應給客戶端
+	client.Send <- responseJSON
+
+	// 如果已經抽完所有額外球，自動進入結算階段
+	if len(extraBalls) >= status.Game.ExtraBallCount {
+		log.Printf("已抽完所有 %d 個額外球，準備進入結算階段", status.Game.ExtraBallCount)
+
+		// 嘗試變更狀態為結算階段
+		if err := h.gameService.ChangeState(game.StateResult); err != nil {
+			log.Printf("更改為結算階段失敗: %v", err)
+		} else {
+			// 獲取最新遊戲狀態
+			updatedStatus := h.gameService.GetGameStatus()
+
+			// 廣播遊戲狀態變更事件
+			broadcastMsg := map[string]interface{}{
+				"type": "GAME_STATE_CHANGED",
+				"data": map[string]interface{}{
+					"game": map[string]interface{}{
+						"id":         updatedStatus.Game.ID,
+						"state":      updatedStatus.Game.State,
+						"hasJackpot": updatedStatus.Game.HasJackpot,
+						"startTime":  time.Now().Format(time.RFC3339),
+					},
+				},
+				"timestamp": time.Now().Format(time.RFC3339),
+			}
+
+			broadcastJSON, _ := json.Marshal(broadcastMsg)
+			client.manager.broadcast <- broadcastJSON
+
+			log.Printf("已自動進入結算階段並廣播狀態變更")
+		}
+	}
+}
+
+// convertDrawResultsToExtraBallInfo 將DrawResult數組轉換為前端格式的額外球信息
+func convertDrawResultsToExtraBallInfo(results []game.DrawResult) []map[string]interface{} {
+	balls := make([]map[string]interface{}, len(results))
+	for i, result := range results {
+		// 確定側邊位置 - 依據順序
+		side := "LEFT"
+		if result.OrderIndex%2 == 0 {
+			side = "RIGHT"
+		}
+
+		balls[i] = map[string]interface{}{
+			"number":   result.BallNumber,
+			"drawTime": result.DrawTime.Format(time.RFC3339),
+			"sequence": result.OrderIndex,
+			"side":     side,
+		}
+	}
+	return balls
+>>>>>>> Stashed changes
 }
 
 // handleStartJPGame 處理開始JP遊戲命令
@@ -259,3 +556,232 @@ func (h *DealerMessageHandler) handleDrawJPBall(client *Client) {
 	responseJSON, _ := json.Marshal(response)
 	client.Send <- responseJSON
 }
+<<<<<<< Updated upstream
+=======
+
+// handleBettingStarted 處理投注開始命令
+func (h *DealerMessageHandler) handleBettingStarted(client *Client, data interface{}) {
+	log.Println("處理 BETTING_STARTED 命令")
+
+	// 輸出收到的資料，幫助調試
+	jsonData, _ := json.Marshal(data)
+	log.Printf("收到BETTING_STARTED命令資料: %s", string(jsonData))
+
+	// 獲取當前遊戲狀態
+	currentState := h.gameService.GetCurrentState()
+	log.Printf("處理BETTING_STARTED前的遊戲狀態: %s", currentState)
+
+	// 使用專用方法開始投注階段
+	err := h.gameService.StartBetting()
+	if err != nil {
+		log.Printf("開始投注階段失敗: %v", err)
+		response := NewErrorResponse("開始投注階段失敗: " + err.Error())
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	// 驗證狀態是否已更改
+	newState := h.gameService.GetCurrentState()
+	log.Printf("遊戲狀態已更改: %s -> %s", currentState, newState)
+
+	// 獲取當前遊戲狀態
+	status := h.gameService.GetGameStatus()
+	log.Printf("當前遊戲狀態: ID=%s, State=%s, HasJackpot=%v",
+		status.Game.ID, status.Game.State, status.Game.HasJackpot)
+
+	// 創建成功回應
+	response := NewSuccessResponse("BETTING_STARTED_RESPONSE", "投注階段已開始", map[string]interface{}{
+		"game_id":    status.Game.ID,
+		"state":      status.Game.State,
+		"hasJackpot": status.Game.HasJackpot,
+	})
+
+	// 序列化回應
+	responseJSON, _ := json.Marshal(response)
+
+	// 發送回應給客戶端
+	client.Send <- responseJSON
+
+	log.Printf("已發送BETTING_STARTED_RESPONSE回應")
+
+	// 廣播遊戲狀態變更事件給所有客戶端
+	broadcastMsg := map[string]interface{}{
+		"type": "GAME_STATE_CHANGED",
+		"data": map[string]interface{}{
+			"game": map[string]interface{}{
+				"id":         status.Game.ID,
+				"state":      status.Game.State,
+				"hasJackpot": status.Game.HasJackpot,
+				"startTime":  time.Now().Format(time.RFC3339),
+			},
+		},
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	broadcastJSON, _ := json.Marshal(broadcastMsg)
+	client.manager.broadcast <- broadcastJSON
+
+	log.Printf("已廣播遊戲狀態變更事件")
+}
+
+// handleBettingClosed 處理投注關閉命令
+func (h *DealerMessageHandler) handleBettingClosed(client *Client, data interface{}) {
+	log.Println("處理 BETTING_CLOSED 命令")
+
+	// 輸出收到的資料，幫助調試
+	jsonData, _ := json.Marshal(data)
+	log.Printf("收到BETTING_CLOSED命令資料: %s", string(jsonData))
+
+	// 獲取當前遊戲狀態
+	currentState := h.gameService.GetCurrentState()
+	log.Printf("處理BETTING_CLOSED前的遊戲狀態: %s", currentState)
+
+	// 使用專用方法關閉投注並進入抽球階段
+	err := h.gameService.CloseBetting()
+	if err != nil {
+		log.Printf("關閉投注階段失敗: %v", err)
+		response := NewErrorResponse("關閉投注階段失敗: " + err.Error())
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	// 驗證狀態是否已更改
+	newState := h.gameService.GetCurrentState()
+	log.Printf("遊戲狀態已更改: %s -> %s", currentState, newState)
+
+	// 獲取當前遊戲狀態
+	status := h.gameService.GetGameStatus()
+	log.Printf("當前遊戲狀態: ID=%s, State=%s, HasJackpot=%v",
+		status.Game.ID, status.Game.State, status.Game.HasJackpot)
+
+	// 創建成功回應
+	response := NewSuccessResponse("BETTING_CLOSED_RESPONSE", "投注階段已關閉，進入開球階段", map[string]interface{}{
+		"game_id":    status.Game.ID,
+		"state":      status.Game.State,
+		"hasJackpot": status.Game.HasJackpot,
+	})
+
+	// 序列化回應
+	responseJSON, _ := json.Marshal(response)
+
+	// 發送回應給客戶端
+	client.Send <- responseJSON
+
+	log.Printf("已發送BETTING_CLOSED_RESPONSE回應")
+
+	// 廣播遊戲狀態變更事件給所有客戶端
+	broadcastMsg := map[string]interface{}{
+		"type": "GAME_STATE_CHANGED",
+		"data": map[string]interface{}{
+			"game": map[string]interface{}{
+				"id":         status.Game.ID,
+				"state":      status.Game.State,
+				"hasJackpot": status.Game.HasJackpot,
+				"startTime":  time.Now().Format(time.RFC3339),
+			},
+		},
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	broadcastJSON, _ := json.Marshal(broadcastMsg)
+	client.manager.broadcast <- broadcastJSON
+
+	log.Printf("已廣播遊戲狀態變更事件")
+}
+
+// handleDrawResult 處理開獎結果命令
+func (h *DealerMessageHandler) handleDrawResult(client *Client, data interface{}) {
+	log.Println("處理 DRAW_RESULT 命令")
+
+	// 獲取當前遊戲狀態
+	currentState := h.gameService.GetCurrentState()
+	log.Printf("處理DRAW_RESULT前的遊戲狀態: %s", currentState)
+
+	// 檢查當前狀態是否允許處理開獎結果
+	if currentState != game.StateResult {
+		log.Printf("當前狀態 %s 不允許處理開獎結果", currentState)
+		response := NewErrorResponse("當前遊戲狀態不允許處理開獎結果，目前狀態: " + string(currentState))
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	// 獲取當前遊戲狀態
+	status := h.gameService.GetGameStatus()
+	drawnBalls := h.gameService.GetDrawnBalls()
+	extraBalls := h.gameService.GetExtraBalls()
+	luckyNumbers := h.gameService.GetLuckyNumbers()
+
+	// 創建開獎結果通知
+	notification := map[string]interface{}{
+		"type": "DRAW_RESULT",
+		"data": map[string]interface{}{
+			"game": map[string]interface{}{
+				"id":             status.Game.ID,
+				"state":          status.Game.State,
+				"hasJackpot":     status.Game.HasJackpot,
+				"extraBallCount": status.Game.ExtraBallCount,
+				"endTime":        time.Now().Format(time.RFC3339),
+			},
+			"luckyNumbers":   luckyNumbers,
+			"drawnBalls":     convertDrawResultsToBallInfo(drawnBalls),
+			"extraBalls":     convertDrawResultsToExtraBallInfo(extraBalls),
+			"topPlayers":     []interface{}{}, // 這裡可以添加獲取頂級玩家的邏輯
+			"totalWinAmount": nil,             // 這裡可以添加計算總獲勝金額的邏輯
+			"jackpot": map[string]interface{}{
+				"active":     status.Game.HasJackpot,
+				"gameId":     status.Game.ID,
+				"amount":     nil, // 添加相應的JP數據
+				"startTime":  nil,
+				"endTime":    nil,
+				"drawnBalls": []interface{}{},
+				"winner":     nil,
+			},
+		},
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	// 將通知序列化為JSON
+	notificationJSON, err := json.Marshal(notification)
+	if err != nil {
+		log.Printf("序列化開獎結果通知失敗: %v", err)
+		response := NewErrorResponse("序列化開獎結果通知失敗: " + err.Error())
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	// 向當前客戶端發送響應
+	client.Send <- notificationJSON
+
+	// 廣播通知給所有連接的客戶端
+	client.manager.broadcast <- notificationJSON
+
+	log.Printf("已通知開獎結果: 遊戲ID: %s, 狀態: %s",
+		status.Game.ID, status.Game.State)
+
+	// 創建成功回應
+	response := NewSuccessResponse("DRAW_RESULT_RESPONSE", "開獎結果已發送", map[string]interface{}{
+		"game_id":       status.Game.ID,
+		"state":         status.Game.State,
+		"lucky_numbers": luckyNumbers,
+		"drawn_balls":   len(drawnBalls),
+		"extra_balls":   len(extraBalls),
+	})
+
+	// 將回應序列化為JSON
+	responseJSON, _ := json.Marshal(response)
+
+	// 發送回應給客戶端
+	client.Send <- responseJSON
+
+	// 完成遊戲後，準備下一場遊戲
+	if err := h.gameService.ChangeState(game.StateStandby); err != nil {
+		log.Printf("更改為空閒狀態失敗: %v", err)
+	} else {
+		log.Printf("遊戲已結束，進入空閒狀態等待下一場遊戲開始")
+	}
+}
+>>>>>>> Stashed changes

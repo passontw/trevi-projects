@@ -19,7 +19,7 @@ const (
 	// 業務消息類型
 	MessageTypeTicketPurchase = "ticket_purchase" // 票券購買消息
 	MessageTypeTicketStatus   = "ticket_status"   // 票券狀態更新
-	MessageTypeDrawResult     = "draw_result"     // 開獎結果
+	MessageTypeDrawResult     = "DRAW_RESULT"     // 開獎結果
 	MessageTypeAccountUpdate  = "account_update"  // 賬戶更新
 
 	// 遊戲命令類型
@@ -30,6 +30,11 @@ const (
 	MessageTypeDrawExtraBall    = "DRAW_EXTRA_BALL"     // 抽額外球命令
 	MessageTypeStartJPGame      = "START_JP_GAME"       // 開始JP遊戲命令
 	MessageTypeDrawJPBall       = "DRAW_JP_BALL"        // 抽JP球命令
+<<<<<<< Updated upstream
+=======
+	MessageTypeBettingStarted   = "BETTING_STARTED"     // 投注開始命令
+	MessageTypeBettingClosed    = "BETTING_CLOSED"      // 投注關閉命令
+>>>>>>> Stashed changes
 
 	// 遊戲事件類型
 	MessageTypeLuckyNumbersSet = "LUCKY_NUMBERS_SET" // 幸運號碼設置事件

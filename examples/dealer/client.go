@@ -1,6 +1,10 @@
 package main
 
 import (
+<<<<<<< Updated upstream
+=======
+	"bytes"
+>>>>>>> Stashed changes
 	"context"
 	"encoding/json"
 	"flag"
@@ -17,6 +21,21 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+<<<<<<< Updated upstream
+=======
+// 定義 WebSocket 連接常量
+const (
+	// 允許客戶端不發送 pong 的最大時間
+	pongWait = 60 * time.Second
+
+	// 發送 ping 的頻率，必須小於 pongWait
+	pingPeriod = (pongWait * 9) / 10
+
+	// 寫入超時時間
+	writeWait = 10 * time.Second
+)
+
+>>>>>>> Stashed changes
 // Command 定義一個通用的命令結構
 type Command struct {
 	Type      string                 `json:"type"`
@@ -96,7 +115,11 @@ func GameStartCommand() Command {
 // HeartbeatCommand 創建一個心跳命令
 func HeartbeatCommand(clientID string) Command {
 	return Command{
+<<<<<<< Updated upstream
 		Type: "HEARTBEAT",
+=======
+		Type: "heartbeat",
+>>>>>>> Stashed changes
 		Data: map[string]interface{}{
 			"clientId": clientID,
 		},
@@ -248,6 +271,25 @@ func (c *ClientState) Connect(ctx context.Context) error {
 	c.conn = conn
 	c.isConnected.Store(true)
 
+<<<<<<< Updated upstream
+=======
+	// 設置讀取限制
+	c.conn.SetReadLimit(512 * 1024) // 512KB
+
+	// 設置初始讀取截止時間
+	_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
+
+	// 設置 pong 處理程序，在收到 ping 時更新最後活動時間
+	c.conn.SetPongHandler(func(string) error {
+		// 收到 pong 後更新讀取截止時間
+		_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		if c.config.debug {
+			log.Println("收到服務器的 ping，已回應 pong")
+		}
+		return nil
+	})
+
+>>>>>>> Stashed changes
 	return nil
 }
 
@@ -257,6 +299,7 @@ func (c *ClientState) Disconnect() {
 	defer c.connMutex.Unlock()
 
 	if c.conn == nil {
+<<<<<<< Updated upstream
 		return // 已經斷開連接
 	}
 
@@ -270,6 +313,53 @@ func (c *ClientState) Disconnect() {
 	// 關閉連接
 	err = c.conn.Close()
 	if err != nil {
+=======
+		c.isConnected.Store(false)
+		return // 已經斷開連接
+	}
+
+	// 先停止心跳
+	if c.config.heartbeatTicker != nil {
+		c.config.heartbeatTicker.Stop()
+		c.config.heartbeatTicker = nil
+	}
+
+	// 嘗試發送關閉消息，最多重試3次
+	var closeErr error
+	for i := 0; i < 3; i++ {
+		// 設置寫入超時
+		c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+
+		// 發送關閉消息
+		closeMessage := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "客戶端主動關閉連接")
+		closeErr = c.conn.WriteMessage(websocket.CloseMessage, closeMessage)
+		if closeErr == nil {
+			break
+		}
+
+		// 記錄錯誤但不中斷，因為我們仍然會嘗試關閉連接
+		log.Printf("發送關閉消息嘗試 %d 失敗: %v", i+1, closeErr)
+
+		// 如果錯誤是由於連接已關閉，不再重試
+		if strings.Contains(closeErr.Error(), "use of closed network connection") ||
+			strings.Contains(closeErr.Error(), "broken pipe") {
+			break
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if closeErr != nil && !strings.Contains(closeErr.Error(), "use of closed network connection") {
+		log.Printf("發送關閉消息失敗: %v", closeErr)
+	}
+
+	// 設置關閉讀取超時，確保任何讀取操作都能立即返回
+	c.conn.SetReadDeadline(time.Now())
+
+	// 關閉連接
+	err := c.conn.Close()
+	if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
+>>>>>>> Stashed changes
 		log.Printf("關閉連接失敗: %v", err)
 	}
 
@@ -280,9 +370,20 @@ func (c *ClientState) Disconnect() {
 
 // reconnect 重新連接到WebSocket服務器
 func (c *ClientState) reconnect(ctx context.Context) error {
+<<<<<<< Updated upstream
 	// 先斷開現有連接
 	c.Disconnect()
 
+=======
+	// 先標記連接為已斷開
+	c.isConnected.Store(false)
+
+	// 先確保優雅地斷開現有連接
+	c.Disconnect()
+
+	log.Println("準備重新連接到服務器...")
+
+>>>>>>> Stashed changes
 	// 嘗試重新連接
 	maxRetries := c.config.maxRetries
 	if c.config.permanentRetry {
@@ -290,16 +391,34 @@ func (c *ClientState) reconnect(ctx context.Context) error {
 	}
 
 	retryCount := 0
+<<<<<<< Updated upstream
 	for {
 		if maxRetries >= 0 && retryCount >= maxRetries {
 			return fmt.Errorf("達到最大重試次數 %d", maxRetries)
 		}
 
 		log.Printf("嘗試重新連接 (嘗試 %d)", retryCount+1)
+=======
+	var lastError error
+
+	// 設置指數退避重試
+	backoff := c.config.reconnectDelay
+	maxBackoff := 60 * time.Second // 最大退避時間為60秒
+
+	for {
+		if maxRetries >= 0 && retryCount >= maxRetries {
+			log.Printf("重連失敗: 達到最大重試次數 %d", maxRetries)
+			c.isConnected.Store(false)
+			return fmt.Errorf("達到最大重試次數 %d: %w", maxRetries, lastError)
+		}
+
+		log.Printf("嘗試重新連接 (嘗試 %d)...", retryCount+1)
+>>>>>>> Stashed changes
 		err := c.Connect(ctx)
 		if err == nil {
 			log.Printf("重新連接成功 (嘗試 %d)", retryCount+1)
 
+<<<<<<< Updated upstream
 			// 重新發送緩衝區中的消息
 			if len(c.messageBuffer) > 0 {
 				log.Printf("重新發送 %d 個緩衝消息", len(c.messageBuffer))
@@ -311,17 +430,65 @@ func (c *ClientState) reconnect(ctx context.Context) error {
 				}
 				// 清空緩衝區
 				c.messageBuffer = make([]Command, 0)
+=======
+			// 確保標記為已連接
+			c.isConnected.Store(true)
+
+			// 重新啟動心跳
+			if c.config.keepalive {
+				log.Println("重新啟動心跳...")
+				c.StartHeartbeat(ctx)
+			}
+
+			// 重新發送緩衝區中的消息
+			if len(c.messageBuffer) > 0 {
+				log.Printf("重新發送 %d 個緩衝消息", len(c.messageBuffer))
+				messagesCopy := make([]Command, len(c.messageBuffer))
+				copy(messagesCopy, c.messageBuffer)
+
+				// 清空緩衝區
+				c.messageBuffer = make([]Command, 0)
+
+				// 發送緩衝的消息
+				for _, cmd := range messagesCopy {
+					if err := c.SendCommand(cmd); err != nil {
+						log.Printf("重新發送消息失敗: %v", err)
+						// 不中斷，繼續發送其他消息
+					} else {
+						log.Printf("成功重新發送消息: %v", cmd.Type)
+					}
+				}
+>>>>>>> Stashed changes
 			}
 
 			return nil
 		}
 
+<<<<<<< Updated upstream
 		retryCount++
 		log.Printf("重新連接失敗: %v，將在 %v 後重試", err, c.config.reconnectDelay)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(c.config.reconnectDelay):
+=======
+		lastError = err
+		retryCount++
+
+		// 計算指數退避時間，但不超過最大退避時間
+		if retryCount > 1 {
+			backoff = time.Duration(float64(backoff) * 1.5)
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+
+		log.Printf("重新連接失敗: %v，將在 %v 後重試", err, backoff)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+>>>>>>> Stashed changes
 			// 繼續重試
 		}
 	}
@@ -355,10 +522,44 @@ func (c *ClientState) SendCommand(cmd Command) error {
 		return fmt.Errorf("連接為空，消息已加入緩衝區")
 	}
 
+<<<<<<< Updated upstream
 	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		// 將消息加入緩衝區，等待重連後發送
 		c.messageBuffer = append(c.messageBuffer, cmd)
 		return fmt.Errorf("發送消息失敗: %w", err)
+=======
+	// 設置寫入超時
+	c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+
+	// 嘗試發送消息，最多重試3次
+	var sendErr error
+	for i := 0; i < 3; i++ {
+		if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			sendErr = err
+			// 休眠短暫時間後重試
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		// 發送成功，清除錯誤並跳出循環
+		sendErr = nil
+		break
+	}
+
+	// 如果在多次嘗試後仍然失敗
+	if sendErr != nil {
+		// 將消息加入緩衝區，等待重連後發送
+		c.messageBuffer = append(c.messageBuffer, cmd)
+
+		// 檢查是否為超時或連接關閉錯誤
+		if strings.Contains(sendErr.Error(), "i/o timeout") ||
+			strings.Contains(sendErr.Error(), "use of closed network connection") ||
+			strings.Contains(sendErr.Error(), "broken pipe") {
+			// 標記連接為斷開，觸發重連
+			c.isConnected.Store(false)
+		}
+
+		return fmt.Errorf("發送消息失敗: %w", sendErr)
+>>>>>>> Stashed changes
 	}
 
 	return nil
@@ -374,7 +575,12 @@ func (c *ClientState) StartHeartbeat(ctx context.Context) {
 		c.config.heartbeatTicker.Stop()
 	}
 
+<<<<<<< Updated upstream
 	c.config.heartbeatTicker = time.NewTicker(15 * time.Second)
+=======
+	// 使用 pingPeriod 常量代替硬編碼的 15 秒
+	c.config.heartbeatTicker = time.NewTicker(pingPeriod)
+>>>>>>> Stashed changes
 
 	go func() {
 		defer func() {
@@ -391,11 +597,33 @@ func (c *ClientState) StartHeartbeat(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-c.config.heartbeatTicker.C:
+<<<<<<< Updated upstream
+=======
+				// 發送應用層心跳消息
+>>>>>>> Stashed changes
 				cmd := HeartbeatCommand(c.config.clientID)
 				err := c.SendCommand(cmd)
 				if err != nil && c.config.debug {
 					log.Printf("發送心跳失敗: %v", err)
 				}
+<<<<<<< Updated upstream
+=======
+
+				// 發送 WebSocket 協議層的 Ping
+				c.connMutex.Lock()
+				if c.conn != nil {
+					// 設置寫入超時
+					c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+					// 發送 ping 消息
+					if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+						if c.config.debug {
+							log.Printf("發送 ping 消息失敗: %v", err)
+						}
+						// 不要中斷心跳循環，只記錄錯誤
+					}
+				}
+				c.connMutex.Unlock()
+>>>>>>> Stashed changes
 			}
 		}
 	}()
@@ -460,6 +688,12 @@ func (c *ClientState) ReadMessages(ctx context.Context, msgChan chan<- []byte, e
 					continue
 				}
 
+<<<<<<< Updated upstream
+=======
+				// 成功讀取消息後，更新讀取截止時間
+				_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+
+>>>>>>> Stashed changes
 				// 檢查是否為心跳消息，如果是則靜默處理
 				if isHeartbeatMessage(message) {
 					if c.config.debug {
@@ -468,7 +702,20 @@ func (c *ClientState) ReadMessages(ctx context.Context, msgChan chan<- []byte, e
 					continue
 				}
 
+<<<<<<< Updated upstream
 				msgChan <- message
+=======
+				// 處理可能包含多個JSON消息的情況
+				messages := bytes.Split(message, []byte{'\n'})
+				for _, msg := range messages {
+					// 跳過空消息
+					if len(bytes.TrimSpace(msg)) == 0 {
+						continue
+					}
+					// 發送至消息通道進行處理
+					msgChan <- msg
+				}
+>>>>>>> Stashed changes
 			}
 		}
 	}()
@@ -597,7 +844,195 @@ func main() {
 				continue
 			}
 
+<<<<<<< Updated upstream
 			// 首先檢查是否為標準Response結構
+=======
+			// 檢查消息類型
+			if msgType, ok := rawJSON["type"].(string); ok {
+				// 心跳檢測
+				if strings.ToLower(msgType) == "heartbeat" {
+					if client.config.debug {
+						log.Printf("收到心跳回應: %s", msg)
+					}
+					continue
+				}
+
+				// 系統通知
+				if msgType == "system_notice" {
+					if data, ok := rawJSON["data"].(map[string]interface{}); ok {
+						if message, ok := data["message"].(string); ok {
+							log.Printf("系統通知: %s", message)
+						} else {
+							log.Printf("收到系統通知: %s", msg)
+						}
+					} else {
+						log.Printf("收到系統通知: %s", msg)
+					}
+					continue
+				}
+
+				// 遊戲事件: LUCKY_NUMBERS_SET, GAME_CREATED 等
+				if msgType == "LUCKY_NUMBERS_SET" {
+					log.Printf("遊戲事件 (%s): %s", msgType, prettyJSON(msg))
+
+					// 獲取遊戲數據
+					gameData, ok := rawJSON["data"].(map[string]interface{})
+					if !ok {
+						log.Printf("無法獲取遊戲數據")
+						continue
+					}
+
+					gameInfo, ok := gameData["game"].(map[string]interface{})
+					if !ok {
+						log.Printf("無法獲取遊戲信息")
+						continue
+					}
+
+					// 注意: 僅當遊戲狀態為 SHOW_LUCKYNUMS 時才發送 BETTING_STARTED 事件
+					// 避免重複發送導致服務器錯誤
+					if gameState, ok := gameInfo["state"].(string); ok && gameState == "SHOW_LUCKYNUMS" {
+						// 創建一個發送BETTING_STARTED事件的計時器，1秒後觸發
+						go func() {
+							time.Sleep(1 * time.Second)
+
+							// 創建BETTING_STARTED事件
+							bettingStartedCmd := Command{
+								Type: "BETTING_STARTED",
+								Data: map[string]interface{}{
+									"game": map[string]interface{}{
+										"id":         gameInfo["id"],
+										"state":      "betting",
+										"startTime":  time.Now().Format(time.RFC3339),
+										"hasJackpot": gameInfo["hasJackpot"],
+									},
+									"betting": map[string]interface{}{
+										"playerCount": 0,
+										"totalAmount": 0,
+									},
+								},
+								Timestamp: time.Now().Format(time.RFC3339Nano),
+							}
+
+							// 發送命令
+							err := client.SendCommand(bettingStartedCmd)
+							if err != nil {
+								log.Printf("發送BETTING_STARTED事件失敗: %v", err)
+							} else {
+								log.Printf("已發送BETTING_STARTED事件，遊戲ID: %v", gameInfo["id"])
+							}
+						}()
+					} else {
+						log.Printf("遊戲狀態不是SHOW_LUCKYNUMS，跳過發送BETTING_STARTED事件")
+					}
+
+					continue
+				} else if msgType == "GAME_CREATED" {
+					log.Printf("遊戲事件 (%s): %s", msgType, prettyJSON(msg))
+					continue
+				} else if msgType == "BETTING_STARTED" {
+					log.Printf("遊戲事件 (%s): %s", msgType, prettyJSON(msg))
+
+					// 獲取遊戲數據
+					gameData, ok := rawJSON["data"].(map[string]interface{})
+					if !ok {
+						log.Printf("無法獲取遊戲數據")
+						continue
+					}
+
+					gameInfo, ok := gameData["game"].(map[string]interface{})
+					if !ok {
+						log.Printf("無法獲取遊戲信息")
+						continue
+					}
+
+					// 創建一個發送BETTING_CLOSED事件的計時器，5秒後觸發
+					go func() {
+						log.Println("5秒後將發送BETTING_CLOSED命令...")
+						time.Sleep(5 * time.Second)
+
+						// 創建BETTING_CLOSED事件
+						bettingClosedCmd := Command{
+							Type: "BETTING_CLOSED",
+							Data: map[string]interface{}{
+								"game": map[string]interface{}{
+									"id":         gameInfo["id"],
+									"state":      gameInfo["state"],
+									"hasJackpot": gameInfo["hasJackpot"],
+								},
+								"betting": map[string]interface{}{
+									"playerCount": 15,
+									"totalAmount": 1500,
+								},
+							},
+							Timestamp: time.Now().Format(time.RFC3339),
+						}
+
+						// 發送命令
+						err := client.SendCommand(bettingClosedCmd)
+						if err != nil {
+							log.Printf("發送BETTING_CLOSED事件失敗: %v", err)
+						} else {
+							log.Printf("已發送BETTING_CLOSED事件，遊戲ID: %v", gameInfo["id"])
+						}
+					}()
+
+					continue
+				} else if msgType == "DRAW_RESULT_RESPONSE" {
+					log.Printf("收到類型為 'DRAW_RESULT_RESPONSE' 的消息: %s", string(msg))
+
+					// 獲取遊戲ID和相關信息
+					if data, ok := rawJSON["data"].(map[string]interface{}); ok {
+						gameID := data["game_id"]
+						gameState := data["state"]
+						hasJackpot := data["hasJackpot"]
+
+						// 設置1秒後發送SHOW_LUCKY_NUMBERS命令
+						go func(gameID interface{}, gameState interface{}, hasJackpot interface{}) {
+							time.Sleep(1 * time.Second)
+
+							// 建立顯示中獎號碼命令
+							showLuckyNumbersCmd := Command{
+								Type: "SHOW_LUCKY_NUMBERS",
+								Data: map[string]interface{}{
+									"game": map[string]interface{}{
+										"id":         gameID,
+										"state":      "SHOWING_LUCKY_NUMBERS",
+										"hasJackpot": hasJackpot,
+									},
+									"timestamp": time.Now().Format(time.RFC3339),
+								},
+								Timestamp: time.Now().Format(time.RFC3339),
+							}
+
+							log.Printf("1秒計時結束，準備發送SHOW_LUCKY_NUMBERS命令")
+
+							// 重試機制，確保命令發送成功
+							maxRetries := 3
+							for i := 0; i < maxRetries; i++ {
+								err := client.SendCommand(showLuckyNumbersCmd)
+								if err != nil {
+									log.Printf("發送SHOW_LUCKY_NUMBERS失敗 (嘗試 %d/%d): %v", i+1, maxRetries, err)
+									time.Sleep(1 * time.Second)
+								} else {
+									log.Printf("已成功發送SHOW_LUCKY_NUMBERS命令，遊戲ID: %v", gameID)
+									break
+								}
+							}
+						}(gameID, gameState, hasJackpot)
+					}
+				} else if msgType == "GAME_STATE_CHANGED" {
+					log.Printf("收到類型為 'GAME_STATE_CHANGED' 的消息: %s", string(msg))
+				} else if msgType == "ERROR" {
+					log.Printf("收到類型為 'ERROR' 的消息: %s", string(msg))
+				} else {
+					// 處理其他類型的消息
+					log.Printf("收到類型為 '%s' 的消息: %s", msgType, msg)
+					continue
+				}
+			}
+
+			// 檢查是否為標準Response結構
+>>>>>>> Stashed changes
 			var response Response
 			if err := json.Unmarshal(msg, &response); err == nil && (response.Type != "" || response.Success) {
 				if response.Success {
@@ -605,8 +1040,165 @@ func main() {
 						log.Printf("遊戲創建成功: %s", msg)
 						log.Println("遊戲已成功創建！系統已在TiDB中建立新遊戲記錄。")
 						log.Println("初始階段 has_jackpot 欄位設置為 false")
+<<<<<<< Updated upstream
 					} else {
 						log.Printf("收到成功回應: %s", msg)
+=======
+					} else if response.Type == "BETTING_STARTED_RESPONSE" {
+						log.Printf("收到類型為 'BETTING_STARTED_RESPONSE' 的消息: %s", string(msg))
+
+						// 獲取遊戲ID和狀態信息
+						if response.Data != nil {
+							gameID := response.Data["game_id"]
+							gameState := response.Data["state"]
+							hasJackpot := response.Data["hasJackpot"]
+
+							// 設置5秒後發送BETTING_CLOSED命令
+							go func(gameID interface{}, gameState interface{}, hasJackpot interface{}) {
+								time.Sleep(5 * time.Second)
+
+								// 創建BETTING_CLOSED命令
+								bettingClosedCmd := Command{
+									Type: "BETTING_CLOSED",
+									Data: map[string]interface{}{
+										"game": map[string]interface{}{
+											"id":         gameID,
+											"state":      gameState,
+											"hasJackpot": hasJackpot,
+										},
+										"betting_summary": map[string]interface{}{
+											"player_count": 15,
+											"total_amount": 1500.00,
+											"timestamp":    time.Now().Format(time.RFC3339),
+										},
+									},
+									Timestamp: time.Now().Format(time.RFC3339),
+								}
+
+								log.Printf("5秒計時結束，準備發送BETTING_CLOSED命令")
+
+								// 重試機制，確保命令發送成功
+								maxRetries := 3
+								for i := 0; i < maxRetries; i++ {
+									err := client.SendCommand(bettingClosedCmd)
+									if err != nil {
+										log.Printf("發送BETTING_CLOSED失敗 (嘗試 %d/%d): %v", i+1, maxRetries, err)
+										time.Sleep(1 * time.Second)
+									} else {
+										log.Printf("已成功發送BETTING_CLOSED命令，遊戲ID: %v", gameID)
+										break
+									}
+								}
+							}(gameID, gameState, hasJackpot)
+						}
+					} else if response.Type == "BETTING_CLOSED_RESPONSE" {
+						log.Printf("收到類型為 'BETTING_CLOSED_RESPONSE' 的消息: %s", string(msg))
+
+						// 獲取遊戲ID和狀態信息
+						if response.Data != nil {
+							gameID := response.Data["game_id"]
+							gameState := response.Data["state"]
+							hasJackpot := response.Data["hasJackpot"]
+
+							// 設置2秒後發送DRAW_BALL命令
+							go func(gameID interface{}, gameState interface{}, hasJackpot interface{}) {
+								time.Sleep(2 * time.Second)
+
+								// 建立抽球命令
+								drawBallCmd := Command{
+									Type: "DRAW_BALL",
+									Data: map[string]interface{}{
+										"game": map[string]interface{}{
+											"id":         gameID,
+											"state":      gameState,
+											"hasJackpot": hasJackpot,
+										},
+									},
+									Timestamp: time.Now().Format(time.RFC3339),
+								}
+
+								log.Printf("2秒計時結束，準備發送DRAW_BALL命令")
+
+								// 發送命令
+								err := client.SendCommand(drawBallCmd)
+								if err != nil {
+									log.Printf("發送DRAW_BALL命令失敗: %v", err)
+								} else {
+									log.Printf("已成功發送DRAW_BALL命令，遊戲ID: %v", gameID)
+								}
+							}(gameID, gameState, hasJackpot)
+						}
+					} else if response.Type == "DRAW_BALL_RESPONSE" {
+						log.Printf("收到類型為 'DRAW_BALL_RESPONSE' 的消息: %s", string(msg))
+
+						// 獲取遊戲ID和相關數據
+						if response.Data != nil {
+							gameID := response.Data["game_id"]
+							drawnNumbers := response.Data["drawnNumbers"]
+							remainingCount := response.Data["remainingCount"]
+
+							log.Printf("遊戲ID: %v, 已抽出的號碼: %v, 剩餘號碼數: %v",
+								gameID, drawnNumbers, remainingCount)
+
+							// 模擬不斷抽球的過程
+							if remainingCount != nil {
+								if count, ok := remainingCount.(float64); ok && count > 0 {
+									// 設置適當延遲後再次發送抽球命令
+									go func(gameID interface{}, drawnNums interface{}) {
+										time.Sleep(800 * time.Millisecond)
+
+										// 建立下一次抽球命令
+										nextDrawBallCmd := Command{
+											Type: "DRAW_BALL",
+											Data: map[string]interface{}{
+												"game_id":      gameID,
+												"drawnNumbers": drawnNums,
+											},
+											Timestamp: time.Now().Format(time.RFC3339),
+										}
+
+										// 發送命令
+										err := client.SendCommand(nextDrawBallCmd)
+										if err != nil {
+											log.Printf("發送下一次DRAW_BALL命令失敗: %v", err)
+										} else {
+											log.Printf("已發送下一次DRAW_BALL命令，遊戲ID: %v", gameID)
+										}
+									}(gameID, drawnNumbers)
+								} else if count == 0 {
+									// 當所有球都抽完後，發送DRAW_RESULT命令
+									go func(gameID interface{}) {
+										time.Sleep(1 * time.Second)
+
+										// 建立抽獎結果命令
+										drawResultCmd := Command{
+											Type: "DRAW_RESULT",
+											Data: map[string]interface{}{
+												"game_id":      gameID,
+												"drawnNumbers": drawnNumbers,
+											},
+											Timestamp: time.Now().Format(time.RFC3339),
+										}
+
+										// 發送命令
+										err := client.SendCommand(drawResultCmd)
+										if err != nil {
+											log.Printf("發送DRAW_RESULT命令失敗: %v", err)
+										} else {
+											log.Printf("已發送DRAW_RESULT命令，遊戲ID: %v", gameID)
+										}
+									}(gameID)
+								}
+							}
+						}
+					} else if response.Type == "GAME_STATE_CHANGED" {
+						log.Printf("收到類型為 'GAME_STATE_CHANGED' 的消息: %s", string(msg))
+					} else if response.Type == "ERROR" {
+						log.Printf("收到類型為 'ERROR' 的消息: %s", string(msg))
+					} else {
+						// 處理其他類型的消息
+						log.Printf("收到類型為 '%s' 的消息: %s", response.Type, string(msg))
+>>>>>>> Stashed changes
 					}
 				} else {
 					log.Printf("收到錯誤回應: %s", msg)
@@ -618,6 +1210,7 @@ func main() {
 				continue
 			}
 
+<<<<<<< Updated upstream
 			// 檢查是否有type字段但不是標準Response結構
 			if msgType, ok := rawJSON["type"].(string); ok {
 				if msgType == "heartbeat" {
@@ -631,6 +1224,8 @@ func main() {
 				continue
 			}
 
+=======
+>>>>>>> Stashed changes
 			// 其他未識別的消息
 			log.Printf("收到未識別格式的消息: %s", msg)
 		case err := <-errChan:
@@ -656,3 +1251,16 @@ func main() {
 		}
 	}
 }
+<<<<<<< Updated upstream
+=======
+
+// 添加一個工具函數用於美化JSON輸出
+func prettyJSON(data []byte) string {
+	var out bytes.Buffer
+	err := json.Indent(&out, data, "", "  ")
+	if err != nil {
+		return string(data)
+	}
+	return out.String()
+}
+>>>>>>> Stashed changes
