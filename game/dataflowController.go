@@ -194,7 +194,7 @@ func (dfc *DataFlowController) DrawExtraBall() (*DrawResult, error) {
 	defer dfc.mu.Unlock()
 
 	// 檢查當前狀態是否允許抽額外球
-	if dfc.currentState != StateExtraDraw {
+	if dfc.currentState != StateExtraDraw && dfc.currentState != StateChooseExtraBall {
 		return nil, fmt.Errorf("cannot draw extra ball in current state: %s", dfc.currentState)
 	}
 
@@ -469,7 +469,7 @@ func (dfc *DataFlowController) isValidStateTransition(from, to GameState) bool {
 		StateStandby:         {StateBetting},
 		StateReady:           {StateBetting, StateShowLuckyNums},
 		StateBetting:         {StateDrawing},
-		StateDrawing:         {StateExtraBet, StateJPStandby},
+		StateDrawing:         {StateExtraBet, StateJPStandby, StateChooseExtraBall},
 		StateExtraBet:        {StateExtraDraw},
 		StateExtraDraw:       {StateResult},
 		StateResult:          {StateStandby, StateCompleted},
@@ -479,7 +479,7 @@ func (dfc *DataFlowController) isValidStateTransition(from, to GameState) bool {
 		StateJPResult:        {StateStandby, StateCompleted},
 		StateShowLuckyNums:   {StateBetting},
 		StateShowBalls:       {StateExtraBet, StateResult},
-		StateChooseExtraBall: {StateExtraDraw},
+		StateChooseExtraBall: {StateExtraDraw, StateResult},
 		StateShowExtraBalls:  {StateResult},
 		StateJPShowBalls:     {StateJPResult},
 		StateCompleted:       {StateStandby, StateReady, StateInitial},
@@ -656,5 +656,26 @@ func (dfc *DataFlowController) FinishExtraBetting() error {
 	dfc.currentState = StateExtraDraw
 
 	log.Printf("遊戲狀態已從 %s 變更為 %s (結束額外球投注，開始額外球抽取)", oldState, StateExtraDraw)
+	return nil
+}
+
+// ChooseExtraBall 轉換到選擇額外球狀態
+func (dfc *DataFlowController) ChooseExtraBall() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始選擇額外球階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許開始選擇額外球
+	if dfc.currentState != StateDrawing {
+		return fmt.Errorf("當前狀態 %s 不允許開始選擇額外球", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateChooseExtraBall
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (開始選擇額外球)", oldState, StateChooseExtraBall)
 	return nil
 }

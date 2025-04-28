@@ -36,6 +36,8 @@ type GameService interface {
 	StartExtraBetting() error
 	// 結束額外球投注
 	FinishExtraBetting() error
+	// 開始選擇額外球
+	ChooseExtraBall() error
 	// 設置JP觸發號碼
 	SetJPTriggerNumbers(numbers []int) error
 	// 驗證兩顆球的有效性
@@ -124,6 +126,11 @@ func (s *gameServiceImpl) StartExtraBetting() error {
 // FinishExtraBetting 結束額外球投注
 func (s *gameServiceImpl) FinishExtraBetting() error {
 	return s.controller.FinishExtraBetting()
+}
+
+// ChooseExtraBall 開始選擇額外球階段
+func (s *gameServiceImpl) ChooseExtraBall() error {
+	return s.controller.ChooseExtraBall()
 }
 
 // SetJPTriggerNumbers 設置JP觸發號碼

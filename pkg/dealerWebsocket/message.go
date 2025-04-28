@@ -23,17 +23,18 @@ const (
 	MessageTypeAccountUpdate  = "account_update"  // 賬戶更新
 
 	// 遊戲命令類型
-	MessageTypeGameStart          = "GAME_START"           // 遊戲開始命令
-	MessageTypeGameResponse       = "GAME_START_RESPONSE"  // 遊戲開始回應
-	MessageTypeShowLuckyNumbers   = "SHOW_LUCKY_NUMBERS"   // 顯示幸運號碼命令
-	MessageTypeDrawBall           = "DRAW_BALL"            // 抽球命令
-	MessageTypeDrawExtraBall      = "DRAW_EXTRA_BALL"      // 抽額外球命令
-	MessageTypeStartJPGame        = "START_JP_GAME"        // 開始JP遊戲命令
-	MessageTypeDrawJPBall         = "DRAW_JP_BALL"         // 抽JP球命令
-	MessageTypeBettingStarted     = "BETTING_STARTED"      // 投注開始命令
-	MessageTypeBettingClosed      = "BETTING_CLOSED"       // 投注關閉命令
-	MessageTypeStartExtraBetting  = "START_EXTRA_BETTING"  // 額外球投注開始命令
-	MessageTypeFinishExtraBetting = "FINISH_EXTRA_BETTING" // 額外球投注結束命令
+	MessageTypeGameStart          = "GAME_START"              // 遊戲開始命令
+	MessageTypeGameResponse       = "GAME_START_RESPONSE"     // 遊戲開始回應
+	MessageTypeShowLuckyNumbers   = "SHOW_LUCKY_NUMBERS"      // 顯示幸運號碼命令
+	MessageTypeDrawBall           = "DRAW_BALL"               // 抽球命令
+	MessageTypeDrawExtraBall      = "DRAW_EXTRA_BALL"         // 抽額外球命令
+	MessageTypeChooseExtraBall    = "STATE_CHOOSE_EXTRA_BALL" // 選擇額外球狀態命令
+	MessageTypeStartJPGame        = "START_JP_GAME"           // 開始JP遊戲命令
+	MessageTypeDrawJPBall         = "DRAW_JP_BALL"            // 抽JP球命令
+	MessageTypeBettingStarted     = "BETTING_STARTED"         // 投注開始命令
+	MessageTypeBettingClosed      = "BETTING_CLOSED"          // 投注關閉命令
+	MessageTypeStartExtraBetting  = "START_EXTRA_BETTING"     // 額外球投注開始命令
+	MessageTypeFinishExtraBetting = "FINISH_EXTRA_BETTING"    // 額外球投注結束命令
 
 	// 遊戲事件類型
 	MessageTypeLuckyNumbersSet = "LUCKY_NUMBERS_SET" // 幸運號碼設置事件

@@ -34,6 +34,8 @@ func (h *DealerMessageHandler) HandleMessage(client *Client, messageType string,
 		h.handleDrawBall(client)
 	case MessageTypeDrawExtraBall:
 		h.handleDrawExtraBall(client)
+	case MessageTypeChooseExtraBall:
+		h.handleChooseExtraBall(client)
 	case MessageTypeStartJPGame:
 		h.handleStartJPGame(client, data)
 	case MessageTypeDrawJPBall:
@@ -870,6 +872,68 @@ func (h *DealerMessageHandler) handleFinishExtraBetting(client *Client, data int
 	client.Send <- responseJSON
 
 	log.Printf("已發送FINISH_EXTRA_BETTING_RESPONSE回應")
+
+	// 廣播遊戲狀態變更事件給所有客戶端
+	broadcastMsg := map[string]interface{}{
+		"type": "GAME_STATE_CHANGED",
+		"data": map[string]interface{}{
+			"game": map[string]interface{}{
+				"id":         status.Game.ID,
+				"state":      status.Game.State,
+				"hasJackpot": status.Game.HasJackpot,
+				"startTime":  time.Now().Format(time.RFC3339),
+			},
+		},
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	broadcastJSON, _ := json.Marshal(broadcastMsg)
+	client.manager.broadcast <- broadcastJSON
+
+	log.Printf("已廣播遊戲狀態變更事件")
+}
+
+// handleChooseExtraBall 處理選擇額外球命令
+func (h *DealerMessageHandler) handleChooseExtraBall(client *Client) {
+	log.Println("處理 STATE_CHOOSE_EXTRA_BALL 命令")
+
+	// 獲取當前遊戲狀態
+	currentState := h.gameService.GetCurrentState()
+	log.Printf("選擇額外球前的遊戲狀態: %s", currentState)
+
+	// 嘗試切換到選擇額外球狀態
+	err := h.gameService.ChooseExtraBall()
+	if err != nil {
+		log.Printf("切換到選擇額外球狀態失敗: %v", err)
+		response := NewErrorResponse("切換到選擇額外球狀態失敗: " + err.Error())
+		responseJSON, _ := json.Marshal(response)
+		client.Send <- responseJSON
+		return
+	}
+
+	// 驗證狀態是否已更改
+	newState := h.gameService.GetCurrentState()
+	log.Printf("遊戲狀態已更改: %s -> %s", currentState, newState)
+
+	// 獲取當前遊戲狀態
+	status := h.gameService.GetGameStatus()
+	log.Printf("當前遊戲狀態: ID=%s, State=%s, HasJackpot=%v",
+		status.Game.ID, status.Game.State, status.Game.HasJackpot)
+
+	// 創建成功回應
+	response := NewSuccessResponse("STATE_CHOOSE_EXTRA_BALL_RESPONSE", "已進入選擇額外球狀態", map[string]interface{}{
+		"game_id":    status.Game.ID,
+		"state":      status.Game.State,
+		"hasJackpot": status.Game.HasJackpot,
+	})
+
+	// 序列化回應
+	responseJSON, _ := json.Marshal(response)
+
+	// 發送回應給客戶端
+	client.Send <- responseJSON
+
+	log.Printf("已發送STATE_CHOOSE_EXTRA_BALL_RESPONSE回應")
 
 	// 廣播遊戲狀態變更事件給所有客戶端
 	broadcastMsg := map[string]interface{}{
