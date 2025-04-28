@@ -38,6 +38,20 @@ type GameService interface {
 	FinishExtraBetting() error
 	// 開始選擇額外球
 	ChooseExtraBall() error
+	// 進入結算階段
+	StartResult() error
+	// 進入JP待機階段
+	StartJPStandby() error
+	// 進入JP投注階段
+	StartJPBetting() error
+	// 進入JP抽球階段
+	StartJPDrawing() error
+	// 結束JP抽球並進入JP結果階段
+	StopJPDrawing() error
+	// 進入JP開獎階段
+	StartJPShowBalls() error
+	// 進入遊戲完成階段
+	StartCompleted() error
 	// 設置JP觸發號碼
 	SetJPTriggerNumbers(numbers []int) error
 	// 驗證兩顆球的有效性
@@ -131,6 +145,41 @@ func (s *gameServiceImpl) FinishExtraBetting() error {
 // ChooseExtraBall 開始選擇額外球階段
 func (s *gameServiceImpl) ChooseExtraBall() error {
 	return s.controller.ChooseExtraBall()
+}
+
+// StartResult 進入結算階段
+func (s *gameServiceImpl) StartResult() error {
+	return s.controller.StartResult()
+}
+
+// StartJPStandby 進入JP待機階段
+func (s *gameServiceImpl) StartJPStandby() error {
+	return s.controller.StartJPStandby()
+}
+
+// StartJPBetting 進入JP投注階段
+func (s *gameServiceImpl) StartJPBetting() error {
+	return s.controller.StartJPBetting()
+}
+
+// StartJPDrawing 進入JP抽球階段
+func (s *gameServiceImpl) StartJPDrawing() error {
+	return s.controller.StartJPDrawing()
+}
+
+// StopJPDrawing 結束JP抽球並進入JP結果階段
+func (s *gameServiceImpl) StopJPDrawing() error {
+	return s.controller.StopJPDrawing()
+}
+
+// StartJPShowBalls 進入JP開獎階段
+func (s *gameServiceImpl) StartJPShowBalls() error {
+	return s.controller.StartJPShowBalls()
+}
+
+// StartCompleted 進入遊戲完成階段
+func (s *gameServiceImpl) StartCompleted() error {
+	return s.controller.StartCompleted()
 }
 
 // SetJPTriggerNumbers 設置JP觸發號碼

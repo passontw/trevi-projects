@@ -679,3 +679,150 @@ func (dfc *DataFlowController) ChooseExtraBall() error {
 	log.Printf("遊戲狀態已從 %s 變更為 %s (開始選擇額外球)", oldState, StateChooseExtraBall)
 	return nil
 }
+
+// StartResult 轉換到結算狀態
+func (dfc *DataFlowController) StartResult() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始結算階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許進入結算階段
+	if !dfc.isValidStateTransition(dfc.currentState, StateResult) {
+		return fmt.Errorf("當前狀態 %s 不允許進入結算階段", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateResult
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (進入結算階段)", oldState, StateResult)
+	return nil
+}
+
+// StartJPStandby 轉換到JP待機狀態
+func (dfc *DataFlowController) StartJPStandby() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始JP待機階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許進入JP待機階段
+	if !dfc.isValidStateTransition(dfc.currentState, StateJPStandby) {
+		return fmt.Errorf("當前狀態 %s 不允許進入JP待機階段", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateJPStandby
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (進入JP待機階段)", oldState, StateJPStandby)
+	return nil
+}
+
+// StartJPBetting 轉換到JP投注狀態
+func (dfc *DataFlowController) StartJPBetting() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始JP投注階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許進入JP投注階段
+	if !dfc.isValidStateTransition(dfc.currentState, StateJPBetting) {
+		return fmt.Errorf("當前狀態 %s 不允許進入JP投注階段", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateJPBetting
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (進入JP投注階段)", oldState, StateJPBetting)
+	return nil
+}
+
+// StartJPDrawing 轉換到JP抽球狀態
+func (dfc *DataFlowController) StartJPDrawing() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始JP抽球階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許進入JP抽球階段
+	if !dfc.isValidStateTransition(dfc.currentState, StateJPDrawing) {
+		return fmt.Errorf("當前狀態 %s 不允許進入JP抽球階段", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateJPDrawing
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (進入JP抽球階段)", oldState, StateJPDrawing)
+	return nil
+}
+
+// StopJPDrawing 結束JP抽球並進入JP結果狀態
+func (dfc *DataFlowController) StopJPDrawing() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("結束JP抽球階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許進入JP結果階段
+	if !dfc.isValidStateTransition(dfc.currentState, StateJPResult) {
+		return fmt.Errorf("當前狀態 %s 不允許進入JP結果階段", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateJPResult
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (進入JP結果階段)", oldState, StateJPResult)
+	return nil
+}
+
+// StartJPShowBalls 轉換到JP開獎狀態
+func (dfc *DataFlowController) StartJPShowBalls() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始JP開獎階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許進入JP開獎階段
+	if !dfc.isValidStateTransition(dfc.currentState, StateJPShowBalls) {
+		return fmt.Errorf("當前狀態 %s 不允許進入JP開獎階段", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateJPShowBalls
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (進入JP開獎階段)", oldState, StateJPShowBalls)
+	return nil
+}
+
+// StartCompleted 轉換到遊戲完成狀態
+func (dfc *DataFlowController) StartCompleted() error {
+	dfc.mu.Lock()
+	defer dfc.mu.Unlock()
+
+	log.Printf("開始遊戲完成階段，當前狀態: %s", dfc.currentState)
+
+	// 檢查當前狀態是否允許進入遊戲完成階段
+	if !dfc.isValidStateTransition(dfc.currentState, StateCompleted) {
+		return fmt.Errorf("當前狀態 %s 不允許進入遊戲完成階段", dfc.currentState)
+	}
+
+	// 記錄舊狀態並更改為新狀態
+	oldState := dfc.currentState
+	dfc.stateHistory = append(dfc.stateHistory, oldState)
+	dfc.currentState = StateCompleted
+
+	log.Printf("遊戲狀態已從 %s 變更為 %s (進入遊戲完成階段)", oldState, StateCompleted)
+	return nil
+}

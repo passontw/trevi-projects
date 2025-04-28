@@ -29,12 +29,18 @@ const (
 	MessageTypeDrawBall           = "DRAW_BALL"               // 抽球命令
 	MessageTypeDrawExtraBall      = "DRAW_EXTRA_BALL"         // 抽額外球命令
 	MessageTypeChooseExtraBall    = "STATE_CHOOSE_EXTRA_BALL" // 選擇額外球狀態命令
-	MessageTypeStartJPGame        = "START_JP_GAME"           // 開始JP遊戲命令
 	MessageTypeDrawJPBall         = "DRAW_JP_BALL"            // 抽JP球命令
 	MessageTypeBettingStarted     = "BETTING_STARTED"         // 投注開始命令
 	MessageTypeBettingClosed      = "BETTING_CLOSED"          // 投注關閉命令
 	MessageTypeStartExtraBetting  = "START_EXTRA_BETTING"     // 額外球投注開始命令
 	MessageTypeFinishExtraBetting = "FINISH_EXTRA_BETTING"    // 額外球投注結束命令
+	MessageTypeStartResult        = "START_RESULT"            // 進入結算階段命令
+	MessageTypeStartJPStandby     = "START_JP_STANDBY"        // 進入JP待機階段命令
+	MessageTypeStartJPBetting     = "START_JP_BETTING"        // 進入JP投注階段命令
+	MessageTypeStartJPDrawing     = "START_JP_DRAWING"        // 進入JP抽球階段命令
+	MessageTypeStopJPDrawing      = "STOP_JP_DRAWING"         // 結束JP抽球階段命令
+	MessageTypeStartJPShowBalls   = "START_JP_SHOW_BALLS"     // 進入JP開獎階段命令
+	MessageTypeStartCompleted     = "START_COMPLETED"         // 進入遊戲完成階段命令
 
 	// 遊戲事件類型
 	MessageTypeLuckyNumbersSet = "LUCKY_NUMBERS_SET" // 幸運號碼設置事件
