@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package lottery;
+
+option go_package = "g38_lottery_service/internal/proto";
+
+// 彩票服務定義
+service LotteryService {
+  // 發送問候
+  rpc SayHello (HelloRequest) returns (HelloResponse) {}
+  
+  // 檢查彩票號碼
+  rpc CheckLotteryNumber (LotteryNumberRequest) returns (LotteryNumberResponse) {}
+}
+
+// 問候請求
+message HelloRequest {
+  string name = 1;
+}
+
+// 問候回應
+message HelloResponse {
+  string message = 1;
+}
+
+// 彩票號碼請求
+message LotteryNumberRequest {
+  repeated int32 numbers = 1;
+}
+
+// 彩票號碼回應
+message LotteryNumberResponse {
+  bool is_winning = 1;
+  int32 matching_count = 2;
+  repeated int32 winning_numbers = 3;
+  string message = 4;
+} 
