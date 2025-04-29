@@ -9,17 +9,14 @@ import (
 // 消息類型常量
 const (
 	// 系統消息類型
-	MessageTypeHeartbeat      = "HEARTBEAT"      // 心跳消息
-	MessageTypeAuthentication = "authentication" // 認證消息
-	MessageTypeAuthSuccess    = "auth_success"   // 認證成功
-	MessageTypeAuthFailure    = "auth_failure"   // 認證失敗
-	MessageTypeSystemNotice   = "system_notice"  // 系統通知
-	MessageTypeError          = "error"          // 錯誤消息
+	MessageTypeHeartbeat    = "HEARTBEAT"     // 心跳消息
+	MessageTypeResponse     = "RESPONSE"      // 通用回應消息
+	MessageTypeSystemNotice = "system_notice" // 系統通知
+	MessageTypeError        = "error"         // 錯誤消息
 
 	// 業務消息類型
 	MessageTypeTicketPurchase = "ticket_purchase" // 票券購買消息
 	MessageTypeTicketStatus   = "ticket_status"   // 票券狀態更新
-	MessageTypeDrawResult     = "DRAW_RESULT"     // 開獎結果
 	MessageTypeAccountUpdate  = "account_update"  // 賬戶更新
 
 	// 遊戲命令類型
@@ -91,14 +88,6 @@ type TicketStatusMessage struct {
 	UpdatedAt time.Time `json:"updated_at"` // 更新時間
 }
 
-// 開獎結果消息
-type DrawResultMessage struct {
-	DrawID         string      `json:"draw_id"`         // 開獎ID
-	DrawTime       time.Time   `json:"draw_time"`       // 開獎時間
-	WinningNumbers []int       `json:"winning_numbers"` // 中獎號碼
-	PrizeInfo      interface{} `json:"prize_info"`      // 獎品信息
-}
-
 // 賬戶更新消息
 type AccountUpdateMessage struct {
 	UserID      uint      `json:"user_id"`     // 用戶ID
@@ -164,7 +153,7 @@ func NewAuthSuccessMessage(userID uint) *BasicMessage {
 		Success: true,
 		UserID:  userID,
 	}
-	return NewMessage(MessageTypeAuthSuccess, authResponse)
+	return NewMessage(MessageTypeResponse, authResponse)
 }
 
 // 創建認證失敗消息
@@ -173,7 +162,7 @@ func NewAuthFailureMessage(message string) *BasicMessage {
 		Success: false,
 		Message: message,
 	}
-	return NewMessage(MessageTypeAuthFailure, authResponse)
+	return NewMessage(MessageTypeResponse, authResponse)
 }
 
 // 創建錯誤消息
@@ -197,22 +186,24 @@ func NewGameStartResponseMessage(gameID string, state string, hasJackpot bool, s
 }
 
 // 創建成功的WebSocket回應
-func NewSuccessResponse(responseType string, message string, data interface{}) WebSocketResponse {
-	return WebSocketResponse{
+func NewSuccessResponse(responseType string, message string, data interface{}) *BasicMessage {
+	responseData := WebSocketResponse{
 		Success: true,
 		Message: message,
 		Type:    responseType,
 		Data:    data,
 	}
+	return NewMessage(MessageTypeResponse, responseData)
 }
 
 // 創建錯誤的WebSocket回應
-func NewErrorResponse(message string) WebSocketResponse {
-	return WebSocketResponse{
+func NewErrorResponse(message string) *BasicMessage {
+	responseData := WebSocketResponse{
 		Success: false,
 		Message: message,
 		Type:    "ERROR",
 	}
+	return NewMessage(MessageTypeResponse, responseData)
 }
 
 // 將消息轉換為JSON

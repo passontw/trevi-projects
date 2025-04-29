@@ -130,7 +130,6 @@ func (h *GameHandler) ChangeGameState(c *gin.Context) {
 func isValidGameState(state game.GameState) bool {
 	validStates := []game.GameState{
 		game.StateInitial,
-		game.StateStandby,
 		game.StateReady,
 		game.StateShowLuckyNums,
 		game.StateBetting,
@@ -306,11 +305,11 @@ func (h *GameHandler) TestGameFlow(c *gin.Context) {
 			},
 		},
 		{
-			Name:        "STANDBY",
-			State:       game.StateStandby,
-			Description: "回到待機狀態",
+			Name:        "READY",
+			State:       game.StateReady,
+			Description: "回到準備狀態",
 			Action: func() error {
-				return h.gameService.ChangeState(game.StateStandby)
+				return h.gameService.ChangeState(game.StateReady)
 			},
 		},
 	}

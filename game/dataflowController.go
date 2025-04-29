@@ -2,10 +2,13 @@ package game
 
 import (
 	"fmt"
+	"g38_lottery_service/pkg/logger"
 	"log"
 	"math/rand"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // 在 package 級別初始化隨機數生成器
@@ -19,7 +22,6 @@ type GameState string
 
 const (
 	StateInitial         GameState = "INITIAL"           // 初始狀態
-	StateStandby         GameState = "STANDBY"           // 待機狀態
 	StateReady           GameState = "READY"             // 待機狀態 對到 GAME_READY 等待開局
 	StateShowLuckyNums   GameState = "SHOW_LUCKYNUMS"    // 開七個幸運球的狀態
 	StateBetting         GameState = "BETTING"           // 投注狀態
@@ -65,13 +67,14 @@ type DataFlowController struct {
 	maxExtraBalls int // 最大額外球數
 
 	// 其他設定
-	jpTriggerNumbers []int  // JP觸發號碼
-	currentGameID    string // 當前遊戲ID
-	isJPTriggered    bool   // 是否觸發JP
+	jpTriggerNumbers []int         // JP觸發號碼
+	currentGameID    string        // 當前遊戲ID
+	isJPTriggered    bool          // 是否觸發JP
+	logger           logger.Logger // 日誌記錄器
 }
 
 // NewDataFlowController 創建一個新的DataFlowController實例
-func NewDataFlowController() *DataFlowController {
+func NewDataFlowController(logger logger.Logger) *DataFlowController {
 	controller := &DataFlowController{
 		currentState:     StateInitial,
 		stateHistory:     make([]GameState, 0),
@@ -84,6 +87,7 @@ func NewDataFlowController() *DataFlowController {
 		maxExtraBalls:    3,              // 預設最多3顆額外球
 		jpTriggerNumbers: make([]int, 0),
 		isJPTriggered:    false,
+		logger:           logger,
 	}
 
 	controller.initializeBallPool()
@@ -112,7 +116,13 @@ func (dfc *DataFlowController) ChangeState(newState GameState) error {
 	// 檢查狀態轉換是否合法
 	if !dfc.isValidStateTransition(dfc.currentState, newState) {
 		log.Printf("錯誤: 不允許從 %s 到 %s 的狀態轉換", dfc.currentState, newState)
-		return fmt.Errorf("invalid state transition from %s to %s", dfc.currentState, newState)
+		dfc.logger.Error("不允許的狀態轉換",
+			zap.String("from", string(dfc.currentState)),
+			zap.String("to", string(newState)))
+		dfc.logger.Error("invalid state transition",
+			zap.String("from", string(dfc.currentState)),
+			zap.String("to", string(newState)))
+		return nil
 	}
 
 	// 將當前狀態添加到歷史記錄
@@ -126,7 +136,7 @@ func (dfc *DataFlowController) ChangeState(newState GameState) error {
 	log.Printf("遊戲狀態已變更: %s -> %s", oldState, newState)
 
 	// 如果進入新遊戲，重置相關數據
-	if newState == StateStandby {
+	if newState == StateReady {
 		dfc.resetGame()
 		log.Printf("已重置遊戲數據（新遊戲準備階段）")
 	}
@@ -141,11 +151,16 @@ func (dfc *DataFlowController) DrawBall() (*DrawResult, error) {
 
 	// 檢查當前狀態是否允許抽球
 	if dfc.currentState != StateDrawing && dfc.currentState != StateJPDrawing {
+		dfc.logger.Error("無法在當前狀態下抽球",
+			zap.String("currentState", string(dfc.currentState)))
 		return nil, fmt.Errorf("cannot draw ball in current state: %s", dfc.currentState)
 	}
 
 	// 檢查是否還有球可抽
 	if len(dfc.drawnBalls) >= dfc.totalBalls {
+		dfc.logger.Error("沒有更多球可抽",
+			zap.Int("totalBalls", dfc.totalBalls),
+			zap.Int("drawnBalls", len(dfc.drawnBalls)))
 		return nil, fmt.Errorf("no more balls available")
 	}
 
@@ -165,6 +180,7 @@ func (dfc *DataFlowController) DrawBall() (*DrawResult, error) {
 	}
 
 	if len(remainingBalls) == 0 {
+		dfc.logger.Error("沒有剩餘球可抽")
 		return nil, fmt.Errorf("no more balls remaining")
 	}
 
@@ -195,11 +211,16 @@ func (dfc *DataFlowController) DrawExtraBall() (*DrawResult, error) {
 
 	// 檢查當前狀態是否允許抽額外球
 	if dfc.currentState != StateExtraDraw && dfc.currentState != StateChooseExtraBall {
+		dfc.logger.Error("無法在當前狀態下抽取額外球",
+			zap.String("currentState", string(dfc.currentState)))
 		return nil, fmt.Errorf("cannot draw extra ball in current state: %s", dfc.currentState)
 	}
 
 	// 檢查是否超過最大額外球數
 	if len(dfc.extraBalls) >= dfc.maxExtraBalls {
+		dfc.logger.Error("已達最大額外球數量",
+			zap.Int("maxExtraBalls", dfc.maxExtraBalls),
+			zap.Int("currentExtraBalls", len(dfc.extraBalls)))
 		return nil, fmt.Errorf("maximum extra balls reached")
 	}
 
@@ -220,6 +241,7 @@ func (dfc *DataFlowController) DrawExtraBall() (*DrawResult, error) {
 	}
 
 	if len(remainingBalls) == 0 {
+		dfc.logger.Error("沒有剩餘球可抽取額外球")
 		return nil, fmt.Errorf("no more balls remaining for extra draw")
 	}
 
@@ -465,24 +487,23 @@ func (dfc *DataFlowController) isValidStateTransition(from, to GameState) bool {
 	}
 
 	validTransitions := map[GameState][]GameState{
-		StateInitial:         {StateStandby, StateReady},
-		StateStandby:         {StateBetting},
+		StateInitial:         {StateReady},
 		StateReady:           {StateBetting, StateShowLuckyNums},
 		StateBetting:         {StateDrawing},
 		StateDrawing:         {StateExtraBet, StateJPStandby, StateChooseExtraBall},
 		StateExtraBet:        {StateExtraDraw},
 		StateExtraDraw:       {StateResult},
-		StateResult:          {StateStandby, StateCompleted},
+		StateResult:          {StateReady, StateCompleted},
 		StateJPStandby:       {StateJPBetting},
 		StateJPBetting:       {StateJPDrawing},
 		StateJPDrawing:       {StateJPResult},
-		StateJPResult:        {StateStandby, StateCompleted},
+		StateJPResult:        {StateReady, StateCompleted},
 		StateShowLuckyNums:   {StateBetting},
 		StateShowBalls:       {StateExtraBet, StateResult},
 		StateChooseExtraBall: {StateExtraDraw, StateResult},
 		StateShowExtraBalls:  {StateResult},
 		StateJPShowBalls:     {StateJPResult},
-		StateCompleted:       {StateStandby, StateReady, StateInitial},
+		StateCompleted:       {StateReady, StateInitial},
 	}
 
 	allowedTransitions, exists := validTransitions[from]
@@ -505,7 +526,14 @@ func (dfc *DataFlowController) resetGame() {
 	dfc.extraBalls = make([]DrawResult, 0)
 	dfc.luckyNumbers = make([]int, 0) // 重置幸運號碼
 	dfc.isJPTriggered = false
-	dfc.currentGameID = fmt.Sprintf("G%d", time.Now().UnixNano())
+
+	newGameID := fmt.Sprintf("G%d", time.Now().UnixNano())
+	dfc.currentGameID = newGameID
+
+	if dfc.logger != nil {
+		dfc.logger.Info("遊戲狀態已重置",
+			zap.String("gameID", newGameID))
+	}
 }
 
 // checkJPTrigger 檢查是否觸發JP
@@ -563,6 +591,8 @@ func (dfc *DataFlowController) StartBetting() error {
 
 	// 檢查當前狀態是否允許開始投注
 	if dfc.currentState != StateReady && dfc.currentState != StateShowLuckyNums {
+		dfc.logger.Error("當前狀態不允許開始投注",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許開始投注", dfc.currentState)
 	}
 
@@ -584,6 +614,8 @@ func (dfc *DataFlowController) CloseBetting() error {
 
 	// 檢查當前狀態是否允許關閉投注
 	if dfc.currentState != StateBetting {
+		dfc.logger.Error("當前狀態不允許關閉投注",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許關閉投注", dfc.currentState)
 	}
 
@@ -605,6 +637,8 @@ func (dfc *DataFlowController) StartDrawing() error {
 
 	// 檢查當前狀態是否允許開始抽球
 	if dfc.currentState != StateBetting {
+		dfc.logger.Error("當前狀態不允許開始抽球",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許開始抽球", dfc.currentState)
 	}
 
@@ -626,6 +660,8 @@ func (dfc *DataFlowController) StartExtraBetting() error {
 
 	// 檢查當前狀態是否允許開始額外球投注
 	if dfc.currentState != StateDrawing {
+		dfc.logger.Error("當前狀態不允許開始額外球投注",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許開始額外球投注", dfc.currentState)
 	}
 
@@ -647,6 +683,8 @@ func (dfc *DataFlowController) FinishExtraBetting() error {
 
 	// 檢查當前狀態是否允許結束額外球投注
 	if dfc.currentState != StateExtraBet {
+		dfc.logger.Error("當前狀態不允許結束額外球投注",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許結束額外球投注", dfc.currentState)
 	}
 
@@ -668,6 +706,8 @@ func (dfc *DataFlowController) ChooseExtraBall() error {
 
 	// 檢查當前狀態是否允許開始選擇額外球
 	if dfc.currentState != StateDrawing {
+		dfc.logger.Error("當前狀態不允許開始選擇額外球",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許開始選擇額外球", dfc.currentState)
 	}
 
@@ -689,6 +729,8 @@ func (dfc *DataFlowController) StartResult() error {
 
 	// 檢查當前狀態是否允許進入結算階段
 	if !dfc.isValidStateTransition(dfc.currentState, StateResult) {
+		dfc.logger.Error("當前狀態不允許進入結算階段",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許進入結算階段", dfc.currentState)
 	}
 
@@ -710,6 +752,8 @@ func (dfc *DataFlowController) StartJPStandby() error {
 
 	// 檢查當前狀態是否允許進入JP待機階段
 	if !dfc.isValidStateTransition(dfc.currentState, StateJPStandby) {
+		dfc.logger.Error("當前狀態不允許進入JP待機階段",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許進入JP待機階段", dfc.currentState)
 	}
 
@@ -731,6 +775,8 @@ func (dfc *DataFlowController) StartJPBetting() error {
 
 	// 檢查當前狀態是否允許進入JP投注階段
 	if !dfc.isValidStateTransition(dfc.currentState, StateJPBetting) {
+		dfc.logger.Error("當前狀態不允許進入JP投注階段",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許進入JP投注階段", dfc.currentState)
 	}
 
@@ -752,6 +798,8 @@ func (dfc *DataFlowController) StartJPDrawing() error {
 
 	// 檢查當前狀態是否允許進入JP抽球階段
 	if !dfc.isValidStateTransition(dfc.currentState, StateJPDrawing) {
+		dfc.logger.Error("當前狀態不允許進入JP抽球階段",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許進入JP抽球階段", dfc.currentState)
 	}
 
@@ -773,6 +821,8 @@ func (dfc *DataFlowController) StopJPDrawing() error {
 
 	// 檢查當前狀態是否允許進入JP結果階段
 	if !dfc.isValidStateTransition(dfc.currentState, StateJPResult) {
+		dfc.logger.Error("當前狀態不允許進入JP結果階段",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許進入JP結果階段", dfc.currentState)
 	}
 
@@ -794,6 +844,8 @@ func (dfc *DataFlowController) StartJPShowBalls() error {
 
 	// 檢查當前狀態是否允許進入JP開獎階段
 	if !dfc.isValidStateTransition(dfc.currentState, StateJPShowBalls) {
+		dfc.logger.Error("當前狀態不允許進入JP開獎階段",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許進入JP開獎階段", dfc.currentState)
 	}
 
@@ -815,6 +867,8 @@ func (dfc *DataFlowController) StartCompleted() error {
 
 	// 檢查當前狀態是否允許進入遊戲完成階段
 	if !dfc.isValidStateTransition(dfc.currentState, StateCompleted) {
+		dfc.logger.Error("當前狀態不允許進入遊戲完成階段",
+			zap.String("currentState", string(dfc.currentState)))
 		return fmt.Errorf("當前狀態 %s 不允許進入遊戲完成階段", dfc.currentState)
 	}
 

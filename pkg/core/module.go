@@ -127,7 +127,7 @@ var WebSocketModule = fx.Options(
 					return nil
 				},
 				OnStop: func(ctx context.Context) error {
-					manager.Shutdown()
+					manager.Stop()
 					return nil
 				},
 			})
@@ -143,7 +143,7 @@ var WebSocketModule = fx.Options(
 						return nil
 					},
 					OnStop: func(ctx context.Context) error {
-						manager.Shutdown()
+						manager.Stop()
 						return nil
 					},
 				})
