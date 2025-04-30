@@ -157,7 +157,7 @@
                 dealerSocket.close();
             }
 
-            const dealerUrl = 'ws://localhost:3002/ws';
+            const dealerUrl = 'ws://localhost:8080/dealer';
             dealerSocket = new WebSocket(dealerUrl);
 
             dealerSocket.onopen = () => {
@@ -241,7 +241,7 @@
                 playerSocket.close();
             }
 
-            const playerUrl = 'ws://localhost:3001/ws';
+            const playerUrl = 'ws://localhost:8080/game';
             playerSocket = new WebSocket(playerUrl);
 
             playerSocket.onopen = () => {
