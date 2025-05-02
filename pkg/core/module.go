@@ -10,6 +10,7 @@ import (
 	"g38_lottery_service/pkg/logger"
 	"g38_lottery_service/pkg/nacosManager"
 	redis "g38_lottery_service/pkg/redisManager"
+	rocket "g38_lottery_service/pkg/rocketManager"
 
 	"go.uber.org/fx"
 )
@@ -156,11 +157,30 @@ var WebSocketModule = fx.Options(
 // LoggerModule 日誌模組
 var LoggerModule = fx.Provide(logger.NewLogger)
 
+// RocketMQModule RocketMQ 模組
+var RocketMQModule = fx.Options(
+	fx.Provide(
+		// 提供 RocketMQ 配置
+		func(cfg *config.Config) *rocket.RocketConfig {
+			return &rocket.RocketConfig{
+				NameServers:   cfg.RocketMQ.NameServers,
+				AccessKey:     cfg.RocketMQ.AccessKey,
+				SecretKey:     cfg.RocketMQ.SecretKey,
+				ProducerGroup: cfg.RocketMQ.ProducerGroup,
+				ConsumerGroup: cfg.RocketMQ.ConsumerGroup,
+			}
+		},
+		// 提供 RocketMQ 管理器
+		rocket.ProvideRocketManager,
+	),
+)
+
 // 整合的核心模組，包含所有基礎設施
 var Module = fx.Options(
 	nacosManager.Module,
 	DatabaseModule,
 	RedisModule,
 	WebSocketModule,
+	RocketMQModule,
 	LoggerModule,
 )

@@ -10,9 +10,10 @@ import (
 
 	"g38_lottery_service/internal/config"
 	"g38_lottery_service/internal/dealerWebsocket"
-	"g38_lottery_service/internal/playerWebsocket"
+	"g38_lottery_service/internal/gameflow"
 	"g38_lottery_service/internal/service"
 	"g38_lottery_service/pkg/nacosManager"
+	redis "g38_lottery_service/pkg/redisManager"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -33,10 +34,12 @@ func main() {
 		nacosManager.Module,
 		// 註冊配置模塊
 		config.Module,
+		// 註冊 Redis 模塊
+		redis.Module,
 		// 註冊荷官端 WebSocket 模塊
 		dealerWebsocket.Module,
-		// 註冊玩家端 WebSocket 模塊
-		playerWebsocket.Module,
+		// 註冊遊戲流程管理模塊
+		gameflow.Module,
 		// 註冊開獎服務模塊
 		service.Module,
 

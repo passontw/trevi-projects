@@ -2,47 +2,40 @@ package service
 
 import (
 	"g38_lottery_service/internal/dealerWebsocket"
-	"g38_lottery_service/internal/playerWebsocket"
 	"g38_lottery_service/internal/websocket"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
 
-// LotteryService 代表開獎服務，連接荷官端和玩家端
+// LotteryService 代表開獎服務
 type LotteryService struct {
 	logger       *zap.Logger
 	dealerServer *dealerWebsocket.DealerServer
-	playerServer *playerWebsocket.PlayerServer
 }
 
 // NewLotteryService 創建新的開獎服務
 func NewLotteryService(
 	logger *zap.Logger,
 	dealerServer *dealerWebsocket.DealerServer,
-	playerServer *playerWebsocket.PlayerServer,
 ) *LotteryService {
 	return &LotteryService{
 		logger:       logger.With(zap.String("component", "lottery_service")),
 		dealerServer: dealerServer,
-		playerServer: playerServer,
 	}
 }
 
 // Start 啟動開獎服務
 func (s *LotteryService) Start() {
-	// 註冊荷官端訊息處理函數，將開獎結果轉發到玩家端
+	// 註冊荷官端訊息處理函數
 	s.registerDealerHandlers()
 
-	s.logger.Info("Lottery service started and connected dealer with player websockets")
+	s.logger.Info("Lottery service started")
 }
 
 // 註冊荷官端訊息處理函數
 func (s *LotteryService) registerDealerHandlers() {
-	// 監聽荷官端的開獎事件，並轉發到玩家端
-	// 這裡我們使用一個自定義的事件處理函數
-
-	// 建立一個在荷官端開獎後轉發到玩家端的處理函數
+	// 監聽荷官端的開獎事件
 	dealerLotteryHandler := func(client *websocket.Client, message websocket.Message) error {
 		// 從訊息中提取必要的信息
 		gameID, ok := message.Payload["game_id"].(string)
@@ -58,17 +51,11 @@ func (s *LotteryService) registerDealerHandlers() {
 		}
 
 		// 記錄開獎結果
-		s.logger.Info("Forwarding lottery result from dealer to players",
+		s.logger.Info("Received lottery result from dealer",
 			zap.String("gameID", gameID),
 			zap.Any("result", result))
 
-		// 將開獎結果轉發到玩家端
-		err := s.playerServer.BroadcastLotteryResult(gameID, result)
-		if err != nil {
-			s.logger.Error("Failed to broadcast lottery result to players",
-				zap.Error(err),
-				zap.String("gameID", gameID))
-		}
+		// 這裡不再轉發到玩家端，而是可以進行其他處理，如保存到數據庫等
 
 		return nil
 	}
@@ -76,7 +63,7 @@ func (s *LotteryService) registerDealerHandlers() {
 	// 使用DealerServer提供的方法註冊外部處理函數
 	s.dealerServer.RegisterExternalHandler("draw_lottery_external", dealerLotteryHandler)
 
-	s.logger.Info("Registered dealer lottery result handler to forward results to players")
+	s.logger.Info("Registered dealer lottery result handler")
 }
 
 // Module 提供 FX 模塊

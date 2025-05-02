@@ -27,6 +27,7 @@ type AppConfig struct {
 	Database DatabaseConfig `json:"database"`
 	JWT      JWTConfig      `json:"jwt"`
 	Nacos    NacosConfig    `json:"nacos"`
+	RocketMQ RocketMQConfig `json:"rocketmq"`
 }
 
 // ServerConfig 服務器配置
@@ -38,7 +39,6 @@ type ServerConfig struct {
 	ServiceID       string `json:"serviceId"`
 	ServiceIP       string `json:"serviceIp"`
 	ServicePort     int    `json:"servicePort"`
-	PlayerWsPort    int    `json:"playerWsPort"` // 玩家 WebSocket 端口
 	DealerWsPort    int    `json:"dealerWsPort"` // 荷官 WebSocket 端口
 	RegisterService bool   `json:"registerService"`
 }
@@ -81,6 +81,15 @@ type NacosConfig struct {
 	Password    string `json:"password"`
 	ServiceIP   string `json:"serviceIp"`
 	ServicePort int    `json:"servicePort"`
+}
+
+// RocketMQConfig RocketMQ 配置
+type RocketMQConfig struct {
+	NameServers   []string `json:"nameServers"`
+	AccessKey     string   `json:"accessKey"`
+	SecretKey     string   `json:"secretKey"`
+	ProducerGroup string   `json:"producerGroup"`
+	ConsumerGroup string   `json:"consumerGroup"`
 }
 
 // ===== 環境變量工具函數 =====
@@ -190,6 +199,7 @@ func uploadConfigToNacos(client nacosManager.NacosClient, dataId, group, content
 // ===== 配置加載主要函數 =====
 
 // LoadConfig 加載配置，優先使用 .env 中的 Nacos 設定取回配置
+// 當無法從 Nacos 獲取有效配置時，返回錯誤
 func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 	// 嘗試加載 .env 文件
 	if err := godotenv.Load(); err != nil {
@@ -210,31 +220,44 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 		content, err := nacosClient.GetConfig(config.Nacos.DataId, config.Nacos.Group)
 		if err != nil {
 			log.Printf("從 Nacos 獲取配置失敗: %v", err)
-			log.Println("將使用本地/環境變量配置")
-		} else {
-			// 預處理 JSON 內容
-			content = preprocessJsonContent(content)
-
-			// 嘗試解析配置
-			if err := parseNacosConfig(content, config); err != nil {
-				log.Printf("解析 Nacos 配置失敗: %v", err)
-				log.Println("將使用本地/環境變量配置")
-			} else {
-				log.Println("成功從 Nacos 獲取配置並合併")
-
-				// 保留 Nacos 連接信息
-				preserveNacosConnectionInfo(config)
-			}
+			return nil, fmt.Errorf("無法從 Nacos 獲取配置: %w", err)
 		}
+
+		// 預處理 JSON 內容
+		content = preprocessJsonContent(content)
+
+		// 檢查 JSON 有效性
+		if !isValidJson(content) {
+			log.Printf("從 Nacos 獲取的配置不是有效的 JSON")
+			return nil, fmt.Errorf("從 Nacos 獲取的配置不是有效的 JSON")
+		}
+
+		// 嘗試解析配置
+		if err := parseNacosConfig(content, config); err != nil {
+			log.Printf("解析 Nacos 配置失敗: %v", err)
+			return nil, fmt.Errorf("解析 Nacos 配置失敗: %w", err)
+		}
+
+		log.Println("成功從 Nacos 獲取配置並合併")
+
+		// 保留 Nacos 連接信息
+		preserveNacosConnectionInfo(config)
+	} else {
+		// Nacos 未啟用或客戶端無效
+		log.Println("Nacos 未啟用或客戶端無效，無法獲取配置")
+		return nil, fmt.Errorf("Nacos 未啟用或客戶端無效，無法獲取配置")
 	}
 
 	return config, nil
 }
 
-// createDefaultConfig 創建默認配置
+// createDefaultConfig, 創建默認配置, 但不從環境變量讀取 Redis 配置
 func createDefaultConfig() *AppConfig {
 	// 定義 Nacos 相關設置
 	nacosEnabled := getEnvAsBool("ENABLE_NACOS", false)
+
+	// 不再從環境變量讀取 Redis 配置，將由 Nacos 提供
+	log.Printf("初始設定時不讀取環境變量的 Redis 配置，將從 Nacos 獲取")
 
 	return &AppConfig{
 		AppName: getEnv("APP_NAME", "app_service"),
@@ -247,16 +270,15 @@ func createDefaultConfig() *AppConfig {
 			ServiceID:       getEnv("SERVICE_ID", "app_service"),
 			ServiceIP:       getEnv("SERVICE_IP", "127.0.0.1"),
 			ServicePort:     getEnvAsInt("SERVICE_PORT", 8080),
-			PlayerWsPort:    getEnvAsInt("PLAYER_WS_PORT", 3001),
-			DealerWsPort:    getEnvAsInt("DEALER_WS_PORT", 3002),
+			DealerWsPort:    0, // 設為0，強制從 Nacos 讀取
 			RegisterService: getEnvAsBool("REGISTER_SERVICE", true),
 		},
 		Redis: RedisConfig{
-			Host:     getEnv("REDIS_HOST", "127.0.0.1"),
-			Port:     getEnvAsInt("REDIS_PORT", 6379),
-			Username: getEnv("REDIS_USERNAME", ""),
-			Password: getEnv("REDIS_PASSWORD", ""),
-			DB:       getEnvAsInt("REDIS_DB", 0),
+			Host:     "", // 空值，強制從 Nacos 讀取
+			Port:     0,  // 0值，強制從 Nacos 讀取
+			Username: "",
+			Password: "",
+			DB:       0,
 		},
 		Database: DatabaseConfig{
 			Driver:   getEnv("DB_DRIVER", "mysql"),
@@ -283,75 +305,107 @@ func createDefaultConfig() *AppConfig {
 			ServiceIP:   getEnv("SERVICE_IP", "127.0.0.1"),
 			ServicePort: getEnvAsInt("SERVICE_PORT", 8080),
 		},
+		RocketMQ: RocketMQConfig{
+			NameServers:   []string{getEnv("ROCKETMQ_NAME_SERVERS", "localhost:9876")},
+			AccessKey:     getEnv("ROCKETMQ_ACCESS_KEY", ""),
+			SecretKey:     getEnv("ROCKETMQ_SECRET_KEY", ""),
+			ProducerGroup: getEnv("ROCKETMQ_PRODUCER_GROUP", "default"),
+			ConsumerGroup: getEnv("ROCKETMQ_CONSUMER_GROUP", "default"),
+		},
 	}
 }
 
-// parseNacosConfig 解析 Nacos 配置並更新 AppConfig
+// parseNacosConfig 解析從 Nacos 獲取的配置
 func parseNacosConfig(content string, config *AppConfig) error {
 	// 保存原始的WebSocket端口設置
-	playerWsPort := config.Server.PlayerWsPort
 	dealerWsPort := config.Server.DealerWsPort
 
-	// 首先嘗試直接解析為 AppConfig 結構
-	var nacosConfig AppConfig
-	if err := json.Unmarshal([]byte(content), &nacosConfig); err == nil {
-		// 合併 Nacos 配置與本地配置
-		*config = nacosConfig
+	// 預處理 JSON 內容，處理註釋和換行符
+	processedContent := preprocessJsonContent(content)
 
-		// 恢復端口設置
-		restoreWebSocketPorts(config, playerWsPort, dealerWsPort)
-		return nil
+	// 檢查 JSON 有效性
+	if !isValidJson(processedContent) {
+		return fmt.Errorf("從 Nacos 獲取的配置不是有效的 JSON")
 	}
 
-	// 如果直接解析失敗，嘗試解析為扁平結構的 map
+	// 解析 JSON
 	var jsonMap map[string]interface{}
-	if err := json.Unmarshal([]byte(content), &jsonMap); err != nil {
-		return err
+	if err := json.Unmarshal([]byte(processedContent), &jsonMap); err != nil {
+		return fmt.Errorf("解析 Nacos 配置失敗: %w", err)
 	}
 
-	// 將扁平結構轉換為 AppConfig
+	// 打印 Nacos 中的 DEALER_WS_PORT 配置
+	if dealerPort, ok := jsonMap["DEALER_WS_PORT"]; ok {
+		log.Printf("從 Nacos 獲取的 DEALER_WS_PORT 配置: %v (類型: %T)", dealerPort, dealerPort)
+	} else {
+		log.Printf("Nacos 配置中未找到 DEALER_WS_PORT 設定")
+	}
+
+	// 打印 Nacos 中的 Redis 配置
+	log.Printf("從 Nacos 獲取的 Redis 配置項:")
+	for _, key := range []string{"REDIS_HOST", "REDIS_PORT", "REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_DB"} {
+		if val, ok := jsonMap[key]; ok {
+			log.Printf("  %s = %v (類型: %T)", key, val, val)
+		} else {
+			log.Printf("  %s: 未設定", key)
+		}
+	}
+
+	// 將 JSON 映射到 AppConfig 結構
 	if err := mapJsonToAppConfig(jsonMap, config); err != nil {
-		return err
+		return fmt.Errorf("映射 Nacos 配置到 AppConfig 失敗: %w", err)
 	}
 
-	// 恢復端口設置
-	restoreWebSocketPorts(config, playerWsPort, dealerWsPort)
+	// 恢復 WebSocket 端口設置
+	restoreWebSocketPorts(config, dealerWsPort)
+
+	// 打印從 Nacos 獲取的 Redis 配置
+	log.Printf("從 Nacos 獲取的 Redis 配置: Host=%s, Port=%d, Username=%s, PasswordLen=%d, DB=%d",
+		config.Redis.Host, config.Redis.Port, config.Redis.Username,
+		len(config.Redis.Password), config.Redis.DB)
+
+	log.Printf("成功從 Nacos 獲取配置並合併")
 	return nil
 }
 
-// restoreWebSocketPorts 恢復WebSocket端口設置
-func restoreWebSocketPorts(config *AppConfig, playerWsPort, dealerWsPort int) {
-	// 優先使用環境變量中的值
-	if envPlayerPort := getEnvAsInt("PLAYER_WS_PORT", 0); envPlayerPort > 0 {
-		config.Server.PlayerWsPort = envPlayerPort
-	} else if playerWsPort > 0 {
-		config.Server.PlayerWsPort = playerWsPort
-	}
+// restoreWebSocketPorts 恢復WebSocket端口設置和其他配置
+func restoreWebSocketPorts(config *AppConfig, dealerWsPort int) {
+	// 只檢查 Nacos 配置中的 DealerWsPort 是否有效
+	// 當 Nacos 配置中的設定無效時，允許服務崩潰
 
-	if envDealerPort := getEnvAsInt("DEALER_WS_PORT", 0); envDealerPort > 0 {
-		config.Server.DealerWsPort = envDealerPort
-	} else if dealerWsPort > 0 {
-		config.Server.DealerWsPort = dealerWsPort
-	}
-
-	// 確保端口設置不為0
-	if config.Server.PlayerWsPort <= 0 {
-		config.Server.PlayerWsPort = 3001 // 默認值
-	}
-
+	// 檢查 DealerWsPort 的設定
 	if config.Server.DealerWsPort <= 0 {
-		config.Server.DealerWsPort = 3002 // 默認值
+		// 僅記錄錯誤，不再設置默認值
+		log.Printf("錯誤: Nacos 未提供有效的 DealerWsPort 設定，值為 %d", config.Server.DealerWsPort)
+		// 這裡故意不設置默認值，讓後續邏輯失敗，使服務崩潰
+	} else {
+		// 若端口為 3002，嘗試使用備用端口 3033，因為 3002 可能被佔用
+		if config.Server.DealerWsPort == 3002 {
+			log.Printf("檢測到使用可能被佔用的端口 3002，切換至備用端口 3033")
+			config.Server.DealerWsPort = 3033
+		}
 	}
 
 	// 記錄當前使用的端口
-	log.Printf("使用的玩家端WebSocket端口: %d", config.Server.PlayerWsPort)
 	log.Printf("使用的荷官端WebSocket端口: %d", config.Server.DealerWsPort)
+
+	// 檢查 Redis 設定有效性，但不再設置默認值
+	if config.Redis.Host == "" || config.Redis.Port <= 0 {
+		log.Printf("錯誤: Nacos 中的 Redis 配置無效，Host=%s, Port=%d",
+			config.Redis.Host, config.Redis.Port)
+		// 這裡故意不設置默認值，讓後續邏輯失敗，使服務崩潰
+	}
+
+	// 打印最終配置
+	log.Printf("最終配置: DealerWsPort=%d, Redis(Host=%s, Port=%d, Username=%s, PasswordLen=%d, DB=%d)",
+		config.Server.DealerWsPort,
+		config.Redis.Host, config.Redis.Port, config.Redis.Username,
+		len(config.Redis.Password), config.Redis.DB)
 }
 
 // preserveNacosConnectionInfo 保留 Nacos 連接信息
 func preserveNacosConnectionInfo(config *AppConfig) {
 	// 保存原始的WebSocket端口設置
-	playerWsPort := config.Server.PlayerWsPort
 	dealerWsPort := config.Server.DealerWsPort
 
 	// 設置Nacos連接信息
@@ -368,27 +422,23 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 		ServicePort: getEnvAsInt("SERVICE_PORT", 8080),
 	}
 
-	// 恢復WebSocket端口設置，優先使用環境變量中的值
-	if envPlayerPort := getEnvAsInt("PLAYER_WS_PORT", 0); envPlayerPort > 0 {
-		config.Server.PlayerWsPort = envPlayerPort
-	} else if playerWsPort > 0 {
-		config.Server.PlayerWsPort = playerWsPort
-	}
-
-	if envDealerPort := getEnvAsInt("DEALER_WS_PORT", 0); envDealerPort > 0 {
-		config.Server.DealerWsPort = envDealerPort
-	} else if dealerWsPort > 0 {
+	// 保留原始的 DealerWsPort 設定，如果它有效
+	if dealerWsPort > 0 {
 		config.Server.DealerWsPort = dealerWsPort
 	}
 
 	// 確保端口設置不為0
-	if config.Server.PlayerWsPort <= 0 {
-		config.Server.PlayerWsPort = 3001 // 默認值
-	}
-
 	if config.Server.DealerWsPort <= 0 {
 		config.Server.DealerWsPort = 3002 // 默認值
 	}
+
+	// 若端口為 3002，嘗試使用備用端口 3033，因為 3002 可能被佔用
+	if config.Server.DealerWsPort == 3002 {
+		log.Printf("初始化階段檢測到使用可能被佔用的端口 3002，切換至備用端口 3033")
+		config.Server.DealerWsPort = 3033
+	}
+
+	log.Printf("Nacos 初始配置設置完成，DealerWsPort=%d", config.Server.DealerWsPort)
 }
 
 // mapJsonToAppConfig 將 JSON 映射到 AppConfig 結構
@@ -410,11 +460,6 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 		"PORT": func(v interface{}) {
 			if port, ok := parseIntValue(v); ok {
 				config.Server.Port = port
-			}
-		},
-		"PLAYER_WS_PORT": func(v interface{}) {
-			if port, ok := parseIntValue(v); ok {
-				config.Server.PlayerWsPort = port
 			}
 		},
 		"DEALER_WS_PORT": func(v interface{}) {

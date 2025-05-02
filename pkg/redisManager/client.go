@@ -86,9 +86,29 @@ func NewRedisManager(config *RedisConfig) RedisManager {
 	}
 }
 
-func ProvideRedisConfig(cfg *config.Config) *RedisConfig {
+func ProvideRedisConfig(cfg *config.AppConfig) *RedisConfig {
+	// 添加日誌輸出以確認配置內容
+	fmt.Printf("從配置加載 Redis 信息: Host=%s, Port=%d\n", cfg.Redis.Host, cfg.Redis.Port)
+
+	// 確保主機不為空
+	host := cfg.Redis.Host
+	if host == "" {
+		host = "127.0.0.1" // 提供默認值
+		fmt.Println("Redis Host 為空，使用默認值 127.0.0.1")
+	}
+
+	// 確保端口有效
+	port := cfg.Redis.Port
+	if port <= 0 {
+		port = 6379 // 提供默認值
+		fmt.Println("Redis Port 無效，使用默認值 6379")
+	}
+
+	addr := fmt.Sprintf("%s:%d", host, port)
+	fmt.Printf("最終 Redis 地址: %s\n", addr)
+
 	return &RedisConfig{
-		Addr:     cfg.Redis.Addr,
+		Addr:     addr,
 		Username: cfg.Redis.Username,
 		Password: cfg.Redis.Password,
 		DB:       cfg.Redis.DB,
@@ -97,6 +117,13 @@ func ProvideRedisConfig(cfg *config.Config) *RedisConfig {
 
 // ProvideRedisClient 提供 Redis 客戶端實例，用於 fx
 func ProvideRedisClient(lc fx.Lifecycle, config *RedisConfig) *redis.Client {
+	// 輸出 Redis 配置信息
+	fmt.Printf("嘗試連接 Redis: 地址=%s, 用戶名=%s, 密碼長度=%d, DB=%d\n",
+		config.Addr,
+		config.Username,
+		len(config.Password),
+		config.DB)
+
 	client := redis.NewClient(&redis.Options{
 		Addr:     config.Addr,
 		Username: config.Username,
@@ -110,6 +137,7 @@ func ProvideRedisClient(lc fx.Lifecycle, config *RedisConfig) *redis.Client {
 			defer cancel()
 
 			if err := client.Ping(ctx).Err(); err != nil {
+				fmt.Printf("Redis 連接失敗: %v\n", err)
 				return fmt.Errorf("failed to connect to Redis: %w", err)
 			}
 			fmt.Println("Redis connected successfully")
