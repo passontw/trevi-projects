@@ -40,6 +40,7 @@ type ServerConfig struct {
 	ServiceIP       string `json:"serviceIp"`
 	ServicePort     int    `json:"servicePort"`
 	DealerWsPort    int    `json:"dealerWsPort"` // 荷官 WebSocket 端口
+	GrpcPort        int    `json:"grpcPort"`     // gRPC 服務端口
 	RegisterService bool   `json:"registerService"`
 }
 
@@ -260,17 +261,18 @@ func createDefaultConfig() *AppConfig {
 	log.Printf("初始設定時不讀取環境變量的 Redis 配置，將從 Nacos 獲取")
 
 	return &AppConfig{
-		AppName: getEnv("APP_NAME", "app_service"),
-		Debug:   getEnvAsBool("DEBUG", false),
+		AppName: getEnv("APP_NAME", "g38_lottery_service"),
+		Debug:   getEnvAsBool("DEBUG", true),
 		Server: ServerConfig{
 			Host:            getEnv("SERVER_HOST", "0.0.0.0"),
-			Port:            getEnvAsInt("SERVER_PORT", 8080),
-			Version:         getEnv("SERVER_VERSION", "1.0.0"),
-			ServiceName:     getEnv("SERVICE_NAME", "app_service"),
-			ServiceID:       getEnv("SERVICE_ID", "app_service"),
+			Port:            getEnvAsInt("SERVER_PORT", 8000),
+			Version:         getEnv("SERVER_VERSION", "v1"),
+			ServiceName:     getEnv("SERVICE_NAME", "lottery-service"),
+			ServiceID:       getEnv("SERVICE_ID", "lottery-service-1"),
 			ServiceIP:       getEnv("SERVICE_IP", "127.0.0.1"),
 			ServicePort:     getEnvAsInt("SERVICE_PORT", 8080),
-			DealerWsPort:    0, // 設為0，強制從 Nacos 讀取
+			DealerWsPort:    getEnvAsInt("DEALER_WS_PORT", 9000), // 默認荷官 WebSocket 端口
+			GrpcPort:        getEnvAsInt("GRPC_PORT", 9100),      // 默認 gRPC 端口
 			RegisterService: getEnvAsBool("REGISTER_SERVICE", true),
 		},
 		Redis: RedisConfig{
@@ -319,6 +321,7 @@ func createDefaultConfig() *AppConfig {
 func parseNacosConfig(content string, config *AppConfig) error {
 	// 保存原始的WebSocket端口設置
 	dealerWsPort := config.Server.DealerWsPort
+	grpcPort := config.Server.GrpcPort
 
 	// 預處理 JSON 內容，處理註釋和換行符
 	processedContent := preprocessJsonContent(content)
@@ -357,7 +360,7 @@ func parseNacosConfig(content string, config *AppConfig) error {
 	}
 
 	// 恢復 WebSocket 端口設置
-	restoreWebSocketPorts(config, dealerWsPort)
+	restoreWebSocketPorts(config, dealerWsPort, grpcPort)
 
 	// 打印從 Nacos 獲取的 Redis 配置
 	log.Printf("從 Nacos 獲取的 Redis 配置: Host=%s, Port=%d, Username=%s, PasswordLen=%d, DB=%d",
@@ -368,45 +371,34 @@ func parseNacosConfig(content string, config *AppConfig) error {
 	return nil
 }
 
-// restoreWebSocketPorts 恢復WebSocket端口設置和其他配置
-func restoreWebSocketPorts(config *AppConfig, dealerWsPort int) {
-	// 只檢查 Nacos 配置中的 DealerWsPort 是否有效
-	// 當 Nacos 配置中的設定無效時，允許服務崩潰
-
-	// 檢查 DealerWsPort 的設定
-	if config.Server.DealerWsPort <= 0 {
-		// 僅記錄錯誤，不再設置默認值
-		log.Printf("錯誤: Nacos 未提供有效的 DealerWsPort 設定，值為 %d", config.Server.DealerWsPort)
-		// 這裡故意不設置默認值，讓後續邏輯失敗，使服務崩潰
+// restoreWebSocketPorts 恢復 WebSocket 端口和 gRPC 端口
+func restoreWebSocketPorts(config *AppConfig, dealerWsPort int, grpcPort int) {
+	// 保存原始的荷官WebSocket端口
+	if dealerWsPort > 0 {
+		config.Server.DealerWsPort = dealerWsPort
 	} else {
-		// 若端口為 3002，嘗試使用備用端口 3033，因為 3002 可能被佔用
-		if config.Server.DealerWsPort == 3002 {
-			log.Printf("檢測到使用可能被佔用的端口 3002，切換至備用端口 3033")
-			config.Server.DealerWsPort = 3033
+		envPort := getEnvAsInt("DEALER_WS_PORT", 0)
+		if envPort > 0 {
+			config.Server.DealerWsPort = envPort
 		}
 	}
 
-	// 記錄當前使用的端口
-	log.Printf("使用的荷官端WebSocket端口: %d", config.Server.DealerWsPort)
-
-	// 檢查 Redis 設定有效性，但不再設置默認值
-	if config.Redis.Host == "" || config.Redis.Port <= 0 {
-		log.Printf("錯誤: Nacos 中的 Redis 配置無效，Host=%s, Port=%d",
-			config.Redis.Host, config.Redis.Port)
-		// 這裡故意不設置默認值，讓後續邏輯失敗，使服務崩潰
+	// 保存原始的gRPC端口
+	if grpcPort > 0 {
+		config.Server.GrpcPort = grpcPort
+	} else {
+		envPort := getEnvAsInt("GRPC_PORT", 0)
+		if envPort > 0 {
+			config.Server.GrpcPort = envPort
+		}
 	}
-
-	// 打印最終配置
-	log.Printf("最終配置: DealerWsPort=%d, Redis(Host=%s, Port=%d, Username=%s, PasswordLen=%d, DB=%d)",
-		config.Server.DealerWsPort,
-		config.Redis.Host, config.Redis.Port, config.Redis.Username,
-		len(config.Redis.Password), config.Redis.DB)
 }
 
 // preserveNacosConnectionInfo 保留 Nacos 連接信息
 func preserveNacosConnectionInfo(config *AppConfig) {
-	// 保存原始的WebSocket端口設置
+	// 保存原始的WebSocket端口和gRPC端口設置
 	dealerWsPort := config.Server.DealerWsPort
+	grpcPort := config.Server.GrpcPort
 
 	// 設置Nacos連接信息
 	config.Nacos = NacosConfig{
@@ -427,9 +419,19 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 		config.Server.DealerWsPort = dealerWsPort
 	}
 
-	// 確保端口設置不為0
+	// 保留原始的 GrpcPort 設定，如果它有效
+	if grpcPort > 0 {
+		config.Server.GrpcPort = grpcPort
+	}
+
+	// 確保 WebSocket 端口設置不為0
 	if config.Server.DealerWsPort <= 0 {
 		config.Server.DealerWsPort = 3002 // 默認值
+	}
+
+	// 確保 gRPC 端口設置不為0
+	if config.Server.GrpcPort <= 0 {
+		config.Server.GrpcPort = 9100 // 默認值
 	}
 
 	// 若端口為 3002，嘗試使用備用端口 3033，因為 3002 可能被佔用
@@ -438,7 +440,7 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 		config.Server.DealerWsPort = 3033
 	}
 
-	log.Printf("Nacos 初始配置設置完成，DealerWsPort=%d", config.Server.DealerWsPort)
+	log.Printf("Nacos 初始配置設置完成，DealerWsPort=%d, GrpcPort=%d", config.Server.DealerWsPort, config.Server.GrpcPort)
 }
 
 // mapJsonToAppConfig 將 JSON 映射到 AppConfig 結構

@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package dealer;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "g38_lottery_service/internal/proto/dealer";
+
+// 球類型
+enum BallType {
+  BALL_TYPE_UNSPECIFIED = 0;
+  BALL_TYPE_REGULAR = 1;   // 常規球
+  BALL_TYPE_EXTRA = 2;     // 額外球
+  BALL_TYPE_JACKPOT = 3;   // Jackpot球
+  BALL_TYPE_LUCKY = 4;     // 幸運號碼球
+}
+
+// 球資訊
+message Ball {
+  // 球號
+  int32 number = 1;
+  // 球類型
+  BallType type = 2;
+  // 是否是該類型中的最後一顆球
+  bool is_last = 3;
+  // 抽取時間
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// 抽常規球請求
+message DrawBallRequest {
+  // 球號 (1-75)
+  int32 number = 1;
+  // 是否為最後一顆球
+  bool is_last = 2;
+}
+
+// 抽常規球回應
+message DrawBallResponse {
+  // 抽取的球的資訊
+  Ball ball = 1;
+}
+
+// 抽額外球請求
+message DrawExtraBallRequest {
+  // 球號 (1-75)
+  int32 number = 1;
+  // 是否為最後一顆球
+  bool is_last = 2;
+}
+
+// 抽額外球回應
+message DrawExtraBallResponse {
+  // 抽取的球的資訊
+  Ball ball = 1;
+}
+
+// 抽JP球請求
+message DrawJackpotBallRequest {
+  // 球號 (1-75)
+  int32 number = 1;
+  // 是否為最後一顆球
+  bool is_last = 2;
+}
+
+// 抽JP球回應
+message DrawJackpotBallResponse {
+  // 抽取的球的資訊
+  Ball ball = 1;
+}
+
+// 抽幸運號碼球請求
+message DrawLuckyBallRequest {
+  // 球號 (1-75)
+  int32 number = 1;
+  // 是否為最後一顆球
+  bool is_last = 2;
+}
+
+// 抽幸運號碼球回應
+message DrawLuckyBallResponse {
+  // 抽取的球的資訊
+  Ball ball = 1;
+} 

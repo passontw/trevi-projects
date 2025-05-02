@@ -11,6 +11,7 @@ import (
 	"g38_lottery_service/internal/config"
 	"g38_lottery_service/internal/dealerWebsocket"
 	"g38_lottery_service/internal/gameflow"
+	"g38_lottery_service/internal/grpc"
 	"g38_lottery_service/internal/service"
 	"g38_lottery_service/pkg/nacosManager"
 	redis "g38_lottery_service/pkg/redisManager"
@@ -42,6 +43,8 @@ func main() {
 		gameflow.Module,
 		// 註冊開獎服務模塊
 		service.Module,
+		// 註冊 gRPC 服務模塊
+		grpc.Module,
 
 		fx.Provide(
 			func() *zap.Logger {

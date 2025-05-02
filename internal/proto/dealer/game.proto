@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package dealer;
+
+import "google/protobuf/timestamp.proto";
+import "internal/proto/dealer/common.proto";
+import "internal/proto/dealer/ball.proto";
+
+option go_package = "g38_lottery_service/internal/proto/dealer";
+
+// 遊戲數據
+message GameData {
+  // 遊戲ID
+  string game_id = 1;
+  // 當前階段
+  GameStage current_stage = 2;
+  // 開始時間
+  google.protobuf.Timestamp start_time = 3;
+  // 結束時間 (如果遊戲已完成)
+  google.protobuf.Timestamp end_time = 4;
+  // 常規球
+  repeated Ball regular_balls = 5;
+  // 額外球
+  repeated Ball extra_balls = 6;
+  // JP球
+  repeated Ball jackpot_balls = 7;
+  // 幸運號碼球
+  repeated Ball lucky_balls = 8;
+  // 選擇的額外球一側
+  ExtraBallSide selected_side = 9;
+  // 是否有JP
+  bool has_jackpot = 10;
+  // JP獲獎者ID
+  string jackpot_winner = 11;
+  // 是否已取消
+  bool is_cancelled = 12;
+  // 取消原因
+  string cancel_reason = 13;
+  // 取消時間
+  google.protobuf.Timestamp cancel_time = 14;
+  // 最後更新時間
+  google.protobuf.Timestamp last_update_time = 15;
+}
+
+// 開始新局遊戲請求
+message StartNewRoundRequest {
+  // 空的請求，由後端自動生成遊戲ID
+}
+
+// 開始新局遊戲回應
+message StartNewRoundResponse {
+  // 遊戲ID
+  string game_id = 1;
+  // 遊戲開始時間
+  google.protobuf.Timestamp start_time = 2;
+  // 當前遊戲階段
+  GameStage current_stage = 3;
+}
+
+// 手動推進遊戲階段請求
+message AdvanceStageRequest {
+  // 是否強制推進
+  bool force = 1;
+}
+
+// 手動推進遊戲階段回應
+message AdvanceStageResponse {
+  // 舊階段
+  GameStage old_stage = 1;
+  // 新階段
+  GameStage new_stage = 2;
+}
+
+// 獲取遊戲狀態請求
+message GetGameStatusRequest {
+  // 空的請求，獲取當前遊戲狀態
+}
+
+// 獲取遊戲狀態回應
+message GetGameStatusResponse {
+  // 完整的遊戲數據
+  GameData game_data = 1;
+}
+
+// 通知JP獲獎者請求
+message NotifyJackpotWinnerRequest {
+  // 獲獎者ID
+  string winner_id = 1;
+}
+
+// 設置遊戲是否啟用JP請求
+message SetHasJackpotRequest {
+  // 是否啟用JP
+  bool has_jackpot = 1;
+}
+
+// 取消遊戲請求
+message CancelGameRequest {
+  // 取消原因
+  string reason = 1;
+} 

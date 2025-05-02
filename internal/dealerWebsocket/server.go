@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/gameflow"
 	"g38_lottery_service/internal/websocket"
 
 	"go.uber.org/fx"
@@ -15,25 +16,28 @@ import (
 
 // DealerServer 代表荷官端 WebSocket 服務器
 type DealerServer struct {
-	config *config.AppConfig
-	logger *zap.Logger
-	engine *websocket.Engine
-	server *http.Server
+	config      *config.AppConfig
+	logger      *zap.Logger
+	engine      *websocket.Engine
+	server      *http.Server
+	gameManager *gameflow.GameManager
 }
 
 // NewDealerServer 創建新的荷官端 WebSocket 服務器
 func NewDealerServer(
 	config *config.AppConfig,
 	logger *zap.Logger,
+	gameManager *gameflow.GameManager,
 ) *DealerServer {
 	// 創建 WebSocket 引擎
 	engine := websocket.NewEngine(logger)
 
 	// 初始化服務器
 	server := &DealerServer{
-		config: config,
-		logger: logger.With(zap.String("component", "dealer_websocket")),
-		engine: engine,
+		config:      config,
+		logger:      logger.With(zap.String("component", "dealer_websocket")),
+		engine:      engine,
+		gameManager: gameManager,
 	}
 
 	// 註冊訊息處理函數
@@ -104,6 +108,112 @@ func (s *DealerServer) registerHandlers() {
 			},
 		})
 	})
+
+	// 處理開始新局請求
+	s.engine.RegisterHandler("START_NEW_ROUND", func(client *websocket.Client, message websocket.Message) error {
+		s.logger.Info("收到開始新局請求",
+			zap.String("clientID", client.ID),
+			zap.Any("payload", message.Payload))
+
+		// 創建上下文
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// 檢查當前階段是否為準備階段
+		currentStage := s.gameManager.GetCurrentStage()
+		if currentStage != gameflow.StagePreparation && currentStage != gameflow.StageGameOver {
+			errorMessage := fmt.Sprintf("無法開始新局，當前階段不是準備階段或遊戲結束階段。當前階段: %s", string(currentStage))
+			s.logger.Warn(errorMessage, zap.String("clientID", client.ID))
+
+			// 返回錯誤回應
+			return client.SendJSON(websocket.Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "START_NEW_ROUND",
+					"message": errorMessage,
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+
+		// 創建新遊戲
+		gameID, err := s.gameManager.CreateNewGame(ctx)
+		if err != nil {
+			s.logger.Error("創建新遊戲失敗",
+				zap.String("clientID", client.ID),
+				zap.Error(err))
+
+			// 返回錯誤回應
+			return client.SendJSON(websocket.Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "START_NEW_ROUND",
+					"message": fmt.Sprintf("創建新遊戲失敗: %v", err),
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+
+		// 獲取當前遊戲數據
+		game := s.gameManager.GetCurrentGame()
+		if game == nil {
+			errorMessage := "獲取新創建的遊戲失敗"
+			s.logger.Error(errorMessage, zap.String("clientID", client.ID))
+
+			// 返回錯誤回應
+			return client.SendJSON(websocket.Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "START_NEW_ROUND",
+					"message": errorMessage,
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+
+		// 推進到新局階段
+		err = s.gameManager.AdvanceStage(ctx, true)
+		if err != nil {
+			s.logger.Error("推進到新局階段失敗",
+				zap.String("clientID", client.ID),
+				zap.Error(err))
+
+			// 返回錯誤回應
+			return client.SendJSON(websocket.Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "START_NEW_ROUND",
+					"message": fmt.Sprintf("推進到新局階段失敗: %v", err),
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+
+		// 重新獲取更新後的遊戲數據
+		game = s.gameManager.GetCurrentGame()
+
+		// 返回成功回應
+		s.logger.Info("成功開始新局",
+			zap.String("clientID", client.ID),
+			zap.String("gameID", gameID),
+			zap.String("stage", string(game.CurrentStage)))
+
+		return client.SendJSON(websocket.Response{
+			Type: "response",
+			Payload: map[string]interface{}{
+				"success":   true,
+				"type":      "START_NEW_ROUND",
+				"game_id":   gameID,
+				"stage":     string(game.CurrentStage),
+				"timestamp": game.StartTime.Format(time.RFC3339),
+				"time":      time.Now().Format(time.RFC3339),
+			},
+		})
+	})
 }
 
 // RegisterExternalHandler 註冊外部處理函數
@@ -171,3 +281,16 @@ var Module = fx.Options(
 		server.Start(lc)
 	}),
 )
+
+// 添加獲取引擎方法
+func (s *DealerServer) GetEngine() *websocket.Engine {
+	return s.engine
+}
+
+// BroadcastMessage 廣播消息到所有連接的客戶端
+func (s *DealerServer) BroadcastMessage(message interface{}) error {
+	return s.engine.Broadcast(websocket.Response{
+		Type:    "event",
+		Payload: message,
+	})
+}
