@@ -1,0 +1,75 @@
+services:
+  # RocketMQ NameServer
+  namesrv:
+    image: apache/rocketmq:5.1.3
+    platform: linux/amd64
+    container_name: rmq-namesrv
+    ports:
+      - "9876:9876"
+    volumes:
+      - ./data/namesrv/logs:/home/rocketmq/logs
+      - ./data/namesrv/store:/home/rocketmq/store
+    command: sh mqnamesrv
+    environment:
+      - MAX_HEAP_SIZE=256M
+      - HEAP_NEWSIZE=128M
+      - JAVA_OPTS=-Duser.home=/home/rocketmq
+    networks:
+      - rmq-network
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'OK'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # RocketMQ Broker
+  broker:
+    image: apache/rocketmq:5.1.3
+    platform: linux/amd64
+    container_name: rmq-broker
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+      - "10912:10912"
+    volumes:
+      - ./data/broker/logs:/home/rocketmq/logs
+      - ./data/broker/store:/home/rocketmq/store
+      - ./conf/broker.conf:/home/rocketmq/conf/broker.conf
+    command: sh mqbroker -n namesrv:9876 -c /home/rocketmq/conf/broker.conf
+    environment:
+      - MAX_HEAP_SIZE=512M
+      - HEAP_NEWSIZE=256M
+      - JAVA_OPTS=-Duser.home=/home/rocketmq
+    depends_on:
+      namesrv:
+        condition: service_healthy
+    networks:
+      - rmq-network
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'OK'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # RocketMQ Dashboard (管理控制台)
+  dashboard:
+    image: apacherocketmq/rocketmq-dashboard:1.0.0
+    platform: linux/amd64
+    container_name: rmq-dashboard
+    ports:
+      - "8080:8080"
+    environment:
+      - JAVA_OPTS=-Drocketmq.namesrv.addr=namesrv:9876 -Dcom.rocketmq.sendMessageWithVIPChannel=false
+    depends_on:
+      namesrv:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+    networks:
+      - rmq-network
+
+networks:
+  rmq-network:
+    driver: bridge 
