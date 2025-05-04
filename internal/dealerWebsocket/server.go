@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"g38_lottery_service/internal/config"
@@ -21,6 +22,8 @@ type DealerServer struct {
 	engine      *websocket.Engine
 	server      *http.Server
 	gameManager *gameflow.GameManager
+	topics      map[string]map[string]*websocket.Client // 每個主題的訂閱者
+	mu          sync.Mutex
 }
 
 // NewDealerServer 創建新的荷官端 WebSocket 服務器
@@ -38,6 +41,7 @@ func NewDealerServer(
 		logger:      logger.With(zap.String("component", "dealer_websocket")),
 		engine:      engine,
 		gameManager: gameManager,
+		topics:      make(map[string]map[string]*websocket.Client), // 初始化主題映射
 	}
 
 	// 註冊訊息處理函數
@@ -62,6 +66,9 @@ func NewDealerServer(
 				zap.String("clientID", client.ID))
 		}
 	})
+
+	// 啟動定期發送 game_events 消息
+	// go server.sendPeriodicGameEvents()
 
 	return server
 }
@@ -214,7 +221,254 @@ func (s *DealerServer) registerHandlers() {
 			},
 		})
 	})
+
+	// 處理客戶端斷開連接
+	s.engine.RegisterHandler("__disconnect", func(client *websocket.Client, message websocket.Message) error {
+		// 從所有訂閱主題中移除客戶端
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		for topic, clients := range s.topics {
+			delete(clients, client.ID)
+			// 如果主題沒有訂閱者，則刪除該主題
+			if len(clients) == 0 {
+				delete(s.topics, topic)
+			}
+		}
+
+		s.logger.Info("客戶端斷開連接，已從所有訂閱主題中移除",
+			zap.String("clientID", client.ID))
+		return nil
+	})
+
+	// 處理訂閱主題請求
+	s.engine.RegisterHandler("SUBSCRIBE", func(client *websocket.Client, message websocket.Message) error {
+		// 從訊息中獲取訂閱主題
+		topicData, ok := message.Payload["data"].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("missing or invalid data in SUBSCRIBE message")
+		}
+
+		topic, ok := topicData["topic"].(string)
+		if !ok || topic == "" {
+			return client.SendJSON(websocket.Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "SUBSCRIBED",
+					"message": "訂閱主題不能為空",
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+
+		// 添加客戶端到主題訂閱者列表
+		s.mu.Lock()
+		if _, exists := s.topics[topic]; !exists {
+			s.topics[topic] = make(map[string]*websocket.Client)
+		}
+		s.topics[topic][client.ID] = client
+		s.mu.Unlock()
+
+		s.logger.Info("客戶端訂閱主題",
+			zap.String("clientID", client.ID),
+			zap.String("topic", topic))
+
+		// 發送訂閱成功回應
+		return client.SendJSON(websocket.Response{
+			Type: "response",
+			Payload: map[string]interface{}{
+				"success": true,
+				"type":    "SUBSCRIBED",
+				"topic":   topic,
+				"message": "訂閱成功",
+				"time":    time.Now().Format(time.RFC3339),
+			},
+		})
+	})
+
+	// 處理取消訂閱主題請求
+	s.engine.RegisterHandler("UNSUBSCRIBE", func(client *websocket.Client, message websocket.Message) error {
+		// 從訊息中獲取要取消訂閱的主題
+		topicData, ok := message.Payload["data"].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("missing or invalid data in UNSUBSCRIBE message")
+		}
+
+		topic, ok := topicData["topic"].(string)
+		if !ok || topic == "" {
+			return client.SendJSON(websocket.Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "UNSUBSCRIBED",
+					"message": "取消訂閱主題不能為空",
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+
+		// 檢查客戶端是否訂閱了該主題
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		clients, topicExists := s.topics[topic]
+		if !topicExists || clients[client.ID] == nil {
+			return client.SendJSON(websocket.Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "UNSUBSCRIBED",
+					"message": "未訂閱該主題",
+					"topic":   topic,
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+
+		// 從主題訂閱者列表中移除客戶端
+		delete(clients, client.ID)
+		if len(clients) == 0 {
+			delete(s.topics, topic)
+		}
+
+		s.logger.Info("客戶端取消訂閱主題",
+			zap.String("clientID", client.ID),
+			zap.String("topic", topic))
+
+		// 發送取消訂閱成功回應
+		return client.SendJSON(websocket.Response{
+			Type: "response",
+			Payload: map[string]interface{}{
+				"success": true,
+				"type":    "UNSUBSCRIBED",
+				"topic":   topic,
+				"message": "取消訂閱成功",
+				"time":    time.Now().Format(time.RFC3339),
+			},
+		})
+	})
+
+	// 處理發布訊息請求
+	s.engine.RegisterHandler("PUBLISH", func(client *websocket.Client, message websocket.Message) error {
+		// 從訊息中獲取要發布的主題和數據
+		publishData, ok := message.Payload["data"].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("missing or invalid data in PUBLISH message")
+		}
+
+		topic, ok := publishData["topic"].(string)
+		if !ok || topic == "" {
+			return client.SendJSON(websocket.Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "PUBLISHED",
+					"message": "發布主題不能為空",
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+
+		data, ok := publishData["data"]
+		if !ok {
+			data = "" // 如果沒有提供數據，使用空字串
+		}
+
+		// 向主題發布訊息
+		s.publishToTopic(topic, data)
+
+		s.logger.Info("客戶端發布訊息至主題",
+			zap.String("clientID", client.ID),
+			zap.String("topic", topic))
+
+		// 發送發布成功回應
+		return client.SendJSON(websocket.Response{
+			Type: "response",
+			Payload: map[string]interface{}{
+				"success": true,
+				"type":    "PUBLISHED",
+				"topic":   topic,
+				"message": "發布成功",
+				"time":    time.Now().Format(time.RFC3339),
+			},
+		})
+	})
 }
+
+// 向主題發布訊息
+func (s *DealerServer) publishToTopic(topic string, data interface{}) {
+	// 建立要發送的訊息
+	message := websocket.Response{
+		Type: "MESSAGE",
+		Payload: map[string]interface{}{
+			"topic":     topic,
+			"data":      data,
+			"timestamp": time.Now().Format(time.RFC3339),
+		},
+	}
+
+	// 向所有訂閱該主題的客戶端發送訊息
+	s.mu.Lock()
+	clients, ok := s.topics[topic]
+	s.mu.Unlock()
+
+	if ok && len(clients) > 0 {
+		for _, client := range clients {
+			err := client.SendJSON(message)
+			if err != nil {
+				s.logger.Error("向客戶端發送主題訊息失敗",
+					zap.String("clientID", client.ID),
+					zap.String("topic", topic),
+					zap.Error(err))
+			}
+		}
+		s.logger.Info("已向主題訂閱者發送訊息",
+			zap.String("topic", topic),
+			zap.Int("subscribers", len(clients)))
+	} else {
+		s.logger.Info("主題沒有訂閱者，訊息未發送",
+			zap.String("topic", topic))
+	}
+}
+
+// 每5秒向 game_events 主題發送一條訊息
+// func (s *DealerServer) sendPeriodicGameEvents() {
+// 	ticker := time.NewTicker(5 * time.Second)
+// 	topic := "game_events"
+
+// 	for {
+// 		select {
+// 		case <-ticker.C:
+// 			// 獲取當前遊戲數據
+// 			game := s.gameManager.GetCurrentGame()
+// 			currentTime := time.Now()
+// 			timeStr := currentTime.Format(time.RFC3339)
+
+// 			// 構建遊戲事件訊息
+// 			var eventData map[string]interface{}
+
+// 			if game != nil {
+// 				eventData = map[string]interface{}{
+// 					"message":       fmt.Sprintf("遊戲事件訊息 - %s", timeStr),
+// 					"timestamp":     timeStr,
+// 					"game_id":       game.GameID,
+// 					"current_stage": string(game.CurrentStage),
+// 					"start_time":    game.StartTime.Format(time.RFC3339),
+// 				}
+// 			} else {
+// 				eventData = map[string]interface{}{
+// 					"message":   fmt.Sprintf("尚無活動遊戲 - %s", timeStr),
+// 					"timestamp": timeStr,
+// 					"status":    "no_active_game",
+// 				}
+// 			}
+
+// 			s.logger.Info("定時向 game_events 主題發送訊息")
+// 			s.publishToTopic(topic, eventData)
+// 		}
+// 	}
+// }
 
 // RegisterExternalHandler 註冊外部處理函數
 func (s *DealerServer) RegisterExternalHandler(messageType string, handler websocket.MessageHandler) {
@@ -293,4 +547,20 @@ func (s *DealerServer) BroadcastMessage(message interface{}) error {
 		Type:    "event",
 		Payload: message,
 	})
+}
+
+// PublishToTopic 對外暴露向主題發布訊息的方法
+func (s *DealerServer) PublishToTopic(topic string, data interface{}) {
+	s.publishToTopic(topic, data)
+}
+
+// GetTopicSubscribers 獲取特定主題的訂閱者數量
+func (s *DealerServer) GetTopicSubscribers(topic string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if clients, ok := s.topics[topic]; ok {
+		return len(clients)
+	}
+	return 0
 }

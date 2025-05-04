@@ -255,10 +255,7 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 // createDefaultConfig, 創建默認配置, 但不從環境變量讀取 Redis 配置
 func createDefaultConfig() *AppConfig {
 	// 定義 Nacos 相關設置
-	nacosEnabled := getEnvAsBool("ENABLE_NACOS", false)
-
-	// 不再從環境變量讀取 Redis 配置，將由 Nacos 提供
-	log.Printf("初始設定時不讀取環境變量的 Redis 配置，將從 Nacos 獲取")
+	nacosEnabled := getEnvAsBool("ENABLE_NACOS", true)
 
 	return &AppConfig{
 		AppName: getEnv("APP_NAME", "g38_lottery_service"),

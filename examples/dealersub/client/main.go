@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,8 +36,9 @@ type ServerResponse struct {
 	Type      string                 `json:"type"`
 	Success   bool                   `json:"success"`
 	Message   string                 `json:"message"`
-	Data      map[string]interface{} `json:"data"`
-	Timestamp int64                  `json:"timestamp"`
+	Data      map[string]interface{} `json:"data,omitempty"`
+	Payload   map[string]interface{} `json:"payload,omitempty"` // 部分消息使用 payload 而非 data
+	Timestamp int64                  `json:"timestamp,omitempty"`
 }
 
 // 訂閱客戶端
@@ -106,37 +108,98 @@ func (c *SubscribeClient) readPump() {
 
 		// 處理訂閱狀態
 		if response.Type == "SUBSCRIBED" && response.Success {
-			if topic, ok := response.Data["topic"].(string); ok {
+			// 從 data 或 payload 中獲取 topic
+			topic := getTopicFromResponse(response)
+			if topic != "" {
 				c.subscribed[topic] = true
 				log.Printf("已成功訂閱主題: %s", topic)
 			}
 		} else if response.Type == "UNSUBSCRIBED" && response.Success {
-			if topic, ok := response.Data["topic"].(string); ok {
+			// 從 data 或 payload 中獲取 topic
+			topic := getTopicFromResponse(response)
+			if topic != "" {
 				delete(c.subscribed, topic)
 				log.Printf("已成功取消訂閱主題: %s", topic)
 			}
-		} else if response.Type == "MESSAGE" {
+		} else if response.Type == "MESSAGE" || response.Type == "message" {
 			// 顯示收到的訊息資料
-			if response.Data != nil {
-				log.Printf("  訊息資料:")
-				if topic, ok := response.Data["topic"].(string); ok {
-					log.Printf("    主題: %s", topic)
-				}
-				if data, ok := response.Data["data"]; ok {
-					log.Printf("    內容: %v", data)
-				}
-			}
+			showMessageDetails(response)
 		}
 
 		// 顯示詳細資料
-		if response.Data != nil && response.Type != "MESSAGE" {
-			log.Printf("  詳細資料:")
-			for key, value := range response.Data {
+		showResponseDetails(response)
+
+		// 顯示時間戳
+		if response.Timestamp > 0 {
+			log.Printf("  時間戳: %v", time.Unix(response.Timestamp, 0).Format(time.RFC3339))
+		}
+	}
+}
+
+// 從回應中獲取主題
+func getTopicFromResponse(response ServerResponse) string {
+	// 嘗試從 data 獲取
+	if response.Data != nil {
+		if topic, ok := response.Data["topic"].(string); ok {
+			return topic
+		}
+	}
+
+	// 嘗試從 payload 獲取
+	if response.Payload != nil {
+		if topic, ok := response.Payload["topic"].(string); ok {
+			return topic
+		}
+	}
+
+	return ""
+}
+
+// 顯示訊息詳細資料
+func showMessageDetails(response ServerResponse) {
+	// 處理 data 欄位
+	if response.Data != nil {
+		log.Printf("  訊息資料(data):")
+		if topic, ok := response.Data["topic"].(string); ok {
+			log.Printf("    主題: %s", topic)
+		}
+		if data, ok := response.Data["data"]; ok {
+			log.Printf("    內容: %v", data)
+		}
+	}
+
+	// 處理 payload 欄位
+	if response.Payload != nil {
+		log.Printf("  訊息資料(payload):")
+		if topic, ok := response.Payload["topic"].(string); ok {
+			log.Printf("    主題: %s", topic)
+		}
+		if data, ok := response.Payload["data"]; ok {
+			log.Printf("    內容: %v", data)
+		}
+	}
+}
+
+// 顯示回應詳細資料
+func showResponseDetails(response ServerResponse) {
+	// 顯示 data 欄位的詳細資料
+	if response.Data != nil && response.Type != "MESSAGE" && response.Type != "message" {
+		log.Printf("  詳細資料(data):")
+		for key, value := range response.Data {
+			if key != "data" { // 避免重複顯示 data 中的 data
 				log.Printf("    %s: %v", key, value)
 			}
 		}
+	}
 
-		log.Printf("  時間戳: %v", time.Unix(response.Timestamp, 0).Format(time.RFC3339))
+	// 顯示 payload 欄位的詳細資料
+	if response.Payload != nil && response.Type != "MESSAGE" && response.Type != "message" {
+		log.Printf("  詳細資料(payload):")
+		for key, value := range response.Payload {
+			if key != "data" { // 避免重複顯示 payload 中的 data
+				log.Printf("    %s: %v", key, value)
+			}
+		}
 	}
 }
 
@@ -232,6 +295,7 @@ func main() {
 		mode    = "subscriber"
 		topic   = "game_events"
 		message = ""
+		port    = 9000
 	)
 
 	// 處理命令行參數
@@ -247,6 +311,12 @@ func main() {
 			message = strings.TrimPrefix(arg, "-message=")
 		} else if strings.HasPrefix(arg, "-addr=") {
 			addr = strings.TrimPrefix(arg, "-addr=")
+		} else if strings.HasPrefix(arg, "-port=") {
+			portStr := strings.TrimPrefix(arg, "-port=")
+			if p, err := strconv.Atoi(portStr); err == nil {
+				port = p
+				addr = fmt.Sprintf("localhost:%d", port)
+			}
 		} else if arg == "-mode" && i+1 < len(os.Args) {
 			// 支持 -參數 值 格式
 			mode = os.Args[i+1]
@@ -259,6 +329,12 @@ func main() {
 			i++
 		} else if arg == "-addr" && i+1 < len(os.Args) {
 			addr = os.Args[i+1]
+			i++
+		} else if arg == "-port" && i+1 < len(os.Args) {
+			if p, err := strconv.Atoi(os.Args[i+1]); err == nil {
+				port = p
+				addr = fmt.Sprintf("localhost:%d", port)
+			}
 			i++
 		}
 	}
