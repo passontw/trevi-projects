@@ -3,6 +3,7 @@ package gameflow
 import (
 	"context"
 
+	mq "g38_lottery_service/internal/mq"
 	redis "g38_lottery_service/pkg/redisManager"
 
 	"go.uber.org/fx"
@@ -22,9 +23,9 @@ func ProvideGameRepository(redisRepo *RedisRepository) GameRepository {
 }
 
 // ProvideGameManager 提供遊戲流程管理器
-func ProvideGameManager(repo GameRepository, logger *zap.Logger) (*GameManager, error) {
+func ProvideGameManager(repo GameRepository, logger *zap.Logger, mqProducer *mq.MessageProducer) (*GameManager, error) {
 	// 創建管理器
-	manager := NewGameManager(repo, logger)
+	manager := NewGameManager(repo, logger, mqProducer)
 	return manager, nil
 }
 

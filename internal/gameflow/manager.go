@@ -3,6 +3,7 @@ package gameflow
 import (
 	"context"
 	"fmt"
+	"g38_lottery_service/internal/mq"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ type GameManager struct {
 	stageMutex      sync.RWMutex           // 階段讀寫鎖
 	stageTimers     map[string]*time.Timer // 階段計時器
 	stageTimerMutex sync.Mutex             // 計時器鎖
+	mqProducer      *mq.MessageProducer    // RocketMQ 生產者
 
 	// 事件處理回調
 	onStageChanged          func(gameID string, oldStage, newStage GameStage) // 階段變更回調
@@ -31,12 +33,13 @@ type GameManager struct {
 }
 
 // NewGameManager 創建新的遊戲流程管理器
-func NewGameManager(repo GameRepository, logger *zap.Logger) *GameManager {
+func NewGameManager(repo GameRepository, logger *zap.Logger, mqProducer *mq.MessageProducer) *GameManager {
 	return &GameManager{
 		repo:        repo,
 		logger:      logger.With(zap.String("component", "game_manager")),
 		sidePicker:  NewSidePicker(),
 		stageTimers: make(map[string]*time.Timer),
+		mqProducer:  mqProducer,
 	}
 }
 
@@ -251,6 +254,11 @@ func (m *GameManager) AdvanceStage(ctx context.Context, force bool) error {
 	// 觸發事件
 	if m.onStageChanged != nil {
 		m.onStageChanged(m.currentGame.GameID, oldStage, nextStage)
+	}
+
+	// 自動推送快照
+	if m.mqProducer != nil {
+		go m.pushGameSnapshot(ctx)
 	}
 
 	// 如果是遊戲結束階段，則執行遊戲結束操作
@@ -813,4 +821,21 @@ func (m *GameManager) GetGameStatistics(ctx context.Context) (map[string]interfa
 		"completion_rate": float64(totalGames-cancelledGames) / float64(totalGames) * 100,
 		"current_stage":   currentStage,
 	}, nil
+}
+
+// pushGameSnapshot 推送遊戲快照到 RocketMQ
+func (m *GameManager) pushGameSnapshot(ctx context.Context) {
+	if m.mqProducer == nil || m.currentGame == nil {
+		return
+	}
+	snapshot := BuildGameStatusResponse(m.currentGame)
+	mapData, err := mq.StructToMap(snapshot)
+	if err != nil {
+		m.logger.Error("遊戲快照序列化失敗", zap.Error(err))
+		return
+	}
+	err = m.mqProducer.SendGameSnapshot(m.currentGame.GameID, mapData)
+	if err != nil {
+		m.logger.Error("推送遊戲快照到 RocketMQ 失敗", zap.Error(err))
+	}
 }

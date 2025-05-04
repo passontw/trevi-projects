@@ -24,7 +24,7 @@ func main() {
 	}
 
 	// 設置要訂閱的 Topic
-	topic := "test-topic"
+	topic := "game_events"
 	if len(os.Args) > 2 {
 		topic = os.Args[2]
 	}

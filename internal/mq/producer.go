@@ -268,6 +268,27 @@ func (p *MessageProducer) sendMessage(topic string, payload map[string]interface
 	return nil
 }
 
+// StructToMap 將 struct 轉為 map[string]interface{}
+func StructToMap(obj interface{}) (map[string]interface{}, error) {
+	var m map[string]interface{}
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal(data, &m)
+	return m, err
+}
+
+// SendGameSnapshot 發送遊戲狀態快照到 game_events topic
+func (p *MessageProducer) SendGameSnapshot(gameID string, snapshot map[string]interface{}) error {
+	return p.sendMessage("game_events", map[string]interface{}{
+		"game_id":      gameID,
+		"message_type": "stage_change",
+		"snapshot":     snapshot,
+		"timestamp":    time.Now().Unix(),
+	})
+}
+
 // Module 提供 FX 模塊
 var Module = fx.Options(
 	// 註冊 MessageProducer
