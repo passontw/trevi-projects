@@ -3,6 +3,7 @@ package websocket
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -41,7 +42,8 @@ type Engine struct {
 	Logger        *zap.Logger
 	mu            sync.RWMutex
 	handlers      map[string]MessageHandler
-	onConnect     func(*Client) // 客戶端連接時的回調函數
+	onConnect     func(*Client)                 // 客戶端連接時的回調函數
+	topics        map[string]map[string]*Client // topic -> clientID -> *Client
 }
 
 // Message 結構用於解析接收到的 JSON 訊息
@@ -69,6 +71,7 @@ func NewEngine(logger *zap.Logger) *Engine {
 		Logger:        logger,
 		handlers:      make(map[string]MessageHandler),
 		onConnect:     nil, // 默認沒有連接回調
+		topics:        make(map[string]map[string]*Client),
 	}
 }
 
@@ -159,6 +162,7 @@ func (e *Engine) RegisterHandler(messageType string, handler MessageHandler) {
 func (e *Engine) GetHandler(messageType string) (MessageHandler, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	log.Printf("e.handlers: %+v", e.handlers)
 	handler, ok := e.handlers[messageType]
 	return handler, ok
 }
@@ -341,4 +345,57 @@ func (e *Engine) SetOnConnectHandler(handler func(*Client)) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.onConnect = handler
+}
+
+// RegisterDefaultHandlers 註冊 SUBSCRIBE handler
+func (e *Engine) RegisterDefaultHandlers() {
+	e.RegisterHandler("SUBSCRIBE", func(client *Client, msg Message) error {
+		topic := ""
+		// 僅接受 payload.data.topic
+		data, ok := msg.Payload["data"].(map[string]interface{})
+		if !ok {
+			return client.SendJSON(Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "SUBSCRIBED",
+					"message": "missing or invalid data in SUBSCRIBE message",
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+		t, ok := data["topic"].(string)
+		if !ok || t == "" {
+			return client.SendJSON(Response{
+				Type: "response",
+				Payload: map[string]interface{}{
+					"success": false,
+					"type":    "SUBSCRIBED",
+					"message": "topic is required in SUBSCRIBE message",
+					"time":    time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+		topic = t
+
+		// 加入訂閱
+		e.mu.Lock()
+		if e.topics[topic] == nil {
+			e.topics[topic] = make(map[string]*Client)
+		}
+		e.topics[topic][client.ID] = client
+		e.mu.Unlock()
+
+		// 回應
+		return client.SendJSON(Response{
+			Type: "response",
+			Payload: map[string]interface{}{
+				"success": true,
+				"type":    "SUBSCRIBED",
+				"topic":   topic,
+				"message": "訂閱成功",
+				"time":    time.Now().Format(time.RFC3339),
+			},
+		})
+	})
 }

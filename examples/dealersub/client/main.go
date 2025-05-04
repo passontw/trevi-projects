@@ -16,8 +16,8 @@ import (
 
 // 客戶端請求結構
 type ClientRequest struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data,omitempty"`
+	Type    string      `json:"type"`
+	Payload interface{} `json:"payload,omitempty"`
 }
 
 // 客戶端訂閱請求資料
@@ -250,8 +250,10 @@ func (c *SubscribeClient) writePump() {
 func (c *SubscribeClient) Subscribe(topic string) {
 	request := ClientRequest{
 		Type: "SUBSCRIBE",
-		Data: ClientSubscribeData{
-			Topic: topic,
+		Payload: map[string]interface{}{
+			"data": map[string]interface{}{
+				"topic": topic,
+			},
 		},
 	}
 	c.send <- request
@@ -261,8 +263,10 @@ func (c *SubscribeClient) Subscribe(topic string) {
 func (c *SubscribeClient) Unsubscribe(topic string) {
 	request := ClientRequest{
 		Type: "UNSUBSCRIBE",
-		Data: ClientSubscribeData{
-			Topic: topic,
+		Payload: map[string]interface{}{
+			"data": map[string]interface{}{
+				"topic": topic,
+			},
 		},
 	}
 	c.send <- request
@@ -272,9 +276,11 @@ func (c *SubscribeClient) Unsubscribe(topic string) {
 func (c *SubscribeClient) Publish(topic string, data interface{}) {
 	request := ClientRequest{
 		Type: "PUBLISH",
-		Data: ClientPublishData{
-			Topic: topic,
-			Data:  data,
+		Payload: map[string]interface{}{
+			"data": map[string]interface{}{
+				"topic": topic,
+				"data":  data,
+			},
 		},
 	}
 	c.send <- request
