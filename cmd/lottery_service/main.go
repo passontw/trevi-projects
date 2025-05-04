@@ -54,6 +54,21 @@ func main() {
 				return logger
 			},
 		),
+
+		// 新增：設置 GameManager 的 onStageChanged 事件，推送 game_events
+		fx.Invoke(func(gm *gameflow.GameManager, ds *dealerWebsocket.DealerServer) {
+			gm.SetEventHandlers(
+				func(gameID string, oldStage, newStage gameflow.GameStage) {
+					game := gm.GetCurrentGame()
+					if game == nil {
+						return
+					}
+					status := gameflow.BuildGameStatusResponse(game)
+					ds.PublishToTopic("game_events", status)
+				},
+				nil, nil, nil, nil, nil,
+			)
+		}),
 	)
 
 	// 啟動應用
