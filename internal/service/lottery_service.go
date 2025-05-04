@@ -2,6 +2,7 @@ package service
 
 import (
 	"g38_lottery_service/internal/dealerWebsocket"
+	"g38_lottery_service/internal/mq"
 	"g38_lottery_service/internal/websocket"
 
 	"go.uber.org/fx"
@@ -10,18 +11,21 @@ import (
 
 // LotteryService 代表開獎服務
 type LotteryService struct {
-	logger       *zap.Logger
-	dealerServer *dealerWebsocket.DealerServer
+	logger          *zap.Logger
+	dealerServer    *dealerWebsocket.DealerServer
+	messageProducer *mq.MessageProducer // 添加 RocketMQ 生產者
 }
 
 // NewLotteryService 創建新的開獎服務
 func NewLotteryService(
 	logger *zap.Logger,
 	dealerServer *dealerWebsocket.DealerServer,
+	messageProducer *mq.MessageProducer, // 注入 RocketMQ 生產者
 ) *LotteryService {
 	return &LotteryService{
-		logger:       logger.With(zap.String("component", "lottery_service")),
-		dealerServer: dealerServer,
+		logger:          logger.With(zap.String("component", "lottery_service")),
+		dealerServer:    dealerServer,
+		messageProducer: messageProducer,
 	}
 }
 
@@ -55,7 +59,16 @@ func (s *LotteryService) registerDealerHandlers() {
 			zap.String("gameID", gameID),
 			zap.Any("result", result))
 
-		// 這裡不再轉發到玩家端，而是可以進行其他處理，如保存到數據庫等
+		// 通過 RocketMQ 將開獎結果發送到遊戲端
+		err := s.messageProducer.SendLotteryResult(gameID, result)
+		if err != nil {
+			s.logger.Error("Failed to send lottery result to game service",
+				zap.String("gameID", gameID),
+				zap.Error(err))
+		} else {
+			s.logger.Info("Lottery result sent to game service successfully",
+				zap.String("gameID", gameID))
+		}
 
 		return nil
 	}
@@ -64,6 +77,15 @@ func (s *LotteryService) registerDealerHandlers() {
 	s.dealerServer.RegisterExternalHandler("draw_lottery_external", dealerLotteryHandler)
 
 	s.logger.Info("Registered dealer lottery result handler")
+}
+
+// SendLotteryStatus 發送開獎狀態更新（提供給其他服務調用）
+func (s *LotteryService) SendLotteryStatus(gameID string, status string, details interface{}) error {
+	s.logger.Info("Sending lottery status update",
+		zap.String("gameID", gameID),
+		zap.String("status", status))
+
+	return s.messageProducer.SendLotteryStatus(gameID, status, details)
 }
 
 // Module 提供 FX 模塊

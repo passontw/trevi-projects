@@ -546,6 +546,72 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 				}
 			}
 		},
+		// RocketMQ 配置映射
+		"ROCKETMQ_ENABLED": func(v interface{}) {
+			if b, ok := v.(bool); ok {
+				// 只保存為記錄，實際不影響配置
+				log.Printf("ROCKETMQ_ENABLED 設定: %v", b)
+			} else if s, ok := v.(string); ok {
+				log.Printf("ROCKETMQ_ENABLED 設定: %v", strings.ToLower(s) == "true")
+			}
+		},
+		"ROCKETMQ_NAME_SERVERS": func(v interface{}) {
+			// 處理字符串格式的 NameServers
+			if s, ok := v.(string); ok && s != "" {
+				servers := strings.Split(s, ",")
+				for i, server := range servers {
+					servers[i] = strings.TrimSpace(server)
+				}
+				config.RocketMQ.NameServers = servers
+				log.Printf("從字符串設置 RocketMQ NameServers: %v", servers)
+				return
+			}
+
+			// 處理數組格式的 NameServers
+			if arr, ok := v.([]interface{}); ok {
+				servers := make([]string, 0, len(arr))
+				for _, item := range arr {
+					if s, ok := item.(string); ok {
+						servers = append(servers, s)
+					}
+				}
+				config.RocketMQ.NameServers = servers
+				log.Printf("從數組設置 RocketMQ NameServers: %v", servers)
+				return
+			}
+
+			// 嘗試處理可能的 JSON 字符串數組
+			if s, ok := v.(string); ok && strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+				var servers []string
+				if err := json.Unmarshal([]byte(s), &servers); err == nil {
+					config.RocketMQ.NameServers = servers
+					log.Printf("從 JSON 字符串數組設置 RocketMQ NameServers: %v", servers)
+					return
+				}
+			}
+
+			log.Printf("無法解析 ROCKETMQ_NAME_SERVERS: %v (類型: %T)", v, v)
+		},
+		"ROCKETMQ_PRODUCER_GROUP": func(v interface{}) {
+			if s, ok := v.(string); ok {
+				config.RocketMQ.ProducerGroup = s
+			}
+		},
+		"ROCKETMQ_CONSUMER_GROUP": func(v interface{}) {
+			if s, ok := v.(string); ok {
+				config.RocketMQ.ConsumerGroup = s
+			}
+		},
+		"ROCKETMQ_ACCESS_KEY": func(v interface{}) {
+			if s, ok := v.(string); ok {
+				config.RocketMQ.AccessKey = s
+			}
+		},
+		"ROCKETMQ_SECRET_KEY": func(v interface{}) {
+			if s, ok := v.(string); ok {
+				config.RocketMQ.SecretKey = s
+			}
+		},
 	}
 
 	// 應用映射

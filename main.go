@@ -12,6 +12,7 @@ import (
 	"g38_lottery_service/internal/dealerWebsocket"
 	"g38_lottery_service/internal/gameflow"
 	"g38_lottery_service/internal/grpc"
+	"g38_lottery_service/internal/mq"
 	"g38_lottery_service/internal/service"
 	"g38_lottery_service/pkg/nacosManager"
 	redis "g38_lottery_service/pkg/redisManager"
@@ -37,6 +38,8 @@ func main() {
 		config.Module,
 		// 註冊 Redis 模塊
 		redis.Module,
+		// 註冊 RocketMQ 生產者模塊
+		mq.Module,
 		// 註冊荷官端 WebSocket 模塊
 		dealerWebsocket.Module,
 		// 註冊遊戲流程管理模塊
