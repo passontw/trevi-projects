@@ -22,6 +22,7 @@ import (
 )
 
 // 主函數：使用 fx 框架
+// 測試 air 熱重載功能
 func main() {
 	// 建立 logger
 	logger, err := zap.NewProduction()

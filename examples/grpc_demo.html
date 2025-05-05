@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>gRPC 開獎服務測試</title>
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', 'Arial', sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .panel {
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #333;
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        .method-select {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .method-btn {
+            padding: 8px 16px;
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .method-btn.active {
+            background-color: #4CAF50;
+            color: white;
+            border-color: #4CAF50;
+        }
+        button {
+            padding: 8px 16px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            resize: vertical;
+        }
+        #response {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .json-key {
+            color: #881391;
+        }
+        .json-string {
+            color: #C41A16;
+        }
+        .json-number {
+            color: #1C00CF;
+        }
+        .json-boolean {
+            color: #0000FF;
+        }
+        .json-null {
+            color: #808080;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        #streaming-response {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        .sent {
+            color: #2196F3;
+        }
+        .received {
+            color: #4CAF50;
+        }
+        .error {
+            color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <h1>gRPC 開獎服務測試頁面</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <h2>gRPC 服務配置</h2>
+            <div class="controls">
+                <input type="text" id="server-url" value="http://localhost:9100" style="width: 250px;">
+                <button id="load-service">載入服務</button>
+            </div>
+            <div id="service-info"></div>
+        </div>
+
+        <div class="panel">
+            <h2>gRPC 請求測試</h2>
+            <div class="method-select" id="method-buttons">
+                <!-- 動態生成方法按鈕 -->
+            </div>
+            
+            <div class="grid">
+                <div>
+                    <h3>請求內容</h3>
+                    <textarea id="request-json" placeholder='{"example": "請求內容將根據選擇的方法自動填充"}'></textarea>
+                    <button id="send-request">發送請求</button>
+                    <button id="subscribe-events" style="display: none;">訂閱事件流</button>
+                    <button id="stop-subscription" style="display: none;">停止訂閱</button>
+                </div>
+                
+                <div>
+                    <h3>回應結果</h3>
+                    <div id="response"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel" id="streaming-panel" style="display: none;">
+            <h2>事件流</h2>
+            <div id="streaming-response"></div>
+        </div>
+    </div>
+
+    <script>
+        // 服務狀態
+        const state = {
+            currentMethod: null,
+            serviceInfo: null,
+            serverUrl: 'http://localhost:9100',
+            subscription: null,
+            eventSource: null,
+            webSocket: null,
+            pingInterval: null,
+            reconnectAttempts: 0,
+            maxReconnectAttempts: 5
+        };
+
+        // 初始化頁面
+        document.getElementById('server-url').addEventListener('change', function(e) {
+            state.serverUrl = e.target.value;
+        });
+
+        document.getElementById('load-service').addEventListener('click', loadServiceInfo);
+        document.getElementById('send-request').addEventListener('click', sendRequest);
+        document.getElementById('subscribe-events').addEventListener('click', subscribeEvents);
+        document.getElementById('stop-subscription').addEventListener('click', stopSubscription);
+
+        // 格式化 JSON 顯示
+        function syntaxHighlight(json) {
+            if (typeof json !== 'string') {
+                json = JSON.stringify(json, undefined, 2);
+            }
+            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                var cls = 'json-number';
+                if (/^"/.test(match)) {
+                    if (/:$/.test(match)) {
+                        cls = 'json-key';
+                    } else {
+                        cls = 'json-string';
+                    }
+                } else if (/true|false/.test(match)) {
+                    cls = 'json-boolean';
+                } else if (/null/.test(match)) {
+                    cls = 'json-null';
+                }
+                return '<span class="' + cls + '">' + match + '</span>';
+            });
+        }
+
+        // 將日誌添加到指定面板
+        function appendToLog(message, type = 'info') {
+            const logPanel = document.getElementById('streaming-response');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            
+            if (typeof message === 'object') {
+                logEntry.innerHTML = syntaxHighlight(message);
+            } else {
+                logEntry.textContent = message;
+            }
+            
+            logPanel.appendChild(logEntry);
+            logPanel.scrollTop = logPanel.scrollHeight;
+        }
+
+        // 加載服務信息
+        async function loadServiceInfo() {
+            try {
+                // 在實際應用中，應該透過 grpc-web 或自訂 API 來獲取服務信息
+                // 這裡我們直接填入已知的 dealer.proto 的服務信息
+                state.serviceInfo = {
+                    name: "DealerService",
+                    methods: [
+                        {
+                            name: "StartNewRound",
+                            requestType: "StartNewRoundRequest",
+                            requestTemplate: {
+                                "gameId": "test-game-1",
+                                "hasJackpot": true,
+                                "extraBallCount": 1
+                            }
+                        },
+                        {
+                            name: "DrawBall",
+                            requestType: "DrawBallRequest",
+                            requestTemplate: {
+                                "balls": []
+                            }
+                        },
+                        {
+                            name: "DrawExtraBall",
+                            requestType: "DrawExtraBallRequest",
+                            requestTemplate: {
+                                "balls": []
+                            }
+                        },
+                        {
+                            name: "DrawJackpotBall",
+                            requestType: "DrawJackpotBallRequest",
+                            requestTemplate: {
+                                "balls": []
+                            }
+                        },
+                        {
+                            name: "DrawLuckyBall",
+                            requestType: "DrawLuckyBallRequest",
+                            requestTemplate: {
+                                "balls": []
+                            }
+                        },
+                        {
+                            name: "CancelGame",
+                            requestType: "CancelGameRequest",
+                            requestTemplate: {
+                                "reason": "測試取消遊戲"
+                            }
+                        },
+                        {
+                            name: "GetGameStatus",
+                            requestType: "GetGameStatusRequest",
+                            requestTemplate: {}
+                        },
+                        {
+                            name: "SubscribeGameEvents",
+                            requestType: "SubscribeGameEventsRequest",
+                            requestTemplate: {
+                                "eventTypes": [
+                                    "GAME_EVENT_TYPE_STAGE_CHANGED",
+                                    "GAME_EVENT_TYPE_BALL_DRAWN",
+                                    "GAME_EVENT_TYPE_GAME_CREATED"
+                                ]
+                            },
+                            isStreaming: true
+                        }
+                    ]
+                };
+                
+                // 更新服務信息顯示
+                document.getElementById('service-info').innerHTML = `
+                    <p>服務名稱: ${state.serviceInfo.name}</p>
+                    <p>可用方法: ${state.serviceInfo.methods.length} 個</p>
+                `;
+                
+                // 創建方法按鈕
+                createMethodButtons();
+                
+                // 預設選中第一個方法
+                if (state.serviceInfo.methods.length > 0) {
+                    selectMethod(state.serviceInfo.methods[0].name);
+                }
+                
+            } catch (error) {
+                console.error('加載服務信息失敗:', error);
+                document.getElementById('response').innerHTML = `
+                    <div class="error">加載服務信息失敗: ${error.message}</div>
+                `;
+            }
+        }
+
+        // 創建方法選擇按鈕
+        function createMethodButtons() {
+            const container = document.getElementById('method-buttons');
+            container.innerHTML = '';
+            
+            state.serviceInfo.methods.forEach(method => {
+                const btn = document.createElement('button');
+                btn.className = 'method-btn';
+                btn.textContent = method.name;
+                btn.dataset.method = method.name;
+                
+                btn.addEventListener('click', () => {
+                    selectMethod(method.name);
+                });
+                
+                container.appendChild(btn);
+            });
+        }
+
+        // 選擇方法
+        function selectMethod(methodName) {
+            // 更新按鈕樣式
+            document.querySelectorAll('.method-btn').forEach(btn => {
+                if (btn.dataset.method === methodName) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+            
+            // 找到對應的方法配置
+            const method = state.serviceInfo.methods.find(m => m.name === methodName);
+            if (!method) return;
+            
+            state.currentMethod = method;
+            
+            // 更新請求模板
+            document.getElementById('request-json').value = JSON.stringify(method.requestTemplate, null, 2);
+            
+            // 控制訂閱按鈕顯示
+            const isStreaming = method.isStreaming === true;
+            document.getElementById('send-request').style.display = isStreaming ? 'none' : 'inline-block';
+            document.getElementById('subscribe-events').style.display = isStreaming ? 'inline-block' : 'none';
+            document.getElementById('stop-subscription').style.display = 'none';
+            
+            // 流式響應面板顯示控制
+            document.getElementById('streaming-panel').style.display = isStreaming ? 'block' : 'none';
+            if (isStreaming) {
+                document.getElementById('streaming-response').innerHTML = '';
+            }
+        }
+
+        // 發送 gRPC 請求
+        async function sendRequest() {
+            if (!state.currentMethod || state.currentMethod.isStreaming) {
+                return;
+            }
+            
+            const responsePanel = document.getElementById('response');
+            responsePanel.innerHTML = '<div>發送請求中...</div>';
+            
+            try {
+                const requestJson = document.getElementById('request-json').value;
+                let requestData;
+                
+                try {
+                    requestData = JSON.parse(requestJson);
+                } catch (e) {
+                    responsePanel.innerHTML = `<div class="error">請求格式錯誤: ${e.message}</div>`;
+                    return;
+                }
+                
+                // 實際應用中，這裡應該使用 grpc-web 或其他 gRPC 客戶端庫發送請求
+                // 由於瀏覽器不能直接與 gRPC 服務通信，我們需要通過代理或使用 grpc-web
+                
+                // 模擬 gRPC 請求，用於演示目的
+                // 這裡可以使用 fetch 向自建的代理發送請求
+                
+                // 模擬的 URL 格式：/服務名/方法名
+                const url = `${state.serverUrl}/${state.serviceInfo.name}/${state.currentMethod.name}`;
+                
+                responsePanel.innerHTML = `
+                    <div>請求 URL: ${url}</div>
+                    <div>請求內容:</div>
+                    <div>${syntaxHighlight(requestData)}</div>
+                    <div>處理中...</div>
+                `;
+                
+                // 在實際應用中，這裡應該是真實的 gRPC 請求
+                // 模擬成功的響應
+                setTimeout(() => {
+                    // 根據不同方法返回不同的模擬數據
+                    let responseData;
+                    
+                    switch(state.currentMethod.name) {
+                        case 'StartNewRound':
+                            responseData = {
+                                "gameId": requestData.gameId || "test-game-1",
+                                "startTime": new Date().toISOString(),
+                                "stage": "GAME_STAGE_NEW_ROUND"
+                            };
+                            break;
+                        case 'DrawBall':
+                            responseData = {
+                                "balls": [
+                                    {
+                                        "number": Math.floor(Math.random() * 75) + 1,
+                                        "type": "BALL_TYPE_REGULAR",
+                                        "isLast": false,
+                                        "timestamp": new Date().toISOString()
+                                    }
+                                ]
+                            };
+                            break;
+                        case 'GetGameStatus':
+                            responseData = {
+                                "gameData": {
+                                    "id": "test-game-1",
+                                    "stage": "GAME_STAGE_DRAWING_START",
+                                    "startTime": new Date(Date.now() - 300000).toISOString(),
+                                    "endTime": null,
+                                    "hasJackpot": true,
+                                    "isCancelled": false,
+                                    "cancelReason": "",
+                                    "drawnBalls": [
+                                        {
+                                            "number": 12,
+                                            "type": "BALL_TYPE_REGULAR",
+                                            "isLast": false,
+                                            "timestamp": new Date(Date.now() - 60000).toISOString()
+                                        },
+                                        {
+                                            "number": 34,
+                                            "type": "BALL_TYPE_REGULAR",
+                                            "isLast": false,
+                                            "timestamp": new Date(Date.now() - 30000).toISOString()
+                                        }
+                                    ],
+                                    "extraBallCount": 1,
+                                    "extraBalls": [],
+                                    "extraBallSide": "EXTRA_BALL_SIDE_UNSPECIFIED",
+                                    "jackpotBalls": [],
+                                    "luckyBalls": []
+                                }
+                            };
+                            break;
+                        default:
+                            responseData = {
+                                "status": "success",
+                                "message": "操作成功"
+                            };
+                    }
+                    
+                    responsePanel.innerHTML = `
+                        <div>請求 URL: ${url}</div>
+                        <div>請求內容:</div>
+                        <div>${syntaxHighlight(requestData)}</div>
+                        <div>回應結果:</div>
+                        <div>${syntaxHighlight(responseData)}</div>
+                    `;
+                }, 500);
+                
+            } catch (error) {
+                console.error('請求失敗:', error);
+                responsePanel.innerHTML = `
+                    <div class="error">請求失敗: ${error.message}</div>
+                `;
+            }
+        }
+
+        // 訂閱事件流
+        function subscribeEvents() {
+            if (!state.currentMethod || !state.currentMethod.isStreaming) {
+                return;
+            }
+            
+            const streamingPanel = document.getElementById('streaming-panel');
+            streamingPanel.style.display = 'block';
+            
+            const logPanel = document.getElementById('streaming-response');
+            logPanel.innerHTML = '';
+            
+            document.getElementById('subscribe-events').style.display = 'none';
+            document.getElementById('stop-subscription').style.display = 'inline-block';
+            
+            try {
+                const requestJson = document.getElementById('request-json').value;
+                let requestData;
+                
+                try {
+                    requestData = JSON.parse(requestJson);
+                } catch (e) {
+                    appendToLog(`請求格式錯誤: ${e.message}`, 'error');
+                    return;
+                }
+                
+                appendToLog('開始訂閱事件流...', 'info');
+                appendToLog(`訂閱的事件類型: ${requestData.eventTypes ? requestData.eventTypes.join(', ') : '全部'}`, 'info');
+                
+                // 建立 WebSocket 連接
+                connectWebSocket(requestData);
+                
+            } catch (error) {
+                console.error('訂閱失敗:', error);
+                appendToLog(`訂閱失敗: ${error.message}`, 'error');
+                document.getElementById('subscribe-events').style.display = 'inline-block';
+                document.getElementById('stop-subscription').style.display = 'none';
+            }
+        }
+
+        // 建立 WebSocket 連接
+        function connectWebSocket(requestData) {
+            // 關閉現有連接
+            if (state.webSocket) {
+                state.webSocket.close();
+                state.webSocket = null;
+            }
+            
+            // 清除心跳計時器
+            if (state.pingInterval) {
+                clearInterval(state.pingInterval);
+                state.pingInterval = null;
+            }
+            
+            try {
+                // 這裡我們使用模擬的 WebSocket，因為實際環境中可能需要特定的 WebSocket 服務
+                // 在真實環境中，您需要使用實際的 gRPC-Web 或專門的代理服務來處理 gRPC 流
+                
+                // 使用 WebSocket 原生協議，這裡將 http: 替換為 ws:
+                const wsUrl = state.serverUrl.replace(/^http:/, 'ws:')
+                    .replace(/^https:/, 'wss:') + '/subscribe';
+                
+                appendToLog(`連接到 WebSocket: ${wsUrl}`, 'info');
+                
+                state.webSocket = new WebSocket(wsUrl);
+                
+                state.webSocket.onopen = (event) => {
+                    appendToLog('WebSocket 連接已建立', 'info');
+                    state.reconnectAttempts = 0;
+                    
+                    // 發送訂閱請求
+                    const subscribeRequest = {
+                        type: 'subscribe',
+                        payload: {
+                            method: 'SubscribeGameEvents',
+                            data: requestData
+                        }
+                    };
+                    
+                    state.webSocket.send(JSON.stringify(subscribeRequest));
+                    appendToLog(subscribeRequest, 'sent');
+                    
+                    // 設置心跳機制，每 30 秒發送一次 ping
+                    state.pingInterval = setInterval(() => {
+                        if (state.webSocket && state.webSocket.readyState === WebSocket.OPEN) {
+                            const pingMessage = { type: 'ping' };
+                            state.webSocket.send(JSON.stringify(pingMessage));
+                            console.log('Ping sent');
+                        }
+                    }, 30000);
+                };
+                
+                state.webSocket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        // 處理 pong 響應
+                        if (data.type === 'pong') {
+                            console.log('Pong received');
+                            return;
+                        }
+                        
+                        // 處理事件數據
+                        appendToLog(data, 'received');
+                    } catch (e) {
+                        appendToLog(`無法解析消息: ${event.data}`, 'error');
+                    }
+                };
+                
+                state.webSocket.onclose = (event) => {
+                    appendToLog(`WebSocket 連接已關閉，代碼: ${event.code}, 原因: ${event.reason}`, 'info');
+                    
+                    // 清除心跳計時器
+                    if (state.pingInterval) {
+                        clearInterval(state.pingInterval);
+                        state.pingInterval = null;
+                    }
+                    
+                    // 嘗試重新連接
+                    if (state.reconnectAttempts < state.maxReconnectAttempts) {
+                        state.reconnectAttempts++;
+                        const delay = Math.min(1000 * state.reconnectAttempts, 10000);
+                        
+                        appendToLog(`嘗試在 ${delay/1000} 秒後重新連接 (${state.reconnectAttempts}/${state.maxReconnectAttempts})`, 'info');
+                        
+                        setTimeout(() => {
+                            connectWebSocket(requestData);
+                        }, delay);
+                    } else {
+                        appendToLog('重連次數已達上限，停止重連', 'error');
+                        document.getElementById('subscribe-events').style.display = 'inline-block';
+                        document.getElementById('stop-subscription').style.display = 'none';
+                    }
+                };
+                
+                state.webSocket.onerror = (error) => {
+                    appendToLog(`WebSocket 錯誤: ${error.message || '未知錯誤'}`, 'error');
+                };
+                
+            } catch (error) {
+                appendToLog(`WebSocket 連接失敗: ${error.message}`, 'error');
+                document.getElementById('subscribe-events').style.display = 'inline-block';
+                document.getElementById('stop-subscription').style.display = 'none';
+            }
+            
+            // 同時使用模擬數據，在 WebSocket 無法連接時仍能展示功能
+            simulateEventStream(requestData);
+        }
+        
+        // 模擬事件流（用於演示）
+        function simulateEventStream(requestData) {
+            // 清除現有訂閱
+            if (state.subscription) {
+                clearInterval(state.subscription);
+                state.subscription = null;
+            }
+            
+            // 模擬事件流
+            let counter = 0;
+            state.subscription = setInterval(() => {
+                counter++;
+                
+                // 模擬不同類型的事件
+                const eventTypes = [
+                    'GAME_EVENT_TYPE_STAGE_CHANGED',
+                    'GAME_EVENT_TYPE_BALL_DRAWN',
+                    'GAME_EVENT_TYPE_GAME_CREATED'
+                ];
+                
+                const randomEventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+                
+                // 檢查是否應該接收此類型的事件
+                if (requestData.eventTypes && requestData.eventTypes.length > 0) {
+                    if (!requestData.eventTypes.includes(randomEventType)) {
+                        return; // 跳過不訂閱的事件類型
+                    }
+                }
+                
+                let eventData;
+                switch (randomEventType) {
+                    case 'GAME_EVENT_TYPE_STAGE_CHANGED':
+                        eventData = {
+                            eventType: randomEventType,
+                            timestamp: new Date().toISOString(),
+                            gameId: "test-game-1",
+                            stageChanged: {
+                                oldStage: "GAME_STAGE_DRAWING_START",
+                                newStage: "GAME_STAGE_DRAWING_CLOSE"
+                            }
+                        };
+                        break;
+                    case 'GAME_EVENT_TYPE_BALL_DRAWN':
+                        eventData = {
+                            eventType: randomEventType,
+                            timestamp: new Date().toISOString(),
+                            gameId: "test-game-1",
+                            ballDrawn: {
+                                ball: {
+                                    number: Math.floor(Math.random() * 75) + 1,
+                                    type: "BALL_TYPE_REGULAR",
+                                    isLast: false,
+                                    timestamp: new Date().toISOString()
+                                }
+                            }
+                        };
+                        break;
+                    case 'GAME_EVENT_TYPE_GAME_CREATED':
+                        eventData = {
+                            eventType: randomEventType,
+                            timestamp: new Date().toISOString(),
+                            gameId: "test-game-1",
+                            gameCreated: {
+                                initialState: {
+                                    id: "test-game-1",
+                                    stage: "GAME_STAGE_NEW_ROUND",
+                                    startTime: new Date().toISOString(),
+                                    hasJackpot: true,
+                                    extraBallCount: 1
+                                }
+                            }
+                        };
+                        break;
+                }
+                
+                // 添加模擬標記
+                eventData._note = "(模擬數據)";
+                
+                // 僅當 WebSocket 連接失敗時才顯示模擬數據
+                if (!state.webSocket || state.webSocket.readyState !== WebSocket.OPEN) {
+                    appendToLog(eventData, 'received');
+                }
+                
+                // 10秒後停止模擬
+                if (counter >= 10) {
+                    if (state.subscription) {
+                        clearInterval(state.subscription);
+                        state.subscription = null;
+                    }
+                    
+                    // 如果 WebSocket 也沒有連接成功，則重置界面
+                    if (!state.webSocket || state.webSocket.readyState !== WebSocket.OPEN) {
+                        appendToLog('模擬事件流已結束', 'info');
+                        document.getElementById('subscribe-events').style.display = 'inline-block';
+                        document.getElementById('stop-subscription').style.display = 'none';
+                    }
+                }
+            }, 1000);
+        }
+
+        // 停止訂閱
+        function stopSubscription() {
+            // 清除事件模擬
+            if (state.subscription) {
+                clearInterval(state.subscription);
+                state.subscription = null;
+            }
+            
+            // 清除心跳計時器
+            if (state.pingInterval) {
+                clearInterval(state.pingInterval);
+                state.pingInterval = null;
+            }
+            
+            // 關閉 WebSocket 連接
+            if (state.webSocket) {
+                state.webSocket.close(1000, "用戶主動關閉訂閱");
+                state.webSocket = null;
+            }
+            
+            appendToLog('訂閱已停止', 'info');
+            document.getElementById('subscribe-events').style.display = 'inline-block';
+            document.getElementById('stop-subscription').style.display = 'none';
+        }
+
+        // 頁面離開時清理資源
+        window.addEventListener('beforeunload', function() {
+            stopSubscription();
+        });
+
+        // 頁面載入時自動加載服務信息
+        document.addEventListener('DOMContentLoaded', function() {
+            loadServiceInfo();
+        });
+    </script>
+</body>
+</html> 

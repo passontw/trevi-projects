@@ -12,9 +12,9 @@ include_ext = ["go"]
 # 忽略這些檔案
 exclude_dir = ["assets", "tmp", "vendor", ".git", "redis_data", "migrations"]
 # 監聽檔案變更後執行的命令
-cmd = "go build -o ./tmp/main ."
+cmd = "go build -o ./tmp/lottery_service ./cmd/lottery_service/main.go"
 # 二進位執行文件，必須與 cmd 的編譯輸出一致
-bin = "tmp/main"
+bin = "tmp/lottery_service"
 # 清理檔案
 clean_on_exit = true
 # 發送中斷信號，重新啟動程序（適用於無法正常關閉的情況）
