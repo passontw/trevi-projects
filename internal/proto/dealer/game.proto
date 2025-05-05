@@ -142,6 +142,9 @@ message GetGameStatusRequest {
 message GetGameStatusResponse {
   // 完整的遊戲數據
   GameData game_data = 1;
+  
+  // 符合 docs/gamestatus.md 格式的 JSON 字符串
+  string json_response = 2;
 }
 
 

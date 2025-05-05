@@ -131,15 +131,23 @@ func (m *GameManager) Start(ctx context.Context) error {
 
 // GetCurrentGame 獲取當前遊戲狀態
 func (m *GameManager) GetCurrentGame() *GameData {
+	m.logger.Info("GetCurrentGame-開始獲取當前遊戲狀態")
+
 	m.stageMutex.RLock()
 	defer m.stageMutex.RUnlock()
 
 	if m.currentGame == nil {
+		m.logger.Info("GetCurrentGame-當前沒有遊戲")
 		return nil
 	}
 
 	// 返回一個複本，避免外部修改
 	gameCopy := *m.currentGame
+
+	m.logger.Info("GetCurrentGame-成功獲取遊戲狀態",
+		zap.String("gameID", gameCopy.GameID),
+		zap.String("stage", string(gameCopy.CurrentStage)))
+
 	return &gameCopy
 }
 

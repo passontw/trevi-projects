@@ -2,6 +2,7 @@ package dealer
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"g38_lottery_service/internal/dealerWebsocket"
@@ -348,14 +349,32 @@ func (s *DealerService) AdvanceStage(ctx context.Context, req *pb.AdvanceStageRe
 
 // GetGameStatus 實現 DealerService.GetGameStatus RPC 方法
 func (s *DealerService) GetGameStatus(ctx context.Context, req *pb.GetGameStatusRequest) (*pb.GetGameStatusResponse, error) {
+	s.logger.Info("收到 GetGameStatus 請求")
+
 	// 獲取當前遊戲狀態
 	gameData := s.gameManager.GetCurrentGame()
 	if gameData == nil {
 		return nil, gameflow.ErrGameNotFound
 	}
 
+	// 將內部 GameData 轉換為 proto GameData
+	pbGameData := convertGameDataToPb(gameData)
+
+	// 將內部 GameData 轉換為 符合 docs/gamestatus.md 的新格式
+	statusResponse := gameflow.BuildGameStatusResponse(gameData)
+
+	// 將 statusResponse 序列化為 JSON 字符串
+	jsonBytes, err := json.Marshal(statusResponse)
+	if err != nil {
+		s.logger.Error("序列化遊戲狀態失敗", zap.Error(err))
+	} else {
+		// 記錄輸出的 JSON 格式，便於檢查
+		s.logger.Debug("遊戲狀態 JSON 格式", zap.String("json", string(jsonBytes)))
+	}
+
+	// 返回 gRPC 響應
 	return &pb.GetGameStatusResponse{
-		GameData: convertGameDataToPb(gameData),
+		GameData: pbGameData,
 	}, nil
 }
 
