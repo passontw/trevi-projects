@@ -52,4 +52,12 @@ enum GameEventType {
   GAME_EVENT_TYPE_GAME_CANCELLED = 4;
   GAME_EVENT_TYPE_GAME_COMPLETED = 5;
   GAME_EVENT_TYPE_EXTRA_BALL_SIDE_SELECTED = 6;
+}
+
+// 遊戲狀態
+message GameStatus {
+  // 遊戲階段
+  GameStage stage = 1;
+  // 狀態訊息
+  string message = 2;
 } 

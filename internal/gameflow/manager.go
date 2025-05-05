@@ -196,29 +196,48 @@ func (m *GameManager) AdvanceStage(ctx context.Context, force bool) error {
 	defer m.stageMutex.Unlock()
 
 	if m.currentGame == nil {
+		m.logger.Error("無法推進階段：當前遊戲為空")
 		return ErrGameNotFound
 	}
 
 	currentStage := m.currentGame.CurrentStage
+	m.logger.Info("開始推進階段",
+		zap.String("gameID", m.currentGame.GameID),
+		zap.String("currentStage", string(currentStage)),
+		zap.Bool("force", force))
 
 	// 檢查當前階段配置
 	config := GetStageConfig(currentStage)
+	m.logger.Debug("當前階段配置",
+		zap.String("stage", string(currentStage)),
+		zap.Duration("timeout", config.Timeout),
+		zap.Bool("requireDealer", config.RequireDealer))
 
 	// 如果不是強制推進且需要荷官確認，則阻止自動推進
 	if !force && config.RequireDealer {
+		m.logger.Warn("階段需要荷官確認才能推進",
+			zap.String("stage", string(currentStage)))
 		return NewGameFlowErrorWithFormat("REQUIRE_DEALER_CONFIRMATION",
 			"階段 %s 需要荷官確認才能推進", currentStage)
 	}
 
 	// 計算下一階段
 	nextStage := GetNextStage(currentStage, m.currentGame.HasJackpot)
+	m.logger.Debug("計算下一階段",
+		zap.String("currentStage", string(currentStage)),
+		zap.Bool("hasJackpot", m.currentGame.HasJackpot),
+		zap.String("nextStage", string(nextStage)))
 
 	// 切換到新階段前，先停止舊計時器
 	m.stopStageTimer(m.currentGame.GameID)
+	m.logger.Debug("已停止階段計時器")
 
 	oldStage := m.currentGame.CurrentStage
 	m.currentGame.CurrentStage = nextStage
 	m.currentGame.LastUpdateTime = time.Now()
+	m.logger.Debug("更新了當前遊戲階段",
+		zap.String("oldStage", string(oldStage)),
+		zap.String("newStage", string(nextStage)))
 
 	// 保存新狀態
 	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
@@ -231,6 +250,7 @@ func (m *GameManager) AdvanceStage(ctx context.Context, force bool) error {
 			zap.Error(err))
 		return err
 	}
+	m.logger.Debug("已保存新階段到存儲庫")
 
 	m.logger.Info("遊戲階段已推進",
 		zap.String("gameID", m.currentGame.GameID),
@@ -241,6 +261,8 @@ func (m *GameManager) AdvanceStage(ctx context.Context, force bool) error {
 	if err := m.setupStageTimer(ctx, m.currentGame.GameID, nextStage); err != nil {
 		m.logger.Error("設置新階段計時器失敗", zap.Error(err))
 		// 不回滾階段，因為階段已經成功推進並保存
+	} else {
+		m.logger.Debug("已設置新階段計時器")
 	}
 
 	// 對於某些階段，執行額外操作
@@ -249,26 +271,39 @@ func (m *GameManager) AdvanceStage(ctx context.Context, force bool) error {
 			zap.String("stage", string(nextStage)),
 			zap.Error(err))
 		// 不回滾階段，繼續執行
+	} else {
+		m.logger.Debug("已執行階段特定操作")
 	}
 
 	// 觸發事件
 	if m.onStageChanged != nil {
 		m.onStageChanged(m.currentGame.GameID, oldStage, nextStage)
+		m.logger.Debug("已觸發階段變更事件")
+	} else {
+		m.logger.Debug("沒有階段變更事件處理器")
 	}
 
 	// 自動推送快照
 	if m.mqProducer != nil {
 		go m.pushGameSnapshot(ctx)
+		m.logger.Debug("已啟動推送遊戲快照")
+	} else {
+		m.logger.Debug("沒有設置 MQ 生產者，跳過快照推送")
 	}
 
 	// 如果是遊戲結束階段，則執行遊戲結束操作
 	if nextStage == StageGameOver {
+		m.logger.Info("進入遊戲結束階段，執行結束操作")
 		if err := m.finalizeGame(ctx); err != nil {
 			m.logger.Error("遊戲結束操作失敗", zap.Error(err))
 			return err
 		}
+		m.logger.Debug("遊戲結束操作成功")
 	}
 
+	m.logger.Info("階段推進完成",
+		zap.String("gameID", m.currentGame.GameID),
+		zap.String("newStage", string(nextStage)))
 	return nil
 }
 
@@ -291,34 +326,52 @@ func (m *GameManager) setupStageTimer(ctx context.Context, gameID string, stage 
 	if timer, exists := m.stageTimers[gameID]; exists && timer != nil {
 		timer.Stop()
 		delete(m.stageTimers, gameID)
+		m.logger.Debug("停止並清除現有計時器", zap.String("gameID", gameID))
 	}
 
 	// 創建新計時器
-	m.logger.Debug("設置階段計時器",
+	m.logger.Info("設置階段計時器",
 		zap.String("gameID", gameID),
 		zap.String("stage", string(stage)),
 		zap.Duration("timeout", config.Timeout))
 
+	// 為計時器創建獨立的 context，不使用傳入的 ctx，避免在計時器觸發時 context 已經過期
+	timerCtx := context.Background()
+
 	timer := time.AfterFunc(config.Timeout, func() {
+		// 從 background context 創建新的 context，確保計時器觸發時有有效的 context
+		timeoutCtx, cancel := context.WithTimeout(timerCtx, 5*time.Second)
+		defer cancel()
+
 		// 在計時器觸發時，推進遊戲階段
 		m.logger.Info("階段計時器觸發，自動推進遊戲階段",
 			zap.String("gameID", gameID),
-			zap.String("stage", string(stage)))
+			zap.String("stage", string(stage)),
+			zap.Duration("timeout", config.Timeout))
 
-		if err := m.AdvanceStage(ctx, true); err != nil {
+		if err := m.AdvanceStage(timeoutCtx, true); err != nil {
 			m.logger.Error("計時器觸發推進階段失敗",
 				zap.String("gameID", gameID),
 				zap.String("stage", string(stage)),
 				zap.Error(err))
+		} else {
+			m.logger.Info("計時器觸發階段推進成功",
+				zap.String("gameID", gameID),
+				zap.String("stage", string(stage)))
 		}
 
 		// 計時器觸發後自動刪除
 		m.stageTimerMutex.Lock()
 		delete(m.stageTimers, gameID)
 		m.stageTimerMutex.Unlock()
+		m.logger.Debug("計時器觸發後已刪除", zap.String("gameID", gameID))
 	})
 
 	m.stageTimers[gameID] = timer
+	m.logger.Info("階段計時器設置完成",
+		zap.String("gameID", gameID),
+		zap.String("stage", string(stage)),
+		zap.Duration("timeout", config.Timeout))
 	return nil
 }
 
@@ -430,54 +483,6 @@ func (m *GameManager) prepareForNextGame(ctx context.Context) error {
 
 	m.logger.Info("準備下一局遊戲完成", zap.String("newGameID", newGameID))
 	return nil
-}
-
-// HandleDrawBall 處理常規球抽取
-func (m *GameManager) HandleDrawBall(ctx context.Context, number int, isLast bool) (*Ball, error) {
-	m.stageMutex.Lock()
-	defer m.stageMutex.Unlock()
-
-	if m.currentGame == nil {
-		return nil, ErrGameNotFound
-	}
-
-	// 確認當前階段允許抽取常規球
-	if m.currentGame.CurrentStage != StageDrawingStart {
-		return nil, NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_DRAW",
-			"當前階段 %s 不允許抽取常規球", m.currentGame.CurrentStage)
-	}
-
-	// 添加球
-	ball, err := AddBall(m.currentGame, number, BallTypeRegular, isLast)
-	if err != nil {
-		return nil, err
-	}
-
-	// 保存更新後的遊戲狀態
-	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
-		return nil, fmt.Errorf("保存遊戲狀態失敗: %w", err)
-	}
-
-	m.logger.Info("抽取常規球",
-		zap.String("gameID", m.currentGame.GameID),
-		zap.Int("ballNumber", number),
-		zap.Bool("isLast", isLast))
-
-	// 觸發球抽取事件
-	if m.onBallDrawn != nil {
-		m.onBallDrawn(m.currentGame.GameID, *ball)
-	}
-
-	// 如果是最後一顆球，自動推進到下一階段
-	if isLast {
-		go func() {
-			if err := m.AdvanceStage(ctx, true); err != nil {
-				m.logger.Error("最後一顆常規球抽取後自動推進階段失敗", zap.Error(err))
-			}
-		}()
-	}
-
-	return ball, nil
 }
 
 // HandleDrawExtraBall 處理額外球抽取
@@ -801,4 +806,47 @@ func (m *GameManager) pushGameSnapshot(ctx context.Context) {
 	if err != nil {
 		m.logger.Error("推送遊戲快照到 RocketMQ 失敗", zap.Error(err))
 	}
+}
+
+// GetOnBallDrawnCallback 獲取球抽取事件回調函數
+func (m *GameManager) GetOnBallDrawnCallback() func(gameID string, ball Ball) {
+	return m.onBallDrawn
+}
+
+// UpdateRegularBalls 直接更新遊戲的常規球陣列
+func (m *GameManager) UpdateRegularBalls(ctx context.Context, balls []Ball) error {
+	m.stageMutex.Lock()
+	defer m.stageMutex.Unlock()
+
+	if m.currentGame == nil {
+		return ErrGameNotFound
+	}
+
+	// 確認當前階段允許抽取常規球
+	if m.currentGame.CurrentStage != StageDrawingStart {
+		return NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_DRAW",
+			"當前階段 %s 不允許更新常規球", m.currentGame.CurrentStage)
+	}
+
+	// 驗證所有球是否合法
+	for _, ball := range balls {
+		if err := ValidateBallNumber(ball.Number); err != nil {
+			return err
+		}
+	}
+
+	// 直接覆蓋陣列
+	m.currentGame.RegularBalls = balls
+	m.currentGame.LastUpdateTime = time.Now()
+
+	// 保存更新後的遊戲狀態
+	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
+		return fmt.Errorf("保存遊戲狀態失敗: %w", err)
+	}
+
+	m.logger.Info("更新常規球陣列",
+		zap.String("gameID", m.currentGame.GameID),
+		zap.Int("ballCount", len(balls)))
+
+	return nil
 }

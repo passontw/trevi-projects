@@ -38,6 +38,8 @@ message DrawBallRequest {
 message DrawBallResponse {
   // 抽取的球的資訊
   repeated Ball balls = 1;
+  // 如果最後一顆球標記為最後一顆，則會提供遊戲狀態更新
+  optional GameStatus game_status = 2;
 }
 
 // 抽額外球請求

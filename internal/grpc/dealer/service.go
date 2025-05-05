@@ -64,26 +64,17 @@ func (s *DealerService) StartNewRound(ctx context.Context, req *pb.StartNewRound
 			zap.String("currentStage", string(currentStage)))
 		return nil, gameflow.ErrInvalidStage
 	}
-
 	// 創建新遊戲
 	gameID, err := s.gameManager.CreateNewGame(ctx)
 	if err != nil {
 		s.logger.Error("創建新遊戲失敗", zap.Error(err))
 		return nil, err
 	}
-
 	// 獲取當前遊戲數據
 	game := s.gameManager.GetCurrentGame()
 	if game == nil {
 		s.logger.Error("獲取新創建的遊戲失敗")
 		return nil, gameflow.ErrGameNotFound
-	}
-
-	// 推進到新局階段
-	err = s.gameManager.AdvanceStage(ctx, true)
-	if err != nil {
-		s.logger.Error("推進到新局階段失敗", zap.Error(err))
-		return nil, err
 	}
 
 	// 構建響應
@@ -93,51 +84,120 @@ func (s *DealerService) StartNewRound(ctx context.Context, req *pb.StartNewRound
 		CurrentStage: convertGameStageToPb(game.CurrentStage),
 	}
 
-	s.logger.Info("成功開始新局",
-		zap.String("gameID", gameID),
-		zap.String("stage", string(game.CurrentStage)))
+	// 創建一個副本作為響應返回
+	responseCopy := *response
 
-	// 通過 WebSocket 廣播新遊戲開始事件
-	s.broadcastNewGameEvent(gameID, game)
+	// 在後台推進階段，不阻塞 RPC 響應
+	go func() {
+		// 創建新的上下文，因為原始上下文可能會在 RPC 返回後被取消
+		newCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-	return response, nil
+		// 推進到新局階段
+		if err := s.gameManager.AdvanceStage(newCtx, true); err != nil {
+			s.logger.Error("推進到新局階段失敗", zap.Error(err))
+			// 無法返回錯誤，只能記錄
+		} else {
+			s.logger.Info("成功開始新局並推進階段",
+				zap.String("gameID", gameID),
+				zap.String("stage", string(s.gameManager.GetCurrentStage())))
+
+			// 通過 WebSocket 廣播新遊戲開始事件
+			// 已經移至 goroutine 中，不會阻塞
+			s.broadcastNewGameEvent(gameID, s.gameManager.GetCurrentGame())
+		}
+	}()
+
+	s.logger.Info("正在返回 StartNewRound 響應，後台繼續處理階段推進")
+	return &responseCopy, nil
 }
 
 // DrawBall 實現 DealerService.DrawBall RPC 方法
 func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (*pb.DrawBallResponse, error) {
-	// 檢查是否有已存在的球
-	existingBalls := req.GetBalls()
-
-	// 獲取最後一個球的數字（如果存在）
-	var lastBallNumber int
-	var isLast bool
-
-	if len(existingBalls) > 0 {
-		lastBall := existingBalls[len(existingBalls)-1]
-		lastBallNumber = int(lastBall.Number)
-		isLast = lastBall.IsLast
+	// 獲取當前遊戲
+	game := s.gameManager.GetCurrentGame()
+	if game == nil {
+		return nil, gameflow.ErrGameNotFound
 	}
 
-	// 抽取常規球
-	ball, err := s.gameManager.HandleDrawBall(ctx, lastBallNumber, isLast)
-	if err != nil {
+	// 確認當前階段允許抽取常規球
+	if game.CurrentStage != gameflow.StageDrawingStart {
+		return nil, gameflow.NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_DRAW",
+			"當前階段 %s 不允許抽取常規球", game.CurrentStage)
+	}
+
+	// 從請求中獲取球列表
+	reqBalls := req.GetBalls()
+
+	// 將 proto balls 轉換為 gameflow balls
+	gameBalls := make([]gameflow.Ball, 0, len(reqBalls))
+
+	// 檢查最後一顆球是否標記為最後一顆
+	var isLastBall bool
+	if len(reqBalls) > 0 {
+		lastBall := reqBalls[len(reqBalls)-1]
+		isLastBall = lastBall.IsLast
+	}
+
+	// 轉換所有球
+	for i, ball := range reqBalls {
+		gameBall := gameflow.Ball{
+			Number:    int(ball.Number),
+			Type:      gameflow.BallTypeRegular,
+			IsLast:    ball.IsLast,
+			Timestamp: ball.Timestamp.AsTime(),
+		}
+		gameBalls = append(gameBalls, gameBall)
+
+		// 如果是新添加的球，觸發球抽取事件
+		if i >= len(game.RegularBalls) {
+			if s.gameManager.GetOnBallDrawnCallback() != nil {
+				s.gameManager.GetOnBallDrawnCallback()(game.GameID, gameBall)
+			}
+		}
+	}
+
+	// 獲取管理器內部的遊戲，並直接覆蓋 RegularBalls 陣列
+	if err := s.gameManager.UpdateRegularBalls(ctx, gameBalls); err != nil {
 		return nil, err
 	}
 
-	// 創建新的球對象
-	pbBall := &pb.Ball{
-		Number:    int32(ball.Number),
-		Type:      pb.BallType_BALL_TYPE_REGULAR,
-		IsLast:    ball.IsLast,
-		Timestamp: timestamppb.New(ball.Timestamp),
+	// 如果最後一顆球標記為最後一顆，同步執行階段推進
+	var gameStatus *pb.GameStatus
+	if isLastBall {
+		// 同步執行階段推進，確保 Redis 中的狀態立即更新
+		if err := s.gameManager.AdvanceStage(ctx, true); err != nil {
+			s.logger.Error("最後一顆常規球處理後推進階段失敗", zap.Error(err))
+		} else {
+			// 階段推進成功，更新遊戲狀態
+			gameStatus = &pb.GameStatus{
+				Stage:   pb.GameStage_GAME_STAGE_DRAWING_CLOSE,
+				Message: "最後一顆球已標記，抽球環節結束，進入下一階段",
+			}
+		}
 	}
 
-	// 將新球添加到現有球列表
-	updatedBalls := append(existingBalls, pbBall)
+	// 獲取更新後的遊戲數據
+	updatedGame := s.gameManager.GetCurrentGame()
 
-	return &pb.DrawBallResponse{
-		Balls: updatedBalls,
-	}, nil
+	// 將 gameflow balls 轉換回 proto balls
+	updatedBalls := make([]*pb.Ball, 0, len(updatedGame.RegularBalls))
+	for _, ball := range updatedGame.RegularBalls {
+		pbBall := &pb.Ball{
+			Number:    int32(ball.Number),
+			Type:      pb.BallType_BALL_TYPE_REGULAR,
+			IsLast:    ball.IsLast,
+			Timestamp: timestamppb.New(ball.Timestamp),
+		}
+		updatedBalls = append(updatedBalls, pbBall)
+	}
+
+	response := &pb.DrawBallResponse{
+		Balls:      updatedBalls,
+		GameStatus: gameStatus,
+	}
+
+	return response, nil
 }
 
 // DrawExtraBall 實現 DealerService.DrawExtraBall RPC 方法
@@ -376,36 +436,50 @@ func (s *DealerService) onStageChanged(gameID string, oldStage, newStage gameflo
 		zap.String("oldStage", string(oldStage)),
 		zap.String("newStage", string(newStage)))
 
-	// 廣播階段變更事件
-	event := map[string]interface{}{
-		"type": "stage_changed",
-		"data": map[string]interface{}{
-			"game_id":   gameID,
-			"old_stage": string(oldStage),
-			"new_stage": string(newStage),
-			"timestamp": time.Now().Format(time.RFC3339),
-		},
-	}
+	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
+	go func() {
+		// 廣播階段變更事件
+		event := map[string]interface{}{
+			"type": "stage_changed",
+			"data": map[string]interface{}{
+				"game_id":   gameID,
+				"old_stage": string(oldStage),
+				"new_stage": string(newStage),
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		}
 
-	// 使用 WebSocket 廣播事件
-	s.broadcastEvent(event)
+		// 使用 WebSocket 廣播事件
+		if err := s.broadcastEvent(event); err != nil {
+			s.logger.Error("廣播階段變更事件失敗",
+				zap.String("gameID", gameID),
+				zap.String("oldStage", string(oldStage)),
+				zap.String("newStage", string(newStage)),
+				zap.Error(err))
+		}
+	}()
 }
 
 // onGameCreated 處理遊戲創建事件
 func (s *DealerService) onGameCreated(gameID string) {
 	s.logger.Info("遊戲創建", zap.String("gameID", gameID))
 
-	// 廣播遊戲創建事件
-	event := map[string]interface{}{
-		"type": "game_created",
-		"data": map[string]interface{}{
-			"game_id":   gameID,
-			"timestamp": time.Now().Format(time.RFC3339),
-		},
-	}
+	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
+	go func() {
+		// 廣播遊戲創建事件
+		event := map[string]interface{}{
+			"type": "game_created",
+			"data": map[string]interface{}{
+				"game_id":   gameID,
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		}
 
-	// 使用 WebSocket 廣播事件
-	s.broadcastEvent(event)
+		// 使用 WebSocket 廣播事件
+		if err := s.broadcastEvent(event); err != nil {
+			s.logger.Error("廣播遊戲創建事件失敗", zap.String("gameID", gameID), zap.Error(err))
+		}
+	}()
 }
 
 // onGameCancelled 處理遊戲取消事件
@@ -414,35 +488,45 @@ func (s *DealerService) onGameCancelled(gameID string, reason string) {
 		zap.String("gameID", gameID),
 		zap.String("reason", reason))
 
-	// 廣播遊戲取消事件
-	event := map[string]interface{}{
-		"type": "game_cancelled",
-		"data": map[string]interface{}{
-			"game_id":   gameID,
-			"reason":    reason,
-			"timestamp": time.Now().Format(time.RFC3339),
-		},
-	}
+	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
+	go func() {
+		// 廣播遊戲取消事件
+		event := map[string]interface{}{
+			"type": "game_cancelled",
+			"data": map[string]interface{}{
+				"game_id":   gameID,
+				"reason":    reason,
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		}
 
-	// 使用 WebSocket 廣播事件
-	s.broadcastEvent(event)
+		// 使用 WebSocket 廣播事件
+		if err := s.broadcastEvent(event); err != nil {
+			s.logger.Error("廣播遊戲取消事件失敗", zap.String("gameID", gameID), zap.String("reason", reason), zap.Error(err))
+		}
+	}()
 }
 
 // onGameCompleted 處理遊戲完成事件
 func (s *DealerService) onGameCompleted(gameID string) {
 	s.logger.Info("遊戲完成", zap.String("gameID", gameID))
 
-	// 廣播遊戲完成事件
-	event := map[string]interface{}{
-		"type": "game_completed",
-		"data": map[string]interface{}{
-			"game_id":   gameID,
-			"timestamp": time.Now().Format(time.RFC3339),
-		},
-	}
+	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
+	go func() {
+		// 廣播遊戲完成事件
+		event := map[string]interface{}{
+			"type": "game_completed",
+			"data": map[string]interface{}{
+				"game_id":   gameID,
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		}
 
-	// 使用 WebSocket 廣播事件
-	s.broadcastEvent(event)
+		// 使用 WebSocket 廣播事件
+		if err := s.broadcastEvent(event); err != nil {
+			s.logger.Error("廣播遊戲完成事件失敗", zap.String("gameID", gameID), zap.Error(err))
+		}
+	}()
 }
 
 // onBallDrawn 處理球抽取事件
@@ -453,20 +537,29 @@ func (s *DealerService) onBallDrawn(gameID string, ball gameflow.Ball) {
 		zap.String("type", string(ball.Type)),
 		zap.Bool("isLast", ball.IsLast))
 
-	// 廣播球抽取事件
-	event := map[string]interface{}{
-		"type": "ball_drawn",
-		"data": map[string]interface{}{
-			"game_id":   gameID,
-			"number":    ball.Number,
-			"ball_type": string(ball.Type),
-			"is_last":   ball.IsLast,
-			"timestamp": ball.Timestamp.Format(time.RFC3339),
-		},
-	}
+	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
+	go func() {
+		// 廣播球抽取事件
+		event := map[string]interface{}{
+			"type": "ball_drawn",
+			"data": map[string]interface{}{
+				"game_id":   gameID,
+				"number":    ball.Number,
+				"ball_type": string(ball.Type),
+				"is_last":   ball.IsLast,
+				"timestamp": ball.Timestamp.Format(time.RFC3339),
+			},
+		}
 
-	// 使用 WebSocket 廣播事件
-	s.broadcastEvent(event)
+		// 使用 WebSocket 廣播事件
+		if err := s.broadcastEvent(event); err != nil {
+			s.logger.Error("廣播球抽取事件失敗",
+				zap.String("gameID", gameID),
+				zap.Int("number", ball.Number),
+				zap.String("type", string(ball.Type)),
+				zap.Error(err))
+		}
+	}()
 }
 
 // onExtraBallSideSelected 處理額外球選邊事件
@@ -475,41 +568,49 @@ func (s *DealerService) onExtraBallSideSelected(gameID string, side gameflow.Ext
 		zap.String("gameID", gameID),
 		zap.String("side", string(side)))
 
-	// 廣播額外球選邊事件
-	event := map[string]interface{}{
-		"type": "extra_ball_side_selected",
-		"data": map[string]interface{}{
-			"game_id":   gameID,
-			"side":      string(side),
-			"timestamp": time.Now().Format(time.RFC3339),
-		},
-	}
+	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
+	go func() {
+		// 廣播額外球選邊事件
+		event := map[string]interface{}{
+			"type": "extra_ball_side_selected",
+			"data": map[string]interface{}{
+				"game_id":   gameID,
+				"side":      string(side),
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		}
 
-	// 使用 WebSocket 廣播事件
-	s.broadcastEvent(event)
+		// 使用 WebSocket 廣播事件
+		if err := s.broadcastEvent(event); err != nil {
+			s.logger.Error("廣播額外球選邊事件失敗", zap.String("gameID", gameID), zap.String("side", string(side)), zap.Error(err))
+		}
+	}()
 }
 
 // broadcastEvent 廣播事件到所有連接的荷官端
-func (s *DealerService) broadcastEvent(event map[string]interface{}) {
+func (s *DealerService) broadcastEvent(event map[string]interface{}) error {
 	// 通過 dealerServer 廣播事件
-	if err := s.dealerServer.BroadcastMessage(event); err != nil {
-		s.logger.Error("廣播事件失敗", zap.Error(err))
-	}
+	return s.dealerServer.BroadcastMessage(event)
 }
 
 // broadcastNewGameEvent 廣播新遊戲事件
 func (s *DealerService) broadcastNewGameEvent(gameID string, game *gameflow.GameData) {
-	event := map[string]interface{}{
-		"type": "new_round_started",
-		"data": map[string]interface{}{
-			"game_id":   gameID,
-			"stage":     string(game.CurrentStage),
-			"timestamp": game.StartTime.Format(time.RFC3339),
-		},
-	}
+	// 將廣播事件放入 goroutine 中執行，避免阻塞
+	go func() {
+		event := map[string]interface{}{
+			"type": "new_round_started",
+			"data": map[string]interface{}{
+				"game_id":   gameID,
+				"stage":     string(game.CurrentStage),
+				"timestamp": game.StartTime.Format(time.RFC3339),
+			},
+		}
 
-	// 使用 WebSocket 廣播事件
-	s.broadcastEvent(event)
+		// 使用 WebSocket 廣播事件
+		if err := s.broadcastEvent(event); err != nil {
+			s.logger.Error("廣播新遊戲事件失敗", zap.String("gameID", gameID), zap.Error(err))
+		}
+	}()
 }
 
 // 輔助函數：轉換 GameStage 到 proto GameStage
