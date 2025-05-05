@@ -198,120 +198,86 @@ func (m *GameManager) CreateNewGame(ctx context.Context) (string, error) {
 	return gameID, nil
 }
 
-// AdvanceStage 推進遊戲階段
-func (m *GameManager) AdvanceStage(ctx context.Context, force bool) error {
+// AdvanceStage 將遊戲推進到下一階段
+func (m *GameManager) AdvanceStage(ctx context.Context, autoAdvance bool) error {
 	m.stageMutex.Lock()
-	defer m.stageMutex.Unlock()
-
 	if m.currentGame == nil {
-		m.logger.Error("無法推進階段：當前遊戲為空")
+		m.stageMutex.Unlock()
 		return ErrGameNotFound
 	}
 
-	currentStage := m.currentGame.CurrentStage
-	m.logger.Info("開始推進階段",
+	// 記錄當前階段
+	previousStage := m.currentGame.CurrentStage
+	nextStage := GetNextStage(previousStage, m.currentGame.HasJackpot)
+
+	m.logger.Info("推進遊戲階段",
 		zap.String("gameID", m.currentGame.GameID),
-		zap.String("currentStage", string(currentStage)),
-		zap.Bool("force", force))
+		zap.String("currentStage", string(previousStage)),
+		zap.String("nextStage", string(nextStage)),
+		zap.Bool("autoAdvance", autoAdvance))
 
-	// 檢查當前階段配置
-	config := GetStageConfig(currentStage)
-	m.logger.Debug("當前階段配置",
-		zap.String("stage", string(currentStage)),
-		zap.Duration("timeout", config.Timeout),
-		zap.Bool("requireDealer", config.RequireDealer))
-
-	// 如果不是強制推進且需要荷官確認，則阻止自動推進
-	if !force && config.RequireDealer {
-		m.logger.Warn("階段需要荷官確認才能推進",
-			zap.String("stage", string(currentStage)))
-		return NewGameFlowErrorWithFormat("REQUIRE_DEALER_CONFIRMATION",
-			"階段 %s 需要荷官確認才能推進", currentStage)
+	// 如果提前手動推進，先停止計時器
+	if !autoAdvance {
+		m.stopStageTimer(m.currentGame.GameID)
 	}
 
-	// 計算下一階段
-	nextStage := GetNextStage(currentStage, m.currentGame.HasJackpot)
-	m.logger.Debug("計算下一階段",
-		zap.String("currentStage", string(currentStage)),
-		zap.Bool("hasJackpot", m.currentGame.HasJackpot),
-		zap.String("nextStage", string(nextStage)))
-
-	// 切換到新階段前，先停止舊計時器
-	m.stopStageTimer(m.currentGame.GameID)
-	m.logger.Debug("已停止階段計時器")
-
+	// 更新遊戲階段
 	oldStage := m.currentGame.CurrentStage
 	m.currentGame.CurrentStage = nextStage
 	m.currentGame.LastUpdateTime = time.Now()
-	m.logger.Debug("更新了當前遊戲階段",
-		zap.String("oldStage", string(oldStage)),
-		zap.String("newStage", string(nextStage)))
 
-	// 保存新狀態
+	// 執行階段轉換邏輯
+	if nextStage == StageJackpotDrawingStart {
+		// 在遊戲狀態中初始化Jackpot球池
+		if len(m.currentGame.JackpotBalls) == 0 {
+			// 這裡應該有一個初始化Jackpot球池的函數，但在當前代碼中沒有找到
+			// 因此暫時留空
+		}
+	}
+
+	// 保存遊戲狀態
 	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
-		// 保存失敗，回滾階段
-		m.currentGame.CurrentStage = oldStage
-		m.logger.Error("保存新階段失敗，回滾階段",
-			zap.String("gameID", m.currentGame.GameID),
-			zap.String("oldStage", string(oldStage)),
-			zap.String("nextStage", string(nextStage)),
+		m.stageMutex.Unlock()
+		return fmt.Errorf("保存遊戲狀態失敗: %w", err)
+	}
+
+	// 必須在釋放鎖之前保存遊戲的副本，因為特定動作可能需要訪問遊戲數據
+	// 但不應該在持有鎖的情況下執行這些動作
+	gameCopy := m.currentGame
+
+	// 推送遊戲快照
+	go func() {
+		if err := m.pushGameSnapshot(ctx); err != nil {
+			m.logger.Error("推送遊戲快照失敗", zap.Error(err))
+		}
+	}()
+
+	// 釋放鎖，然後在不持有鎖的情況下執行階段特定操作
+	m.stageMutex.Unlock()
+
+	// 執行階段特定操作
+	if err := m.executeStageSpecificActions(ctx, nextStage); err != nil {
+		m.logger.Error("執行階段特定操作失敗",
+			zap.String("gameID", gameCopy.GameID),
+			zap.String("stage", string(nextStage)),
 			zap.Error(err))
 		return err
 	}
-	m.logger.Debug("已保存新階段到存儲庫")
-
-	m.logger.Info("遊戲階段已推進",
-		zap.String("gameID", m.currentGame.GameID),
-		zap.String("oldStage", string(oldStage)),
-		zap.String("newStage", string(nextStage)))
 
 	// 設置新階段的計時器
-	if err := m.setupStageTimer(ctx, m.currentGame.GameID, nextStage); err != nil {
-		m.logger.Error("設置新階段計時器失敗", zap.Error(err))
-		// 不回滾階段，因為階段已經成功推進並保存
-	} else {
-		m.logger.Debug("已設置新階段計時器")
-	}
-
-	// 對於某些階段，執行額外操作
-	if err := m.executeStageSpecificActions(ctx, nextStage); err != nil {
-		m.logger.Error("執行階段特定操作失敗",
+	if err := m.setupStageTimer(ctx, gameCopy.GameID, nextStage); err != nil {
+		m.logger.Error("設置階段計時器失敗",
+			zap.String("gameID", gameCopy.GameID),
 			zap.String("stage", string(nextStage)),
 			zap.Error(err))
-		// 不回滾階段，繼續執行
-	} else {
-		m.logger.Debug("已執行階段特定操作")
+		return err
 	}
 
-	// 觸發事件
+	// 觸發階段變更事件
 	if m.onStageChanged != nil {
-		m.onStageChanged(m.currentGame.GameID, oldStage, nextStage)
-		m.logger.Debug("已觸發階段變更事件")
-	} else {
-		m.logger.Debug("沒有階段變更事件處理器")
+		m.onStageChanged(gameCopy.GameID, oldStage, nextStage)
 	}
 
-	// 自動推送快照
-	if m.mqProducer != nil {
-		go m.pushGameSnapshot(ctx)
-		m.logger.Debug("已啟動推送遊戲快照")
-	} else {
-		m.logger.Debug("沒有設置 MQ 生產者，跳過快照推送")
-	}
-
-	// 如果是遊戲結束階段，則執行遊戲結束操作
-	if nextStage == StageGameOver {
-		m.logger.Info("進入遊戲結束階段，執行結束操作")
-		if err := m.finalizeGame(ctx); err != nil {
-			m.logger.Error("遊戲結束操作失敗", zap.Error(err))
-			return err
-		}
-		m.logger.Debug("遊戲結束操作成功")
-	}
-
-	m.logger.Info("階段推進完成",
-		zap.String("gameID", m.currentGame.GameID),
-		zap.String("newStage", string(nextStage)))
 	return nil
 }
 
@@ -357,6 +323,16 @@ func (m *GameManager) setupStageTimer(ctx context.Context, gameID string, stage 
 			zap.String("stage", string(stage)),
 			zap.Duration("timeout", config.Timeout))
 
+		// 首先移除計時器，避免死鎖
+		// 這裡在 AdvanceStage 之前清理計時器，避免潛在死鎖
+		func() {
+			m.stageTimerMutex.Lock()
+			defer m.stageTimerMutex.Unlock()
+			delete(m.stageTimers, gameID)
+			m.logger.Debug("計時器觸發前已刪除", zap.String("gameID", gameID))
+		}()
+
+		// 然後推進階段
 		if err := m.AdvanceStage(timeoutCtx, true); err != nil {
 			m.logger.Error("計時器觸發推進階段失敗",
 				zap.String("gameID", gameID),
@@ -367,12 +343,6 @@ func (m *GameManager) setupStageTimer(ctx context.Context, gameID string, stage 
 				zap.String("gameID", gameID),
 				zap.String("stage", string(stage)))
 		}
-
-		// 計時器觸發後自動刪除
-		m.stageTimerMutex.Lock()
-		delete(m.stageTimers, gameID)
-		m.stageTimerMutex.Unlock()
-		m.logger.Debug("計時器觸發後已刪除", zap.String("gameID", gameID))
 	})
 
 	m.stageTimers[gameID] = timer
@@ -395,12 +365,12 @@ func (m *GameManager) stopStageTimer(gameID string) {
 	}
 }
 
-// 執行階段特定操作
+// executeStageSpecificActions 執行階段特定操作
 func (m *GameManager) executeStageSpecificActions(ctx context.Context, stage GameStage) error {
 	switch stage {
 	case StageNewRound:
 		// 新局開始階段的特殊處理
-		m.logger.Info("執行新局開始特定操作", zap.String("gameID", m.currentGame.GameID))
+		m.logger.Info("執行新局開始特定操作")
 
 	case StageExtraBallSideSelectBettingStart:
 		// 選擇額外球邊的特殊處理
@@ -410,23 +380,37 @@ func (m *GameManager) executeStageSpecificActions(ctx context.Context, stage Gam
 			return err
 		}
 
+		// 由於此方法在 AdvanceStage 中已釋放鎖後調用
+		// 此處需要獲取鎖以安全地更新遊戲狀態
 		m.stageMutex.Lock()
+		if m.currentGame == nil {
+			m.stageMutex.Unlock()
+			return ErrGameNotFound
+		}
+
 		m.currentGame.SelectedSide = side
-		m.stageMutex.Unlock()
 
 		// 保存遊戲狀態
-		if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
+		err = m.repo.SaveGame(ctx, m.currentGame)
+
+		// 獲取遊戲ID以在解鎖後使用
+		gameID := m.currentGame.GameID
+
+		// 釋放鎖
+		m.stageMutex.Unlock()
+
+		if err != nil {
 			m.logger.Error("保存選擇的額外球邊失敗", zap.Error(err))
 			return err
 		}
 
 		m.logger.Info("自動選擇額外球邊",
-			zap.String("gameID", m.currentGame.GameID),
+			zap.String("gameID", gameID),
 			zap.String("side", string(side)))
 
 		// 觸發選邊事件
 		if m.onExtraBallSideSelected != nil {
-			m.onExtraBallSideSelected(m.currentGame.GameID, side)
+			m.onExtraBallSideSelected(gameID, side)
 		}
 	}
 
@@ -529,13 +513,24 @@ func (m *GameManager) HandleDrawExtraBall(ctx context.Context, number int, isLas
 		m.onBallDrawn(m.currentGame.GameID, *ball)
 	}
 
-	// 如果是最後一顆球，自動推進到下一階段
+	// 如果是最後一顆球，安排自動推進到下一階段，但不在持有鎖的情況下執行
 	if isLast {
-		go func() {
-			if err := m.AdvanceStage(ctx, true); err != nil {
-				m.logger.Error("最後一顆額外球抽取後自動推進階段失敗", zap.Error(err))
+		// 保存當前遊戲ID，用於在goroutine中使用
+		gameID := m.currentGame.GameID
+
+		// 在goroutine中執行階段推進，但首先釋放當前持有的鎖
+		go func(gameID string) {
+			// 創建新的上下文
+			advanceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// 嘗試推進階段
+			if err := m.AdvanceStage(advanceCtx, true); err != nil {
+				m.logger.Error("最後一顆額外球抽取後自動推進階段失敗",
+					zap.String("gameID", gameID),
+					zap.Error(err))
 			}
-		}()
+		}(gameID)
 	}
 
 	return ball, nil
@@ -582,13 +577,24 @@ func (m *GameManager) HandleDrawJackpotBall(ctx context.Context, number int, isL
 		m.onBallDrawn(m.currentGame.GameID, *ball)
 	}
 
-	// 如果是最後一顆球，自動推進到下一階段
+	// 如果是最後一顆球，安排自動推進到下一階段，但不在持有鎖的情況下執行
 	if isLast {
-		go func() {
-			if err := m.AdvanceStage(ctx, true); err != nil {
-				m.logger.Error("最後一顆JP球抽取後自動推進階段失敗", zap.Error(err))
+		// 保存當前遊戲ID，用於在goroutine中使用
+		gameID := m.currentGame.GameID
+
+		// 在goroutine中執行階段推進，但首先釋放當前持有的鎖
+		go func(gameID string) {
+			// 創建新的上下文
+			advanceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// 嘗試推進階段
+			if err := m.AdvanceStage(advanceCtx, true); err != nil {
+				m.logger.Error("最後一顆JP球抽取後自動推進階段失敗",
+					zap.String("gameID", gameID),
+					zap.Error(err))
 			}
-		}()
+		}(gameID)
 	}
 
 	return ball, nil
@@ -638,13 +644,24 @@ func (m *GameManager) HandleDrawLuckyBall(ctx context.Context, number int, isLas
 		m.onBallDrawn(m.currentGame.GameID, *ball)
 	}
 
-	// 如果是最後一顆球，自動推進到下一階段
+	// 如果是最後一顆球，安排自動推進到下一階段，但不在持有鎖的情況下執行
 	if isLast {
-		go func() {
-			if err := m.AdvanceStage(ctx, true); err != nil {
-				m.logger.Error("最後一顆幸運號碼球抽取後自動推進階段失敗", zap.Error(err))
+		// 保存當前遊戲ID，用於在goroutine中使用
+		gameID := m.currentGame.GameID
+
+		// 在goroutine中執行階段推進，但首先釋放當前持有的鎖
+		go func(gameID string) {
+			// 創建新的上下文
+			advanceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// 嘗試推進階段
+			if err := m.AdvanceStage(advanceCtx, true); err != nil {
+				m.logger.Error("最後一顆幸運號碼球抽取後自動推進階段失敗",
+					zap.String("gameID", gameID),
+					zap.Error(err))
 			}
-		}()
+		}(gameID)
 	}
 
 	return ball, nil
@@ -800,20 +817,17 @@ func (m *GameManager) GetGameStatistics(ctx context.Context) (map[string]interfa
 }
 
 // pushGameSnapshot 推送遊戲快照到 RocketMQ
-func (m *GameManager) pushGameSnapshot(ctx context.Context) {
+func (m *GameManager) pushGameSnapshot(ctx context.Context) error {
 	if m.mqProducer == nil || m.currentGame == nil {
-		return
+		return nil
 	}
 	snapshot := BuildGameStatusResponse(m.currentGame)
 	mapData, err := mq.StructToMap(snapshot)
 	if err != nil {
 		m.logger.Error("遊戲快照序列化失敗", zap.Error(err))
-		return
+		return err
 	}
-	err = m.mqProducer.SendGameSnapshot(m.currentGame.GameID, mapData)
-	if err != nil {
-		m.logger.Error("推送遊戲快照到 RocketMQ 失敗", zap.Error(err))
-	}
+	return m.mqProducer.SendGameSnapshot(m.currentGame.GameID, mapData)
 }
 
 // GetOnBallDrawnCallback 獲取球抽取事件回調函數

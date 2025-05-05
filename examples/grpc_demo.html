@@ -253,7 +253,38 @@
                             name: "DrawBall",
                             requestType: "DrawBallRequest",
                             requestTemplate: {
-                                "balls": []
+                                "balls": [
+                                    { "number": 1, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 2, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 3, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 4, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 5, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 6, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 7, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 8, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 9, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 10, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 11, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 12, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 13, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 14, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 15, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 16, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 17, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 18, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 19, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 20, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 21, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 22, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 23, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 24, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 25, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 26, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 27, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 28, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 29, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": new Date().toISOString() },
+                                    { "number": 30, "type": "BALL_TYPE_REGULAR", "isLast": true, "timestamp": new Date().toISOString() }
+                                ]
                             }
                         },
                         {
@@ -429,16 +460,30 @@
                             };
                             break;
                         case 'DrawBall':
-                            responseData = {
-                                "balls": [
-                                    {
-                                        "number": Math.floor(Math.random() * 75) + 1,
-                                        "type": "BALL_TYPE_REGULAR",
-                                        "isLast": false,
-                                        "timestamp": new Date().toISOString()
+                            // 直接返回所有現有的球
+                            let ballsArray = requestData.balls;
+                            
+                            // 檢查最後一顆球是否標記為 isLast=true
+                            let lastBallIsLast = false;
+                            if (ballsArray && ballsArray.length > 0) {
+                                lastBallIsLast = ballsArray[ballsArray.length - 1].isLast;
+                            }
+                            
+                            // 如果最後一顆球標記為最後一顆，顯示狀態變更信息
+                            if (lastBallIsLast) {
+                                responseData = {
+                                    "balls": ballsArray,
+                                    "gameStatus": {
+                                        "stage": "GAME_STAGE_DRAWING_CLOSE",
+                                        "message": "最後一顆球已標記，抽球環節結束，進入下一階段"
                                     }
-                                ]
-                            };
+                                };
+                            } else {
+                                // 如果最後一顆球未標記為最後一顆，只返回球列表
+                                responseData = {
+                                    "balls": ballsArray
+                                };
+                            }
                             break;
                         case 'GetGameStatus':
                             responseData = {
@@ -665,7 +710,32 @@
                     'GAME_EVENT_TYPE_GAME_CREATED'
                 ];
                 
-                const randomEventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+                let randomEventType;
+                
+                // 如果是 DrawBall 方法，優先模擬球和階段變更事件
+                if (state.currentMethod && state.currentMethod.name === 'DrawBall') {
+                    // 獲取請求中的球列表
+                    const ballsArray = requestData.balls || [];
+                    
+                    // 檢查最後一顆球是否標記為 isLast=true
+                    let lastBallIsLast = false;
+                    if (ballsArray.length > 0) {
+                        lastBallIsLast = ballsArray[ballsArray.length - 1].isLast;
+                    }
+                    
+                    // 第一個事件始終是抽球
+                    if (counter === 1) {
+                        randomEventType = 'GAME_EVENT_TYPE_BALL_DRAWN';
+                    } 
+                    // 只有最後一顆球標記為最後一顆時，才模擬階段變更事件
+                    else if (counter === 2 && lastBallIsLast) {
+                        randomEventType = 'GAME_EVENT_TYPE_STAGE_CHANGED';
+                    } else {
+                        randomEventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+                    }
+                } else {
+                    randomEventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+                }
                 
                 // 檢查是否應該接收此類型的事件
                 if (requestData.eventTypes && requestData.eventTypes.length > 0) {
@@ -677,30 +747,83 @@
                 let eventData;
                 switch (randomEventType) {
                     case 'GAME_EVENT_TYPE_STAGE_CHANGED':
-                        eventData = {
-                            eventType: randomEventType,
-                            timestamp: new Date().toISOString(),
-                            gameId: "test-game-1",
-                            stageChanged: {
-                                oldStage: "GAME_STAGE_DRAWING_START",
-                                newStage: "GAME_STAGE_DRAWING_CLOSE"
-                            }
-                        };
+                        // 如果是 DrawBall 方法，模擬抽球環節結束的階段變更
+                        if (state.currentMethod && state.currentMethod.name === 'DrawBall' && counter === 2) {
+                            eventData = {
+                                eventType: randomEventType,
+                                timestamp: new Date().toISOString(),
+                                gameId: "test-game-1",
+                                stageChanged: {
+                                    oldStage: "GAME_STAGE_DRAWING_START",
+                                    newStage: "GAME_STAGE_DRAWING_CLOSE"
+                                }
+                            };
+                        } else {
+                            eventData = {
+                                eventType: randomEventType,
+                                timestamp: new Date().toISOString(),
+                                gameId: "test-game-1",
+                                stageChanged: {
+                                    oldStage: "GAME_STAGE_DRAWING_START",
+                                    newStage: "GAME_STAGE_DRAWING_CLOSE"
+                                }
+                            };
+                        }
                         break;
                     case 'GAME_EVENT_TYPE_BALL_DRAWN':
-                        eventData = {
-                            eventType: randomEventType,
-                            timestamp: new Date().toISOString(),
-                            gameId: "test-game-1",
-                            ballDrawn: {
-                                ball: {
-                                    number: Math.floor(Math.random() * 75) + 1,
-                                    type: "BALL_TYPE_REGULAR",
-                                    isLast: false,
-                                    timestamp: new Date().toISOString()
-                                }
+                        // 如果是 DrawBall 方法，模擬請求中的最後一顆球
+                        if (state.currentMethod && state.currentMethod.name === 'DrawBall' && counter === 1) {
+                            // 獲取請求中的球列表
+                            const ballsArray = requestData.balls || [];
+                            
+                            if (ballsArray.length > 0) {
+                                // 使用請求中的最後一顆球
+                                const lastBall = ballsArray[ballsArray.length - 1];
+                                
+                                eventData = {
+                                    eventType: randomEventType,
+                                    timestamp: new Date().toISOString(),
+                                    gameId: "test-game-1",
+                                    ballDrawn: {
+                                        ball: {
+                                            number: lastBall.number,
+                                            type: "BALL_TYPE_REGULAR",
+                                            isLast: lastBall.isLast,
+                                            timestamp: new Date().toISOString()
+                                        }
+                                    }
+                                };
+                            } else {
+                                // 沒有球時的默認行為
+                                eventData = {
+                                    eventType: randomEventType,
+                                    timestamp: new Date().toISOString(),
+                                    gameId: "test-game-1",
+                                    ballDrawn: {
+                                        ball: {
+                                            number: Math.floor(Math.random() * 75) + 1,
+                                            type: "BALL_TYPE_REGULAR",
+                                            isLast: false,
+                                            timestamp: new Date().toISOString()
+                                        }
+                                    }
+                                };
                             }
-                        };
+                        } else {
+                            eventData = {
+                                eventType: randomEventType,
+                                timestamp: new Date().toISOString(),
+                                gameId: "test-game-1",
+                                ballDrawn: {
+                                    ball: {
+                                        number: Math.floor(Math.random() * 75) + 1,
+                                        type: "BALL_TYPE_REGULAR",
+                                        isLast: false,
+                                        timestamp: new Date().toISOString()
+                                    }
+                                }
+                            };
+                        }
                         break;
                     case 'GAME_EVENT_TYPE_GAME_CREATED':
                         eventData = {
