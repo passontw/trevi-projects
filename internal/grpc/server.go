@@ -9,7 +9,7 @@ import (
 	"g38_lottery_service/internal/dealerWebsocket"
 	"g38_lottery_service/internal/gameflow"
 	"g38_lottery_service/internal/grpc/dealer"
-	pb "g38_lottery_service/internal/proto/dealer"
+	pb "g38_lottery_service/internal/proto/generated/dealer"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"

@@ -6,7 +6,7 @@ import (
 
 	"g38_lottery_service/internal/dealerWebsocket"
 	"g38_lottery_service/internal/gameflow"
-	pb "g38_lottery_service/internal/proto/dealer"
+	pb "g38_lottery_service/internal/proto/generated/dealer"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -105,98 +105,150 @@ func (s *DealerService) StartNewRound(ctx context.Context, req *pb.StartNewRound
 
 // DrawBall 實現 DealerService.DrawBall RPC 方法
 func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (*pb.DrawBallResponse, error) {
+	// 檢查是否有已存在的球
+	existingBalls := req.GetBalls()
+
+	// 獲取最後一個球的數字（如果存在）
+	var lastBallNumber int
+	var isLast bool
+
+	if len(existingBalls) > 0 {
+		lastBall := existingBalls[len(existingBalls)-1]
+		lastBallNumber = int(lastBall.Number)
+		isLast = lastBall.IsLast
+	}
+
 	// 抽取常規球
-	ball, err := s.gameManager.HandleDrawBall(ctx, int(req.Number), req.IsLast)
+	ball, err := s.gameManager.HandleDrawBall(ctx, lastBallNumber, isLast)
 	if err != nil {
 		return nil, err
 	}
 
+	// 創建新的球對象
+	pbBall := &pb.Ball{
+		Number:    int32(ball.Number),
+		Type:      pb.BallType_BALL_TYPE_REGULAR,
+		IsLast:    ball.IsLast,
+		Timestamp: timestamppb.New(ball.Timestamp),
+	}
+
+	// 將新球添加到現有球列表
+	updatedBalls := append(existingBalls, pbBall)
+
 	return &pb.DrawBallResponse{
-		Ball: &pb.Ball{
-			Number:    int32(ball.Number),
-			Type:      pb.BallType_BALL_TYPE_REGULAR,
-			IsLast:    ball.IsLast,
-			Timestamp: timestamppb.New(ball.Timestamp),
-		},
+		Balls: updatedBalls,
 	}, nil
 }
 
 // DrawExtraBall 實現 DealerService.DrawExtraBall RPC 方法
 func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBallRequest) (*pb.DrawExtraBallResponse, error) {
+	// 檢查是否有已存在的球
+	existingBalls := req.GetBalls()
+
+	// 獲取最後一個球的數字（如果存在）
+	var lastBallNumber int
+	var isLast bool
+
+	if len(existingBalls) > 0 {
+		lastBall := existingBalls[len(existingBalls)-1]
+		lastBallNumber = int(lastBall.Number)
+		isLast = lastBall.IsLast
+	}
+
 	// 抽取額外球
-	ball, err := s.gameManager.HandleDrawExtraBall(ctx, int(req.Number), req.IsLast)
+	ball, err := s.gameManager.HandleDrawExtraBall(ctx, lastBallNumber, isLast)
 	if err != nil {
 		return nil, err
 	}
 
+	// 創建新的球對象
+	pbBall := &pb.Ball{
+		Number:    int32(ball.Number),
+		Type:      pb.BallType_BALL_TYPE_EXTRA,
+		IsLast:    ball.IsLast,
+		Timestamp: timestamppb.New(ball.Timestamp),
+	}
+
+	// 將新球添加到現有球列表
+	updatedBalls := append(existingBalls, pbBall)
+
 	return &pb.DrawExtraBallResponse{
-		Ball: &pb.Ball{
-			Number:    int32(ball.Number),
-			Type:      pb.BallType_BALL_TYPE_EXTRA,
-			IsLast:    ball.IsLast,
-			Timestamp: timestamppb.New(ball.Timestamp),
-		},
+		Balls: updatedBalls,
 	}, nil
 }
 
 // DrawJackpotBall 實現 DealerService.DrawJackpotBall RPC 方法
 func (s *DealerService) DrawJackpotBall(ctx context.Context, req *pb.DrawJackpotBallRequest) (*pb.DrawJackpotBallResponse, error) {
+	// 檢查是否有已存在的球
+	existingBalls := req.GetBalls()
+
+	// 獲取最後一個球的數字（如果存在）
+	var lastBallNumber int
+	var isLast bool
+
+	if len(existingBalls) > 0 {
+		lastBall := existingBalls[len(existingBalls)-1]
+		lastBallNumber = int(lastBall.Number)
+		isLast = lastBall.IsLast
+	}
+
 	// 抽取JP球
-	ball, err := s.gameManager.HandleDrawJackpotBall(ctx, int(req.Number), req.IsLast)
+	ball, err := s.gameManager.HandleDrawJackpotBall(ctx, lastBallNumber, isLast)
 	if err != nil {
 		return nil, err
 	}
 
+	// 創建新的球對象
+	pbBall := &pb.Ball{
+		Number:    int32(ball.Number),
+		Type:      pb.BallType_BALL_TYPE_JACKPOT,
+		IsLast:    ball.IsLast,
+		Timestamp: timestamppb.New(ball.Timestamp),
+	}
+
+	// 將新球添加到現有球列表
+	updatedBalls := append(existingBalls, pbBall)
+
 	return &pb.DrawJackpotBallResponse{
-		Ball: &pb.Ball{
-			Number:    int32(ball.Number),
-			Type:      pb.BallType_BALL_TYPE_JACKPOT,
-			IsLast:    ball.IsLast,
-			Timestamp: timestamppb.New(ball.Timestamp),
-		},
+		Balls: updatedBalls,
 	}, nil
 }
 
 // DrawLuckyBall 實現 DealerService.DrawLuckyBall RPC 方法
 func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBallRequest) (*pb.DrawLuckyBallResponse, error) {
+	// 檢查是否有已存在的球
+	existingBalls := req.GetBalls()
+
+	// 獲取最後一個球的數字（如果存在）
+	var lastBallNumber int
+	var isLast bool
+
+	if len(existingBalls) > 0 {
+		lastBall := existingBalls[len(existingBalls)-1]
+		lastBallNumber = int(lastBall.Number)
+		isLast = lastBall.IsLast
+	}
+
 	// 抽取幸運號碼球
-	ball, err := s.gameManager.HandleDrawLuckyBall(ctx, int(req.Number), req.IsLast)
+	ball, err := s.gameManager.HandleDrawLuckyBall(ctx, lastBallNumber, isLast)
 	if err != nil {
 		return nil, err
 	}
+
+	// 創建新的球對象
+	pbBall := &pb.Ball{
+		Number:    int32(ball.Number),
+		Type:      pb.BallType_BALL_TYPE_LUCKY,
+		IsLast:    ball.IsLast,
+		Timestamp: timestamppb.New(ball.Timestamp),
+	}
+
+	// 將新球添加到現有球列表
+	updatedBalls := append(existingBalls, pbBall)
 
 	return &pb.DrawLuckyBallResponse{
-		Ball: &pb.Ball{
-			Number:    int32(ball.Number),
-			Type:      pb.BallType_BALL_TYPE_LUCKY,
-			IsLast:    ball.IsLast,
-			Timestamp: timestamppb.New(ball.Timestamp),
-		},
+		Balls: updatedBalls,
 	}, nil
-}
-
-// NotifyJackpotWinner 實現 DealerService.NotifyJackpotWinner RPC 方法
-func (s *DealerService) NotifyJackpotWinner(ctx context.Context, req *pb.NotifyJackpotWinnerRequest) (*pb.GameData, error) {
-	// 通知JP獲獎者
-	err := s.gameManager.NotifyJackpotWinner(ctx, req.WinnerId)
-	if err != nil {
-		return nil, err
-	}
-
-	// 返回更新後的遊戲數據
-	return convertGameDataToPb(s.gameManager.GetCurrentGame()), nil
-}
-
-// SetHasJackpot 實現 DealerService.SetHasJackpot RPC 方法
-func (s *DealerService) SetHasJackpot(ctx context.Context, req *pb.SetHasJackpotRequest) (*pb.GameData, error) {
-	// 設置遊戲是否啟用JP
-	err := s.gameManager.SetHasJackpot(ctx, req.HasJackpot)
-	if err != nil {
-		return nil, err
-	}
-
-	// 返回更新後的遊戲數據
-	return convertGameDataToPb(s.gameManager.GetCurrentGame()), nil
 }
 
 // CancelGame 實現 DealerService.CancelGame RPC 方法
@@ -212,6 +264,8 @@ func (s *DealerService) CancelGame(ctx context.Context, req *pb.CancelGameReques
 }
 
 // AdvanceStage 實現 DealerService.AdvanceStage RPC 方法
+// NOTE: 此方法在最新的proto定義中不存在，暫時註釋掉
+/*
 func (s *DealerService) AdvanceStage(ctx context.Context, req *pb.AdvanceStageRequest) (*pb.AdvanceStageResponse, error) {
 	// 獲取當前階段
 	oldStage := s.gameManager.GetCurrentStage()
@@ -230,6 +284,7 @@ func (s *DealerService) AdvanceStage(ctx context.Context, req *pb.AdvanceStageRe
 		NewStage: convertGameStageToPb(newStage),
 	}, nil
 }
+*/
 
 // GetGameStatus 實現 DealerService.GetGameStatus RPC 方法
 func (s *DealerService) GetGameStatus(ctx context.Context, req *pb.GetGameStatusRequest) (*pb.GetGameStatusResponse, error) {
@@ -486,7 +541,7 @@ func convertGameStageToPb(stage gameflow.GameStage) pb.GameStage {
 		return pb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_CLOSE
 	case gameflow.StagePayoutSettlement:
 		return pb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT
-	case gameflow.StageJackpotStart:
+	case gameflow.StageJackpotPreparation:
 		return pb.GameStage_GAME_STAGE_JACKPOT_START
 	case gameflow.StageJackpotDrawingStart:
 		return pb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START

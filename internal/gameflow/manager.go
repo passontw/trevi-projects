@@ -637,43 +637,6 @@ func (m *GameManager) HandleDrawLuckyBall(ctx context.Context, number int, isLas
 	return ball, nil
 }
 
-// NotifyJackpotWinner 通知JP獲獎者
-func (m *GameManager) NotifyJackpotWinner(ctx context.Context, winnerID string) error {
-	m.stageMutex.Lock()
-	defer m.stageMutex.Unlock()
-
-	if m.currentGame == nil {
-		return ErrGameNotFound
-	}
-
-	// 確認當前階段是JP抽球階段
-	if m.currentGame.CurrentStage != StageJackpotDrawingStart {
-		return NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_JP_WINNER",
-			"當前階段 %s 不允許設置JP獲獎者", m.currentGame.CurrentStage)
-	}
-
-	// 設置JP獲獎者
-	m.currentGame.JackpotWinner = winnerID
-
-	// 保存更新後的遊戲狀態
-	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
-		return fmt.Errorf("保存遊戲狀態失敗: %w", err)
-	}
-
-	m.logger.Info("設置JP獲獎者",
-		zap.String("gameID", m.currentGame.GameID),
-		zap.String("winnerID", winnerID))
-
-	// 有人中獎，自動推進到下一階段
-	go func() {
-		if err := m.AdvanceStage(ctx, true); err != nil {
-			m.logger.Error("JP獲獎後自動推進階段失敗", zap.Error(err))
-		}
-	}()
-
-	return nil
-}
-
 // SetHasJackpot 設置遊戲是否啟用JP
 func (m *GameManager) SetHasJackpot(ctx context.Context, hasJackpot bool) error {
 	m.stageMutex.Lock()
