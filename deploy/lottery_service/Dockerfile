@@ -1,5 +1,5 @@
 # 構建階段
-FROM golang:1.23-alpine AS builder
+FROM golang:1.23.8-bookworm AS builder
 
 # 設定環境變數
 ENV GO111MODULE=on

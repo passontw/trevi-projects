@@ -114,15 +114,30 @@ pipeline {
                     // 備份原 Dockerfile
                     sh "cp ${env.DOCKERFILE_PATH} ${env.DOCKERFILE_PATH}.bak"
                     
+                    // 修改 go.mod 中的版本要求
+                    sh """
+                        # 臨時修改 go.mod 中的 Go 版本要求為 1.22.0
+                        sed -i'.bak' 's/go 1.23.0/go 1.22.0/' go.mod
+                        sed -i'.bak' '/toolchain go1.23/d' go.mod
+                        echo "Modified go.mod content:"
+                        cat go.mod
+                    """
+                    
                     // 創建新的優化 Dockerfile
                     writeFile file: env.DOCKERFILE_PATH, text: '''# 構建階段
 FROM golang:1.22-alpine AS builder
 
 # 安裝必要工具
-RUN apk add --no-cache gcc musl-dev git
+RUN apk add --no-cache gcc musl-dev git bash protobuf protobuf-dev
 
 # 設定工作目錄
 WORKDIR /app
+
+# 設定環境變數
+ENV GO111MODULE=on
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=off
+ENV CGO_ENABLED=0
 
 # 複製所有源代碼
 COPY . .
@@ -130,8 +145,18 @@ COPY . .
 # 顯示當前目錄結構和 go.mod，用於調試
 RUN echo "Workspace structure:" && ls -la && cat go.mod
 
-# 簡化模組處理：不修改 go.mod，保持原始狀態
+# 簡化模組處理：確保依賴正確
 RUN go mod tidy
+
+# 安裝 protoc-gen-go 和 protoc-gen-go-grpc
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0
+RUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0
+
+# 確保 script 可執行
+RUN chmod +x scripts/gen-proto-smart.sh || echo "Script not found, continuing build"
+
+# 嘗試生成 protobuf 代碼（如果腳本存在）
+RUN if [ -f scripts/gen-proto-smart.sh ]; then ./scripts/gen-proto-smart.sh; fi
 
 # 構建應用程序，顯示詳細構建日誌
 RUN go env && \\
@@ -156,7 +181,7 @@ EXPOSE 8080
 # 運行命令
 CMD ["./lottery_service"]
 '''
-                    echo "Created optimized Dockerfile with Go 1.22 and simplified module handling"
+                    echo "Created optimized Dockerfile with Go 1.22 and modified go.mod"
                 }
             }
         }
@@ -189,11 +214,17 @@ CMD ["./lottery_service"]
             }
         }
         
-        stage('Restore Dockerfile') {
+        stage('Restore Files') {
             steps {
                 script {
-                    // 恢復原始 Dockerfile
-                    sh "mv ${env.DOCKERFILE_PATH}.bak ${env.DOCKERFILE_PATH} || true"
+                    // 恢復原始 Dockerfile 和 go.mod
+                    sh """
+                        # 恢復原始 Dockerfile
+                        mv ${env.DOCKERFILE_PATH}.bak ${env.DOCKERFILE_PATH} || true
+                        
+                        # 恢復原始 go.mod
+                        mv go.mod.bak go.mod || true
+                    """
                 }
             }
         }
@@ -215,8 +246,14 @@ CMD ["./lottery_service"]
                             docker logout ${env.HARBOR_REGISTRY} || true
                         """
                         
-                        // 恢復原始 Dockerfile
-                        sh "mv ${env.DOCKERFILE_PATH}.bak ${env.DOCKERFILE_PATH} || true"
+                        // 恢復原始 Dockerfile 和 go.mod
+                        sh """
+                            # 恢復原始 Dockerfile
+                            mv ${env.DOCKERFILE_PATH}.bak ${env.DOCKERFILE_PATH} || true
+                            
+                            # 恢復原始 go.mod
+                            mv go.mod.bak go.mod || true
+                        """
                     } catch (Exception e) {
                         echo "Warning: Cleanup failed: ${e.message}"
                     }
