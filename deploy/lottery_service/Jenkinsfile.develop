@@ -3,12 +3,25 @@ pipeline {
         label 'MacMini_10.141.31.151'
     }
     
+    environment {
+        // Harbor registry information
+        HARBOR_REGISTRY = 'harbor.trevi-dev.cc'
+        HARBOR_PROJECT = 'g38-dev'
+        IMAGE_NAME = 'lottery-service-backend'
+        DOCKERFILE_PATH = './deploy/lottery_service/Dockerfile'
+        
+        // Go environment variables
+        GOPATH = "${WORKSPACE}/gopath"
+        GOMODCACHE = "${WORKSPACE}/gopath/pkg/mod"
+        GO111MODULE = "on"
+    }
+    
     stages {
         stage('Checkout') {
             steps {
                 // Clean workspace
                 cleanWs()
-                // Checkout code from GitLab
+                // Checkout code
                 checkout scm
             }
         }
@@ -16,32 +29,35 @@ pipeline {
         stage('Check Changes') {
             steps {
                 script {
-                    // Get changed files - ensure git repo is properly checked out first
-                    def hasChanges = false
+                    // 獲取最後兩次提交之間的更改文件
+                    def changedFiles = ""
                     try {
-                        def changedFiles = sh(script: 'git diff --name-only HEAD^ HEAD || true', returnStdout: true).trim()
+                        changedFiles = sh(script: 'git diff --name-only HEAD^ HEAD || echo ""', returnStdout: true).trim()
                         echo "Changed files: ${changedFiles}"
-                        
-                        // Check if specified paths have changed
-                        def hasRelevantChanges = sh(script: '''
-                            git diff --name-only HEAD^ HEAD | grep -E "^cmd/lottery_service/main.go|^internal/|^pkg/.*/.*/" || true
+                    } catch (Exception e) {
+                        echo "Warning: Unable to determine changed files: ${e.message}"
+                        echo "Proceeding with build anyway."
+                        changedFiles = "unknown"
+                    }
+                    
+                    // 檢查指定路徑是否有更改
+                    def hasRelevantChanges = false
+                    if (changedFiles != "unknown") {
+                        def relevantChanges = sh(script: '''
+                            git diff --name-only HEAD^ HEAD | grep -E "^cmd/lottery_service/main.go|^internal/|^pkg/.*/.*/" || echo ""
                         ''', returnStdout: true).trim()
                         
-                        if (hasRelevantChanges == '') {
-                            echo "No changes in cmd/lottery_service/main.go, internal/*, or pkg/****/****/* paths. Build will continue anyway for testing."
-                            // We don't exit early for testing purposes
-                            // currentBuild.result = 'SUCCESS'
-                            // error("Skipping build due to no relevant changes")
+                        if (relevantChanges == '') {
+                            echo "No changes in cmd/lottery_service/main.go, internal/*, or pkg/****/****/* paths."
+                            echo "Build will continue for testing purposes."
                         } else {
-                            echo "Relevant changes detected. Proceeding with build."
-                            hasChanges = true
+                            echo "Relevant changes detected: ${relevantChanges}"
+                            hasRelevantChanges = true
                         }
-                    } catch (Exception e) {
-                        echo "Error checking git changes: ${e.message}. Proceeding with build anyway."
                     }
                     
                     // Store this for later use
-                    env.HAS_RELEVANT_CHANGES = hasChanges.toString()
+                    env.HAS_RELEVANT_CHANGES = hasRelevantChanges.toString()
                 }
             }
         }
@@ -52,7 +68,7 @@ pipeline {
                     // Generate build timestamp
                     env.BUILD_TIMESTAMP = sh(script: 'date "+%Y%m%d%H%M%S"', returnStdout: true).trim()
                     
-                    // Try to get git commit, but don't fail if not available
+                    // Try to get git commit
                     try {
                         env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     } catch (Exception e) {
@@ -61,12 +77,8 @@ pipeline {
                     }
                     
                     // Set up the full image name
-                    env.HARBOR_REGISTRY = 'harbor.trevi-dev.cc'
-                    env.HARBOR_PROJECT = 'g38-dev'
-                    env.IMAGE_NAME = 'lottery-service-backend'
                     env.IMAGE_TAG = "${env.BUILD_TIMESTAMP}-${env.GIT_COMMIT_SHORT}-${BUILD_NUMBER}"
                     env.FULL_IMAGE_NAME = "${env.HARBOR_REGISTRY}/${env.HARBOR_PROJECT}/${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    env.DOCKERFILE_PATH = './deploy/lottery_service/Dockerfile'
                     
                     echo "Building image: ${env.FULL_IMAGE_NAME}"
                 }
@@ -75,9 +87,18 @@ pipeline {
         
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build -t ${env.FULL_IMAGE_NAME} . -f ${env.DOCKERFILE_PATH}
-                """
+                // 修改 Dockerfile 以正確處理 Go modules
+                sh '''
+                    # 確保構建上下文正確
+                    cd ${WORKSPACE}
+                    
+                    # 構建 Docker 映像
+                    docker build -t ${FULL_IMAGE_NAME} . -f ${DOCKERFILE_PATH} \\
+                        --build-arg GO111MODULE=on \\
+                        --build-arg GOPROXY=https://goproxy.cn,direct \\
+                        --build-arg GOSUMDB=off
+                '''
+                
                 echo "Docker image built successfully: ${env.FULL_IMAGE_NAME}"
             }
         }
@@ -86,15 +107,16 @@ pipeline {
             steps {
                 // Login to Harbor registry
                 withCredentials([usernamePassword(credentialsId: 'harbor-credentials', passwordVariable: 'HARBOR_PASSWORD', usernameVariable: 'HARBOR_USERNAME')]) {
-                    sh """
-                        echo ${HARBOR_PASSWORD} | docker login ${env.HARBOR_REGISTRY} -u ${HARBOR_USERNAME} --password-stdin
-                    """
+                    sh '''
+                        echo ${HARBOR_PASSWORD} | docker login ${HARBOR_REGISTRY} -u ${HARBOR_USERNAME} --password-stdin
+                    '''
                 }
                 
                 // Push the image to Harbor
-                sh """
-                    docker push ${env.FULL_IMAGE_NAME}
-                """
+                sh '''
+                    docker push ${FULL_IMAGE_NAME}
+                '''
+                
                 echo "Docker image pushed successfully: ${env.FULL_IMAGE_NAME}"
             }
         }
@@ -107,14 +129,14 @@ pipeline {
                 if (env.FULL_IMAGE_NAME) {
                     try {
                         // Clean up - remove Docker image to save space
-                        sh """
-                            docker rmi ${env.FULL_IMAGE_NAME} || true
-                        """
+                        sh '''
+                            docker rmi ${FULL_IMAGE_NAME} || true
+                        '''
                         
                         // Logout from Harbor
-                        sh """
-                            docker logout ${env.HARBOR_REGISTRY} || true
-                        """
+                        sh '''
+                            docker logout ${HARBOR_REGISTRY} || true
+                        '''
                     } catch (Exception e) {
                         echo "Warning: Cleanup failed: ${e.message}"
                     }
