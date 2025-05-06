@@ -3,7 +3,6 @@ syntax = "proto3";
 package dealer;
 
 import "internal/lottery_service/proto/dealer/ball.proto";
-import "internal/lottery_service/proto/dealer/common.proto";
 import "internal/lottery_service/proto/dealer/game.proto";
 import "internal/lottery_service/proto/dealer/events.proto";
 
