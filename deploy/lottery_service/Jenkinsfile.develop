@@ -85,6 +85,7 @@ pipeline {
                     // 定義 Docker 映像完整名稱
                     def imageTag = env.BUILD_NUMBER
                     env.FULL_IMAGE_NAME = "${env.HARBOR_REGISTRY}/${env.HARBOR_PROJECT}/${env.IMAGE_NAME}:${imageTag}"
+                    env.LATEST_IMAGE_NAME = "${env.HARBOR_REGISTRY}/${env.HARBOR_PROJECT}/${env.IMAGE_NAME}:latest"
                     echo "Building image: ${env.FULL_IMAGE_NAME}"
                     
                     // 使用 --no-cache 選項確保每次構建都是乾淨的，並啟用詳細輸出
@@ -92,7 +93,13 @@ pipeline {
                         docker build -t ${env.FULL_IMAGE_NAME} . -f ${env.DOCKERFILE_PATH} \\
                             --no-cache --progress=plain
                     """
-                    echo "Docker image built successfully: ${env.FULL_IMAGE_NAME}"
+                    
+                    // 為 latest 標籤打標
+                    sh """
+                        docker tag ${env.FULL_IMAGE_NAME} ${env.LATEST_IMAGE_NAME}
+                    """
+                    
+                    echo "Docker image built successfully: ${env.FULL_IMAGE_NAME} and ${env.LATEST_IMAGE_NAME}"
                 }
             }
         }
@@ -106,11 +113,12 @@ pipeline {
                     """
                 }
                 
-                // Push the image to Harbor
+                // Push 版本標籤和 latest 標籤
                 sh """
                     docker push ${env.FULL_IMAGE_NAME}
+                    docker push ${env.LATEST_IMAGE_NAME}
                 """
-                echo "Docker image pushed successfully: ${env.FULL_IMAGE_NAME}"
+                echo "Docker images pushed successfully: ${env.FULL_IMAGE_NAME} and ${env.LATEST_IMAGE_NAME}"
             }
         }                
     }
@@ -128,6 +136,11 @@ pipeline {
                         echo "FULL_IMAGE_NAME not defined, skipping image removal"
                     }
                     
+                    if (env.LATEST_IMAGE_NAME) {
+                        sh "docker rmi ${env.LATEST_IMAGE_NAME} || true"
+                        echo "Removed Docker image: ${env.LATEST_IMAGE_NAME}"
+                    }
+                    
                     // 清理未使用的映像和暫存文件
                     sh "docker system prune -f || true"
                 } catch (Exception e) {
@@ -138,7 +151,7 @@ pipeline {
         
         success {
             echo "Build and push completed successfully!"
-            echo "Image: ${env.FULL_IMAGE_NAME ?: 'No image was built'}"
+            echo "Images: ${env.FULL_IMAGE_NAME} and ${env.LATEST_IMAGE_NAME}"
         }
         
         failure {

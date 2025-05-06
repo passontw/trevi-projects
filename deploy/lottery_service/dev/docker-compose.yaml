@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  lottery-service:
+    image: harbor.trevi-dev.cc/g38-dev/lottery-service-backend:latest
+    container_name: lottery-service-dev
+    restart: unless-stopped
+    ports:
+      - "${SERVICE_PORT}:8080"
+    environment:
+      - TZ=${LOTTERY_DEFAULT_TIMEZONE}
+      - SERVER_MODE=${SERVER_MODE}
+      - LOG_LEVEL=${LOG_LEVEL}     
+    volumes:
+      - lottery_logs:/app/logs
+      - .env:/app/.env
+    networks:
+      - lottery_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  lottery_network:
+    driver: bridge
+
+volumes:
+  lottery_logs: 
