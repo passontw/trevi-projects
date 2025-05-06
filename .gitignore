@@ -36,8 +36,6 @@ coverage
 coverage.out
 coverage.html
 
-docs 
-
 .DS_Store
 
 .idea
