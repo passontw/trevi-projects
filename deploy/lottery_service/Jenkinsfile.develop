@@ -61,30 +61,7 @@ pipeline {
                     env.HAS_RELEVANT_CHANGES = hasRelevantChanges.toString()
                 }
             }
-        }
-        
-        stage('Prepare Build Info') {
-            steps {
-                script {
-                    // Generate build timestamp
-                    env.BUILD_TIMESTAMP = sh(script: 'date "+%Y%m%d%H%M%S"', returnStdout: true).trim()
-                    
-                    // Try to get git commit
-                    try {
-                        env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    } catch (Exception e) {
-                        env.GIT_COMMIT_SHORT = "unknown"
-                        echo "Could not get git commit: ${e.message}"
-                    }
-                    
-                    // Set up the full image name
-                    env.IMAGE_TAG = "${env.BUILD_TIMESTAMP}-${env.GIT_COMMIT_SHORT}-${BUILD_NUMBER}"
-                    env.FULL_IMAGE_NAME = "${env.HARBOR_REGISTRY}/${env.HARBOR_PROJECT}/${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    
-                    echo "Building image: ${env.FULL_IMAGE_NAME}"
-                }
-            }
-        }
+        }                
         
         stage('Test Environment') {
             steps {
@@ -100,90 +77,7 @@ pipeline {
                     cat go.mod || echo "go.mod not found"
                 """
             }
-        }
-        
-        stage('Prepare Dockerfile') {
-            steps {
-                script {
-                    // 檢查 Dockerfile 是否存在
-                    def dockerfileExists = fileExists(env.DOCKERFILE_PATH)
-                    if (!dockerfileExists) {
-                        error "Dockerfile not found at ${env.DOCKERFILE_PATH}"
-                    }
-                    
-                    // 備份原 Dockerfile
-                    sh "cp ${env.DOCKERFILE_PATH} ${env.DOCKERFILE_PATH}.bak"
-                    
-                    // 創建新的優化 Dockerfile
-                    writeFile file: env.DOCKERFILE_PATH, text: '''# 構建階段
-FROM golang:1.22-alpine AS builder
-
-# 安裝必要工具
-RUN apk add --no-cache gcc musl-dev git bash
-
-# 設定工作目錄
-WORKDIR /app
-
-# 設定環境變數
-ENV GO111MODULE=on
-ENV GOPROXY=https://goproxy.cn,direct
-ENV GOSUMDB=off
-ENV CGO_ENABLED=0
-
-# 檢查Alpine版本和可用套件
-RUN cat /etc/os-release && apk info
-
-# 嘗試安裝protobuf（如果可用）
-RUN apk add --no-cache protobuf || echo "Protobuf package not available, will continue without it"
-
-# 複製所有源代碼
-COPY . .
-
-# 顯示當前目錄結構和 go.mod，用於調試
-RUN echo "Workspace structure:" && ls -la && cat go.mod
-
-# 安裝 protoc-gen-go 和 protoc-gen-go-grpc
-RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28.1
-RUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2.0
-
-# 簡化模組處理：確保依賴正確，但跳過版本檢查
-RUN go mod tidy -e
-
-# 嘗試生成 protobuf 代碼（如果腳本存在）
-RUN if [ -f scripts/gen-proto-smart.sh ]; then \
-        chmod +x scripts/gen-proto-smart.sh && \
-        ./scripts/gen-proto-smart.sh || echo "Proto generation failed, but continuing build"; \
-    else \
-        echo "Proto script not found, continuing build"; \
-    fi
-
-# 構建應用程序，顯示詳細構建日誌
-RUN go env && \
-    echo "Building application..." && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -o lottery_service ./cmd/lottery_service/main.go
-
-# 最終階段
-FROM alpine:latest
-
-# 安裝必要的運行時依賴
-RUN apk --no-cache add ca-certificates tzdata
-
-# 設定工作目錄
-WORKDIR /app
-
-# 從構建階段複製編譯好的應用程序
-COPY --from=builder /app/lottery_service .
-
-# 暴露端口（根據您的應用需求調整）
-EXPOSE 8080
-
-# 運行命令
-CMD ["./lottery_service"]
-'''
-                    echo "Created optimized Dockerfile with Go 1.22 and modified go.mod"
-                }
-            }
-        }
+        }        
         
         stage('Build Docker Image') {
             steps {
@@ -211,52 +105,14 @@ CMD ["./lottery_service"]
                 """
                 echo "Docker image pushed successfully: ${env.FULL_IMAGE_NAME}"
             }
-        }
-        
-        stage('Restore Files') {
-            steps {
-                script {
-                    // 恢復原始 Dockerfile 和 go.mod
-                    sh """
-                        # 恢復原始 Dockerfile
-                        mv ${env.DOCKERFILE_PATH}.bak ${env.DOCKERFILE_PATH} || true
-                        
-                        # 恢復原始 go.mod
-                        mv go.mod.orig go.mod || true
-                    """
-                }
-            }
-        }
+        }                
     }
     
     post {
         always {
             script {
                 // Only try to clean up if we have built the image
-                if (env.FULL_IMAGE_NAME) {
-                    try {
-                        // Clean up - remove Docker image to save space
-                        sh """
-                            docker rmi ${env.FULL_IMAGE_NAME} || true
-                        """
-                        
-                        // Logout from Harbor
-                        sh """
-                            docker logout ${env.HARBOR_REGISTRY} || true
-                        """
-                        
-                        // 恢復原始 Dockerfile 和 go.mod
-                        sh """
-                            # 恢復原始 Dockerfile
-                            mv ${env.DOCKERFILE_PATH}.bak ${env.DOCKERFILE_PATH} || true
-                            
-                            # 恢復原始 go.mod
-                            mv go.mod.orig go.mod || true
-                        """
-                    } catch (Exception e) {
-                        echo "Warning: Cleanup failed: ${e.message}"
-                    }
-                }
+                echo "Build and push completed successfully!"
             }
         }
         
