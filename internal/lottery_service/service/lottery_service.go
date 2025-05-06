@@ -1,9 +1,9 @@
 package service
 
 import (
-	"g38_lottery_service/internal/dealerWebsocket"
-	"g38_lottery_service/internal/mq"
-	"g38_lottery_service/internal/websocket"
+	"g38_lottery_service/internal/lottery_service/dealerWebsocket"
+	"g38_lottery_service/internal/lottery_service/mq"
+	"g38_lottery_service/internal/lottery_service/websocket"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"

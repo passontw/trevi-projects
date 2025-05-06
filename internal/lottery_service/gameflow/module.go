@@ -3,7 +3,7 @@ package gameflow
 import (
 	"context"
 
-	mq "g38_lottery_service/internal/mq"
+	mq "g38_lottery_service/internal/lottery_service/mq"
 	redis "g38_lottery_service/pkg/redisManager"
 
 	"go.uber.org/fx"

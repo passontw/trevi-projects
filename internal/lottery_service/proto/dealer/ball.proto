@@ -3,9 +3,9 @@ syntax = "proto3";
 package dealer;
 
 import "google/protobuf/timestamp.proto";
-import "internal/proto/dealer/common.proto";
+import "internal/lottery_service/proto/dealer/common.proto";
 
-option go_package = "g38_lottery_service/internal/proto/generated/dealer";
+option go_package = "g38_lottery_service/internal/lottery_service/proto/generated/dealer";
 
 // 球類型
 enum BallType {

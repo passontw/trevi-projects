@@ -6,11 +6,11 @@ import (
 	"net"
 	"time"
 
-	"g38_lottery_service/internal/config"
-	"g38_lottery_service/internal/dealerWebsocket"
-	"g38_lottery_service/internal/gameflow"
-	"g38_lottery_service/internal/grpc/dealer"
-	pb "g38_lottery_service/internal/proto/generated/dealer"
+	"g38_lottery_service/internal/lottery_service/config"
+	"g38_lottery_service/internal/lottery_service/dealerWebsocket"
+	"g38_lottery_service/internal/lottery_service/gameflow"
+	"g38_lottery_service/internal/lottery_service/grpc/dealer"
+	pb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"

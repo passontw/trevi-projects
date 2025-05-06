@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/lottery_service/config"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/fx"

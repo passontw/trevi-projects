@@ -3,8 +3,8 @@ package core
 import (
 	"context"
 
-	"g38_lottery_service/internal/config"
-	"g38_lottery_service/internal/service"
+	"g38_lottery_service/internal/lottery_service/config"
+	"g38_lottery_service/internal/lottery_service/service"
 	"g38_lottery_service/pkg/databaseManager"
 	"g38_lottery_service/pkg/dealerWebsocket"
 	"g38_lottery_service/pkg/logger"

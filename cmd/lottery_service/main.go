@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
-	"g38_lottery_service/internal/config"
-	"g38_lottery_service/internal/dealerWebsocket"
-	"g38_lottery_service/internal/gameflow"
-	"g38_lottery_service/internal/grpc"
-	"g38_lottery_service/internal/mq"
-	"g38_lottery_service/internal/service"
+	"g38_lottery_service/internal/lottery_service/config"
+	"g38_lottery_service/internal/lottery_service/dealerWebsocket"
+	"g38_lottery_service/internal/lottery_service/gameflow"
+	"g38_lottery_service/internal/lottery_service/grpc"
+	"g38_lottery_service/internal/lottery_service/mq"
+	"g38_lottery_service/internal/lottery_service/service"
 	"g38_lottery_service/pkg/nacosManager"
 	redis "g38_lottery_service/pkg/redisManager"
 

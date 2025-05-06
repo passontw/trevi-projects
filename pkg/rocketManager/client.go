@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/lottery_service/config"
 
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/consumer"

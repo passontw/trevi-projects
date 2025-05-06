@@ -3,7 +3,7 @@ package gameflow
 import (
 	"context"
 	"fmt"
-	"g38_lottery_service/internal/mq"
+	"g38_lottery_service/internal/lottery_service/mq"
 	"strings"
 	"sync"
 	"time"

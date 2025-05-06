@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/lottery_service/config"
 	"net"
 	"os"
 	"strings"

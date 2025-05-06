@@ -3,11 +3,11 @@ syntax = "proto3";
 package dealer;
 
 import "google/protobuf/timestamp.proto";
-import "internal/proto/dealer/common.proto";
-import "internal/proto/dealer/ball.proto";
+import "internal/lottery_service/proto/dealer/common.proto";
+import "internal/lottery_service/proto/dealer/ball.proto";
 import "validate/validate.proto";
 
-option go_package = "g38_lottery_service/internal/proto/generated/dealer";
+option go_package = "g38_lottery_service/internal/lottery_service/proto/generated/dealer";
 // 遊戲狀態回應資料
 message GameResponseData {
   // 遊戲基本資訊

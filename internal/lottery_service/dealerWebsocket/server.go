@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"g38_lottery_service/internal/config"
-	"g38_lottery_service/internal/gameflow"
-	"g38_lottery_service/internal/websocket"
+	"g38_lottery_service/internal/lottery_service/config"
+	"g38_lottery_service/internal/lottery_service/gameflow"
+	"g38_lottery_service/internal/lottery_service/websocket"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"

@@ -1,7 +1,7 @@
 package mq
 
 import (
-	"g38_lottery_service/internal/config"
+	"g38_lottery_service/internal/lottery_service/config"
 	"testing"
 
 	"github.com/apache/rocketmq-client-go/v2"

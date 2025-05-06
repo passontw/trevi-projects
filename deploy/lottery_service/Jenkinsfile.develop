@@ -1,0 +1,107 @@
+pipeline {
+    agent {
+        label 'MacMini_10.141.31.151'
+    }
+    
+    environment {
+        // Harbor registry information
+        HARBOR_REGISTRY = 'harbor.trevi-dev.cc'
+        HARBOR_PROJECT = 'g38-dev'
+        IMAGE_NAME = 'lottery-service-backend'
+        // Dynamically generated version information
+        BUILD_TIMESTAMP = sh(script: 'date "+%Y%m%d%H%M%S"', returnStdout: true).trim()
+        GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+        IMAGE_TAG = "${BUILD_TIMESTAMP}-${GIT_COMMIT_SHORT}-${BUILD_NUMBER}"
+        FULL_IMAGE_NAME = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}"
+        // Docker build context and file
+        DOCKERFILE_PATH = './deploy/lottery_service/Dockerfile'
+    }
+    
+    stages {
+        stage('Check Changes') {
+            steps {
+                script {
+                    // Checkout code from GitLab
+                    checkout scm
+                    
+                    // Get changed files
+                    def changes = sh(script: 'git diff --name-only HEAD^ HEAD || echo ""', returnStdout: true).trim()
+                    echo "Changed files: ${changes}"
+                    
+                    // Check if specified paths have changed
+                    def hasRelevantChanges = sh(script: '''
+                        git diff --name-only HEAD^ HEAD | grep -E "^cmd/lottery_service/main.go|^internal/|^pkg/.*/.*/" || echo ""
+                    ''', returnStdout: true).trim()
+                    
+                    // Skip build if no relevant changes
+                    if (hasRelevantChanges == '') {
+                        echo "No changes in cmd/lottery_service/main.go, internal/*, or pkg/****/****/* paths. Skipping build."
+                        currentBuild.result = 'SUCCESS'
+                        error("Skipping build due to no relevant changes")
+                    }
+                    
+                    echo "Relevant changes detected. Proceeding with build."
+                }
+            }
+        }
+        
+        stage('Prepare') {
+            steps {
+                echo "Building ${FULL_IMAGE_NAME}"
+                // Clean workspace
+                cleanWs()
+                // Checkout code from GitLab again (after potential skip)
+                checkout scm
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                    docker build -t ${FULL_IMAGE_NAME} . -f ${DOCKERFILE_PATH}
+                """
+                echo "Docker image built successfully: ${FULL_IMAGE_NAME}"
+            }
+        }
+        
+        stage('Push to Harbor') {
+            steps {
+                // Login to Harbor registry
+                withCredentials([usernamePassword(credentialsId: 'harbor-credentials', passwordVariable: 'HARBOR_PASSWORD', usernameVariable: 'HARBOR_USERNAME')]) {
+                    sh """
+                        echo ${HARBOR_PASSWORD} | docker login ${HARBOR_REGISTRY} -u ${HARBOR_USERNAME} --password-stdin
+                    """
+                }
+                
+                // Push the image to Harbor
+                sh """
+                    docker push ${FULL_IMAGE_NAME}
+                """
+                echo "Docker image pushed successfully: ${FULL_IMAGE_NAME}"
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean up - remove Docker image to save space
+            sh """
+                docker rmi ${FULL_IMAGE_NAME} || true
+            """
+            
+            // Logout from Harbor
+            sh """
+                docker logout ${HARBOR_REGISTRY} || true
+            """
+        }
+        
+        success {
+            echo "Build and push completed successfully!"
+            echo "Image: ${FULL_IMAGE_NAME}"
+        }
+        
+        failure {
+            echo "Build or push failed!"
+        }
+    }
+}
