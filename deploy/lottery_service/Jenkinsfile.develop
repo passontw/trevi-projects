@@ -1,19 +1,20 @@
 pipeline {
     agent {
-        label 'java_agent_docker_10.1.7.160'
+        label 'MacMini_10.141.31.151'
     }
     
     environment {
-        // Harbor registry information
+        // Git 和 Harbor 設定
+        GIT_CREDENTIAL = 'jenkins_deploy'
         HARBOR_REGISTRY = 'harbor.trevi-dev.cc'
         HARBOR_PROJECT = 'g38-dev'
         IMAGE_NAME = 'lottery-service-backend'
         DOCKERFILE_PATH = './deploy/lottery_service/Dockerfile'
         
-        // Go environment variables
-        GOPATH = "${WORKSPACE}/gopath"
-        GOMODCACHE = "${WORKSPACE}/gopath/pkg/mod"
-        GO111MODULE = "on"
+        // Go 環境變數
+        GO111MODULE = 'on'
+        GOPROXY = 'https://goproxy.cn,direct'
+        GOSUMDB = 'off'
     }
     
     stages {
@@ -85,20 +86,63 @@ pipeline {
             }
         }
         
+        stage('Prepare Dockerfile') {
+            steps {
+                script {
+                    // 檢查 Dockerfile 是否存在
+                    def dockerfileExists = fileExists(env.DOCKERFILE_PATH)
+                    if (!dockerfileExists) {
+                        error "Dockerfile not found at ${env.DOCKERFILE_PATH}"
+                    }
+                    
+                    // 備份原 Dockerfile
+                    sh "cp ${env.DOCKERFILE_PATH} ${env.DOCKERFILE_PATH}.bak"
+                    
+                    // 讀取 Dockerfile 內容
+                    def dockerfileContent = readFile(env.DOCKERFILE_PATH)
+                    
+                    // 檢查並修改 Dockerfile，添加必要的環境變數和修復 Go 模組路徑問題
+                    if (!dockerfileContent.contains("ENV GO111MODULE")) {
+                        // 如果 Dockerfile 中的 builder 階段是使用 golang 映像
+                        if (dockerfileContent.contains("FROM golang")) {
+                            // 新增環境變數設定
+                            def updatedDockerfile = dockerfileContent.replaceFirst(
+                                /FROM golang.*AS builder/, 
+                                '''FROM golang:1.23-alpine AS builder
+
+# 設定環境變數
+ENV GO111MODULE=on
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=off
+ENV CGO_ENABLED=0
+'''
+                            )
+
+                            // 修改構建指令
+                            updatedDockerfile = updatedDockerfile.replaceFirst(
+                                /RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o lottery_service .*/, 
+                                'WORKDIR /app\nCOPY . .\nRUN go mod download && go mod tidy\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o lottery_service ./cmd/lottery_service/main.go'
+                            )
+                            
+                            // 寫回修改後的 Dockerfile
+                            writeFile file: env.DOCKERFILE_PATH, text: updatedDockerfile
+                            echo "Updated Dockerfile with Go module settings"
+                        }
+                    }
+                }
+            }
+        }
+        
         stage('Build Docker Image') {
             steps {
-                // 修改 Dockerfile 以正確處理 Go modules
-                sh '''
-                    # 確保構建上下文正確
-                    cd ${WORKSPACE}
-                    
-                    # 構建 Docker 映像
-                    docker build -t ${FULL_IMAGE_NAME} . -f ${DOCKERFILE_PATH} \\
+                // 修改 Docker 構建命令，添加必要的構建參數
+                sh """
+                    docker build -t ${env.FULL_IMAGE_NAME} . -f ${env.DOCKERFILE_PATH} \\
                         --build-arg GO111MODULE=on \\
                         --build-arg GOPROXY=https://goproxy.cn,direct \\
-                        --build-arg GOSUMDB=off
-                '''
-                
+                        --build-arg GOSUMDB=off \\
+                        --build-arg MODULE_NAME=g38_lottery_service
+                """
                 echo "Docker image built successfully: ${env.FULL_IMAGE_NAME}"
             }
         }
@@ -106,18 +150,26 @@ pipeline {
         stage('Push to Harbor') {
             steps {
                 // Login to Harbor registry
-                withCredentials([usernamePassword(credentialsId: 'harbor-credentials', passwordVariable: 'HARBOR_PASSWORD', usernameVariable: 'HARBOR_USERNAME')]) {
-                    sh '''
-                        echo ${HARBOR_PASSWORD} | docker login ${HARBOR_REGISTRY} -u ${HARBOR_USERNAME} --password-stdin
-                    '''
+                withCredentials([usernamePassword(credentialsId: 'harbor.trevi-dev.cc', passwordVariable: 'HARBOR_PWD', usernameVariable: 'HARBOR_USER')]) {
+                    sh """
+                        echo \"${HARBOR_PWD}\" | docker login \"https://${env.HARBOR_REGISTRY}\" -u \"${HARBOR_USER}\" --password-stdin
+                    """
                 }
                 
                 // Push the image to Harbor
-                sh '''
-                    docker push ${FULL_IMAGE_NAME}
-                '''
-                
+                sh """
+                    docker push ${env.FULL_IMAGE_NAME}
+                """
                 echo "Docker image pushed successfully: ${env.FULL_IMAGE_NAME}"
+            }
+        }
+        
+        stage('Restore Dockerfile') {
+            steps {
+                script {
+                    // 恢復原始 Dockerfile
+                    sh "mv ${env.DOCKERFILE_PATH}.bak ${env.DOCKERFILE_PATH} || true"
+                }
             }
         }
     }
@@ -129,14 +181,17 @@ pipeline {
                 if (env.FULL_IMAGE_NAME) {
                     try {
                         // Clean up - remove Docker image to save space
-                        sh '''
-                            docker rmi ${FULL_IMAGE_NAME} || true
-                        '''
+                        sh """
+                            docker rmi ${env.FULL_IMAGE_NAME} || true
+                        """
                         
                         // Logout from Harbor
-                        sh '''
-                            docker logout ${HARBOR_REGISTRY} || true
-                        '''
+                        sh """
+                            docker logout ${env.HARBOR_REGISTRY} || true
+                        """
+                        
+                        // 恢復原始 Dockerfile
+                        sh "mv ${env.DOCKERFILE_PATH}.bak ${env.DOCKERFILE_PATH} || true"
                     } catch (Exception e) {
                         echo "Warning: Cleanup failed: ${e.message}"
                     }
