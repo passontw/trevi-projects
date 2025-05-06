@@ -1,6 +1,6 @@
 pipeline {
     agent {
-        label 'MacMini_10.141.31.151'
+        label 'java_agent_docker_10.1.7.160'
     }
     
     environment {
