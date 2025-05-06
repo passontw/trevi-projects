@@ -107,21 +107,21 @@ pipeline {
                         if (dockerfileContent.contains("FROM golang")) {
                             // 新增環境變數設定
                             def updatedDockerfile = dockerfileContent.replaceFirst(
-                                /FROM golang.*AS builder/, 
-                                '''FROM golang:1.23-alpine AS builder
+                                "FROM golang.*AS builder", 
+                                """FROM golang:1.23-alpine AS builder
 
 # 設定環境變數
 ENV GO111MODULE=on
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GOSUMDB=off
 ENV CGO_ENABLED=0
-'''
+"""
                             )
 
                             // 修改構建指令
                             updatedDockerfile = updatedDockerfile.replaceFirst(
-                                /RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o lottery_service .*/, 
-                                'WORKDIR /app\nCOPY . .\nRUN go mod download && go mod tidy\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o lottery_service ./cmd/lottery_service/main.go'
+                                "RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o lottery_service .*", 
+                                "WORKDIR /app\nCOPY . .\nRUN go mod download && go mod tidy\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o lottery_service ./cmd/lottery_service/main.go"
                             )
                             
                             // 寫回修改後的 Dockerfile
