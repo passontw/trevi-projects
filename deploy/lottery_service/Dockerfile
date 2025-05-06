@@ -8,7 +8,7 @@ ENV GOSUMDB=off
 ENV CGO_ENABLED=0
 
 # 安裝必要工具
-RUN apk add --no-cache gcc musl-dev git bash protobuf protobuf-dev
+RUN apt-get update && apt-get install -y gcc libc6-dev git bash protobuf-compiler libprotobuf-dev
 
 # 設定工作目錄 - 這裡是關鍵，確保使用正確的模組路徑
 WORKDIR /go/src/g38_lottery_service
