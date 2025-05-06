@@ -118,8 +118,21 @@ pipeline {
     post {
         always {
             script {
-                // Only try to clean up if we have built the image
-                echo "Build and push completed successfully!"
+                // 不論成功或失敗，始終移除 Docker 映像
+                echo "Cleaning up Docker images..."
+                try {
+                    if (env.FULL_IMAGE_NAME) {
+                        sh "docker rmi ${env.FULL_IMAGE_NAME} || true"
+                        echo "Removed Docker image: ${env.FULL_IMAGE_NAME}"
+                    } else {
+                        echo "FULL_IMAGE_NAME not defined, skipping image removal"
+                    }
+                    
+                    // 清理未使用的映像和暫存文件
+                    sh "docker system prune -f || true"
+                } catch (Exception e) {
+                    echo "Warning: Failed to clean up Docker images: ${e.message}"
+                }
             }
         }
         
