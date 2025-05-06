@@ -2,8 +2,6 @@ module g38_lottery_service
 
 go 1.23.8
 
-toolchain go1.23.8
-
 require (
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
 	github.com/envoyproxy/protoc-gen-validate v1.2.1
