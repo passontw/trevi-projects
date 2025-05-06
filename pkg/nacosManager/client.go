@@ -175,6 +175,7 @@ func ProvideNacosConfig() *NacosConfig {
 
 func ProvideNacosClient(lc fx.Lifecycle, config *NacosConfig) (NacosClient, error) {
 	log.Printf("開始創建 Nacos 客戶端: %s:%d", config.IpAddr, config.Port)
+	log.Printf("Nacos Config: %+v", config)
 
 	client, err := NewNacosClient(config)
 	if err != nil {

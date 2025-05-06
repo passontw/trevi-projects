@@ -1,94 +1,221 @@
 package dealerWebsocket
 
 import (
-	"log"
+	"fmt"
 	"net/http"
-	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
+	"g38_lottery_service/pkg/core/service"
+
+	"go.uber.org/zap"
 )
 
-// WebSocket 處理器結構體
+// WebSocketHandler 處理 WebSocket 連接請求
 type WebSocketHandler struct {
-	manager     *Manager                         // WebSocket 管理器
-	upgrader    websocket.Upgrader               // WebSocket 升級器
-	authFunc    func(token string) (uint, error) // 認證函數
-	connections int64                            // 連接計數
+	manager        *Manager
+	tokenValidator TokenValidator
+	logger         *zap.Logger
 }
 
-// 創建新的 WebSocket 處理器
-func NewWebSocketHandler(manager *Manager, authFunc func(token string) (uint, error)) *WebSocketHandler {
-	if manager == nil {
-		log.Fatal("Dealer WebSocket Handler: Manager cannot be nil")
+// NewWebSocketHandler 創建新的 WebSocket 處理程序
+func NewWebSocketHandler(manager *Manager, tokenValidator TokenValidator) *WebSocketHandler {
+	return &WebSocketHandler{
+		manager:        manager,
+		tokenValidator: tokenValidator,
+		logger:         zap.L().Named("websocket_handler"),
 	}
+}
 
-	// 配置 WebSocket 升級器
-	upgrader := websocket.Upgrader{
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
-		// 允許所有源的連接
-		CheckOrigin: func(r *http.Request) bool {
-			// 在生產環境中應該實現更嚴格的檢查
-			return true
+// HandleDealerConnection 處理荷官連接
+func (h *WebSocketHandler) HandleDealerConnection(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("Handling dealer connection request")
+	h.manager.HandleConnection(w, r, true)
+}
+
+// HandlePlayerConnection 處理玩家連接
+func (h *WebSocketHandler) HandlePlayerConnection(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("Handling player connection request")
+	h.manager.HandleConnection(w, r, false)
+}
+
+// DealerMessageHandler 實現荷官消息處理
+type DealerMessageHandler struct {
+	gameService service.GameService
+	logger      *zap.Logger
+}
+
+// NewDealerMessageHandler 創建新的荷官消息處理器
+func NewDealerMessageHandler(gameService service.GameService) *DealerMessageHandler {
+	return &DealerMessageHandler{
+		gameService: gameService,
+		logger:      zap.L().Named("dealer_message_handler"),
+	}
+}
+
+// Handle 處理荷官端發送的消息
+func (h *DealerMessageHandler) Handle(client *Client, message Message) error {
+	// 記錄收到的消息
+	h.logger.Info("Received dealer message",
+		zap.String("clientID", client.ID),
+		zap.String("type", message.Type))
+
+	// 根據消息類型處理
+	switch message.Type {
+	case "START_GAME":
+		return h.handleStartGame(client, message)
+	case "END_GAME":
+		return h.handleEndGame(client, message)
+	case "DRAW_BALL":
+		return h.handleDrawBall(client, message)
+	case "SELECT_SIDE":
+		return h.handleSelectSide(client, message)
+	default:
+		// 返回未知消息類型的錯誤
+		return client.SendJSON(Response{
+			Type: "error",
+			Payload: map[string]interface{}{
+				"message":   fmt.Sprintf("未知消息類型: %s", message.Type),
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		})
+	}
+}
+
+// handleStartGame 處理開始游戲請求
+func (h *DealerMessageHandler) handleStartGame(client *Client, message Message) error {
+	h.logger.Info("Handling START_GAME request", zap.String("clientID", client.ID))
+
+	// 這裡會調用 gameService 的方法來開始遊戲
+	// 實際實現可能需要從 message.Payload 中提取參數
+
+	// 模擬開始遊戲
+	gameID := fmt.Sprintf("game-%d", time.Now().Unix())
+
+	return client.SendJSON(Response{
+		Type: "response",
+		Payload: map[string]interface{}{
+			"type":      "START_GAME",
+			"success":   true,
+			"game_id":   gameID,
+			"message":   "遊戲已開始",
+			"timestamp": time.Now().Format(time.RFC3339),
 		},
-	}
-
-	handler := &WebSocketHandler{
-		manager:     manager,
-		upgrader:    upgrader,
-		authFunc:    authFunc,
-		connections: 0,
-	}
-
-	// 設置管理器對處理器的引用，以便能夠更新連接計數
-	manager.SetWebSocketHandler(handler)
-
-	return handler
+	})
 }
 
-// 處理 WebSocket 連接請求的 HTTP 處理器
-func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// 升級 HTTP 連接到 WebSocket
-	conn, err := h.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("Dealer WebSocket Handler: Upgrade error: %v", err)
-		return
+// handleEndGame 處理結束遊戲請求
+func (h *DealerMessageHandler) handleEndGame(client *Client, message Message) error {
+	h.logger.Info("Handling END_GAME request", zap.String("clientID", client.ID))
+
+	// 從消息中獲取遊戲ID
+	gameID, ok := message.Payload["game_id"].(string)
+	if !ok {
+		return client.SendJSON(Response{
+			Type: "response",
+			Payload: map[string]interface{}{
+				"type":      "END_GAME",
+				"success":   false,
+				"message":   "缺少遊戲ID",
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		})
 	}
 
-	// 生成客戶端唯一標識
-	clientID := uuid.New().String()
-	log.Printf("Dealer WebSocket Handler: New connection from %s, assigned ID: %s", conn.RemoteAddr(), clientID)
+	// 這裡會調用 gameService 的方法來結束遊戲
 
-	// 創建新的客戶端
-	client := &Client{
-		ID:           clientID,
-		Conn:         conn,
-		Send:         make(chan []byte, 256), // 緩衝區大小
-		manager:      h.manager,
-		LastActivity: time.Now(),
-		IsAuthed:     false, // 初始未認證
+	return client.SendJSON(Response{
+		Type: "response",
+		Payload: map[string]interface{}{
+			"type":      "END_GAME",
+			"success":   true,
+			"game_id":   gameID,
+			"message":   "遊戲已結束",
+			"timestamp": time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// handleDrawBall 處理抽球請求
+func (h *DealerMessageHandler) handleDrawBall(client *Client, message Message) error {
+	h.logger.Info("Handling DRAW_BALL request", zap.String("clientID", client.ID))
+
+	// 從消息中獲取遊戲ID
+	gameID, ok := message.Payload["game_id"].(string)
+	if !ok {
+		return client.SendJSON(Response{
+			Type: "response",
+			Payload: map[string]interface{}{
+				"type":      "DRAW_BALL",
+				"success":   false,
+				"message":   "缺少遊戲ID",
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		})
 	}
 
-	// 增加連接計數
-	atomic.AddInt64(&h.connections, 1)
-	log.Printf("Dealer WebSocket Handler: Active connections: %d", atomic.LoadInt64(&h.connections))
+	// 這裡會調用 gameService 的方法來抽球
+	// 模擬抽球結果
+	ballNumber := fmt.Sprintf("%d", time.Now().Unix()%80+1)
 
-	// 向管理器註冊客戶端
-	h.manager.register <- client
-
-	// 啟動客戶端讀寫協程
-	go client.ReadPump()
-	go client.WritePump()
+	return client.SendJSON(Response{
+		Type: "response",
+		Payload: map[string]interface{}{
+			"type":      "DRAW_BALL",
+			"success":   true,
+			"game_id":   gameID,
+			"ball":      ballNumber,
+			"ball_type": "regular",
+			"draw_time": time.Now().Format(time.RFC3339),
+			"message":   fmt.Sprintf("成功抽取球號: %s", ballNumber),
+			"timestamp": time.Now().Format(time.RFC3339),
+		},
+	})
 }
 
-// 獲取當前活躍連接數
-func (h *WebSocketHandler) GetConnectionCount() int64 {
-	return atomic.LoadInt64(&h.connections)
-}
+// handleSelectSide 處理選邊請求
+func (h *DealerMessageHandler) handleSelectSide(client *Client, message Message) error {
+	h.logger.Info("Handling SELECT_SIDE request", zap.String("clientID", client.ID))
 
-// 註冊 WebSocket 路由
-func (h *WebSocketHandler) RegisterHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("/ws", h.HandleWebSocket)
+	// 從消息中獲取遊戲ID
+	gameID, ok := message.Payload["game_id"].(string)
+	if !ok {
+		return client.SendJSON(Response{
+			Type: "response",
+			Payload: map[string]interface{}{
+				"type":      "SELECT_SIDE",
+				"success":   false,
+				"message":   "缺少遊戲ID",
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		})
+	}
+
+	// 從消息中獲取選擇的邊
+	side, ok := message.Payload["side"].(string)
+	if !ok {
+		return client.SendJSON(Response{
+			Type: "response",
+			Payload: map[string]interface{}{
+				"type":      "SELECT_SIDE",
+				"success":   false,
+				"message":   "缺少選邊信息",
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		})
+	}
+
+	// 這裡會調用 gameService 的方法來處理選邊
+
+	return client.SendJSON(Response{
+		Type: "response",
+		Payload: map[string]interface{}{
+			"type":        "SELECT_SIDE",
+			"success":     true,
+			"game_id":     gameID,
+			"side":        side,
+			"select_time": time.Now().Format(time.RFC3339),
+			"message":     fmt.Sprintf("成功選擇: %s", side),
+			"timestamp":   time.Now().Format(time.RFC3339),
+		},
+	})
 }

@@ -4,1289 +4,637 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"strconv"
-	"strings"
+	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
-const (
-	// 心跳間隔設置為15秒
-	heartbeatInterval = 15 * time.Second
-	// 連接超時設置
-	readTimeout  = 60 * time.Second
-	writeTimeout = 10 * time.Second
-	// 非活躍連接超時（5分鐘）
-	inactivityTimeout = 5 * time.Minute
-	// 發送通道緩衝大小
-	writeWait = 10 * time.Second
-
-	// 允許客戶端不發送ping的最大時間
-	pongWait = 60 * time.Second
-
-	// 發送ping的頻率，必須小於pongWait
-	pingPeriod = (pongWait * 9) / 10
-
-	// 消息最大大小
-	maxMessageSize = 512 * 1024 // 512KB
-)
-
-var (
-	// 換行符用於分隔消息
-	newline = []byte{'\n'}
-)
-
-// 心跳消息結構
-type HeartbeatMessage struct {
-	Type      string `json:"type"`      // 消息類型
-	Timestamp int64  `json:"timestamp"` // 時間戳（毫秒）
+// 定義 WebSocket 升級器
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	// 允許所有來源的連線 (生產環境應該設定為特定域名)
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
 }
 
-// 客戶端結構體，代表一個 WebSocket 連接
+// TokenValidator 是一個用於驗證 Token 的函數類型
+type TokenValidator func(token string) (uint, error)
+
+// Client 代表一個 WebSocket 客戶端連線
 type Client struct {
-	ID                   string          // 客戶端唯一標識
-	UserID               uint            // 用戶 ID
-	Conn                 *websocket.Conn // WebSocket 連接
-	Send                 chan []byte     // 發送訊息的通道
-	manager              *Manager        // 所屬的管理器
-	LastActivity         time.Time       // 最後活動時間
-	IsAuthed             bool            // 是否已認證
-	closeChan            chan struct{}   // 關閉通道
-	heartbeatTicker      *time.Ticker    // 心跳定時器
-	connMutex            sync.Mutex      // 連接鎖，防止並發讀寫
-	closeReason          string          // 關閉原因
-	rooms                []string        // 客戶端所在的房間列表
-	games                []string        // 客戶端所在的遊戲列表
-	heartbeatErrorLogged bool
+	ID        string
+	conn      *websocket.Conn
+	manager   *Manager
+	send      chan []byte
+	userData  map[string]interface{}
+	userID    uint
+	mu        sync.Mutex
+	closed    bool
+	isDealer  bool
+	topicSubs map[string]bool // 訂閱的主題
 }
 
-// 客戶端狀態
-type ClientState int
-
-const (
-	StateDisconnected ClientState = iota
-	StateConnecting
-	StateConnected
-	StateFailed
-)
-
-// MessageHandler 定義消息處理器介面
-type MessageHandler interface {
-	// 處理消息
-	HandleMessage(client *Client, messageType string, data interface{})
-	// 處理連接
-	HandleConnect(client *Client)
-	// 處理斷開連接
-	HandleDisconnect(client *Client)
-}
-
-// Message 消息結構
+// Message 結構用於解析接收到的 JSON 訊息
 type Message struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
+	Type    string                 `json:"type"`
+	Payload map[string]interface{} `json:"payload,omitempty"`
 }
 
-// WebSocket 管理器結構體
+// Response 結構用於發送 JSON 回應
+type Response struct {
+	Type    string      `json:"type"`
+	Payload interface{} `json:"payload,omitempty"`
+}
+
+// MessageHandler 是處理特定類型訊息的介面
+type MessageHandler interface {
+	Handle(client *Client, message Message) error
+}
+
+// Manager 是 WebSocket 連線管理器
 type Manager struct {
-	clients         map[*Client]bool
-	authClients     map[uint][]*Client
-	userClients     map[uint]map[string]*Client // 用戶ID到客戶端ID的映射
-	roomClients     map[string]map[*Client]bool // 房間ID到客戶端的映射
-	gameClients     map[string]map[*Client]bool // 遊戲ID到客戶端的映射
-	directBroadcast map[uint]chan []byte
-	messageHandler  MessageHandler
-	register        chan *Client
-	unregister      chan *Client
-	broadcast       chan []byte
-	shutdown        chan struct{}
-	auth            func(token string) (uint, error)
-	mutex           sync.RWMutex
-	wsHandler       *WebSocketHandler // 引用 WebSocketHandler 以更新連接計數
+	clients          map[string]*Client
+	dealerClients    map[string]*Client
+	playerClients    map[string]*Client
+	register         chan *Client
+	unregister       chan *Client
+	broadcast        chan []byte
+	logger           *zap.Logger
+	mu               sync.RWMutex
+	tokenValidator   TokenValidator
+	messageHandler   MessageHandler
+	topics           map[string]map[string]*Client // 每個主題的訂閱者
+	topicsMu         sync.RWMutex
+	shutdownCh       chan struct{}
+	shutdownComplete chan struct{}
 }
 
-// 創建新的 WebSocket 管理器
-func NewManager(authFunc func(token string) (uint, error)) *Manager {
+// NewManager 創建新的 WebSocket 管理器
+func NewManager(tokenValidator TokenValidator) *Manager {
 	return &Manager{
-		clients:         make(map[*Client]bool),
-		authClients:     make(map[uint][]*Client),
-		userClients:     make(map[uint]map[string]*Client),
-		roomClients:     make(map[string]map[*Client]bool), // 初始化房間客戶端映射
-		gameClients:     make(map[string]map[*Client]bool), // 初始化遊戲客戶端映射
-		directBroadcast: make(map[uint]chan []byte),
-		messageHandler:  nil,
-		register:        make(chan *Client, 10),
-		unregister:      make(chan *Client, 10),
-		broadcast:       make(chan []byte, 100),
-		shutdown:        make(chan struct{}),
-		auth:            authFunc,
-		mutex:           sync.RWMutex{},
-		wsHandler:       nil, // 初始為 nil，稍後在 WebSocketHandler 建立時設置
+		clients:          make(map[string]*Client),
+		dealerClients:    make(map[string]*Client),
+		playerClients:    make(map[string]*Client),
+		register:         make(chan *Client),
+		unregister:       make(chan *Client),
+		broadcast:        make(chan []byte),
+		logger:           zap.L().Named("websocket_manager"),
+		tokenValidator:   tokenValidator,
+		messageHandler:   nil, // 需要外部設置
+		topics:           make(map[string]map[string]*Client),
+		shutdownCh:       make(chan struct{}),
+		shutdownComplete: make(chan struct{}),
 	}
 }
 
-// 設置 WebSocketHandler 的引用
-func (manager *Manager) SetWebSocketHandler(wsHandler *WebSocketHandler) {
-	manager.wsHandler = wsHandler
+// SetMessageHandler 設置訊息處理器
+func (m *Manager) SetMessageHandler(handler MessageHandler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messageHandler = handler
 }
 
-// 啟動 WebSocket 管理器
-func (manager *Manager) Start(ctx context.Context) {
-	log.Println("Dealer WebSocket Manager: Starting...")
+// Start 啟動 WebSocket 管理器的主要運行迴圈
+func (m *Manager) Start(ctx context.Context) {
+	m.logger.Info("Starting WebSocket manager")
+	defer close(m.shutdownComplete)
 
-	// 創建獨立的上下文確保完整的生命週期
-	if ctx == nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithCancel(context.Background())
-		defer cancel()
-		log.Println("Dealer WebSocket Manager: Using fallback background context")
-	}
-
-	// 恢復panic以防止整個服務崩潰
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Dealer WebSocket Manager: Recovered from panic: %v", r)
-		}
-	}()
-
-	// 非活躍連接檢查定時器
-	inactivityTicker := time.NewTicker(1 * time.Minute)
-	defer inactivityTicker.Stop()
-
-	log.Println("Dealer WebSocket Manager: Running main event loop")
-	running := true
-
-	for running {
+	for {
 		select {
 		case <-ctx.Done():
-			// 只在有活躍連接時才輸出關閉訊息
-			clientCount := len(manager.clients)
-			if clientCount > 0 {
-				log.Println("Dealer WebSocket Manager: Context cancelled, shutting down...")
-			}
-			manager.cleanupAllConnections()
-			running = false
-
-		case client, ok := <-manager.register:
-			if !ok {
-				log.Println("Dealer WebSocket Manager: Register channel closed")
-				continue
-			}
-
-			manager.mutex.Lock()
-			manager.clients[client] = true
-			manager.mutex.Unlock()
-			log.Printf("Dealer WebSocket Manager: Client %s registered\n", client.ID)
-
-		case client, ok := <-manager.unregister:
-			if !ok {
-				log.Println("Dealer WebSocket Manager: Unregister channel closed")
-				continue
-			}
-
-			manager.removeClient(client)
-
-		case message, ok := <-manager.broadcast:
-			if !ok {
-				log.Println("Dealer WebSocket Manager: Broadcast channel closed")
-				continue
-			}
-
-			manager.broadcastMessage(message)
-
-		case <-inactivityTicker.C:
-			manager.cleanupInactiveConnections()
-		}
-	}
-
-	// 只在有活躍連接時才輸出關閉訊息
-	if len(manager.clients) > 0 {
-		log.Println("Dealer WebSocket Manager: Event loop terminated")
-	}
-}
-
-// 清理所有連接
-func (manager *Manager) cleanupAllConnections() {
-	manager.mutex.Lock()
-	defer manager.mutex.Unlock()
-
-	clientCount := len(manager.clients)
-	// 只在有連接需要清理時才輸出日誌
-	if clientCount > 0 {
-		log.Printf("Dealer WebSocket Manager: Cleaning up all %d connections", clientCount)
-	}
-
-	for client := range manager.clients {
-		if client.heartbeatTicker != nil {
-			client.heartbeatTicker.Stop()
-		}
-
-		if client.closeChan != nil {
-			close(client.closeChan)
-		}
-
-		client.Conn.Close()
-		close(client.Send)
-	}
-
-	// 清空映射
-	manager.clients = make(map[*Client]bool)
-	manager.authClients = make(map[uint][]*Client)
-	manager.userClients = make(map[uint]map[string]*Client)
-	manager.directBroadcast = make(map[uint]chan []byte)
-
-	// 重置連接計數
-	if manager.wsHandler != nil {
-		atomic.StoreInt64(&manager.wsHandler.connections, 0)
-		// 只有在之前有連接時才輸出
-		if clientCount > 0 {
-			log.Printf("Dealer WebSocket Handler: Reset active connections to 0")
+			m.logger.Info("Context done, stopping WebSocket manager")
+			return
+		case <-m.shutdownCh:
+			m.logger.Info("Shutdown signal received, stopping WebSocket manager")
+			return
+		case client := <-m.register:
+			m.registerClient(client)
+		case client := <-m.unregister:
+			m.unregisterClient(client)
+		case message := <-m.broadcast:
+			m.broadcastMessage(message)
 		}
 	}
 }
 
-// 移除指定客戶端
-func (manager *Manager) removeClient(client *Client) {
-	if client == nil {
+// Shutdown 關閉 WebSocket 管理器
+func (m *Manager) Shutdown() {
+	m.logger.Info("Shutting down WebSocket manager")
+	close(m.shutdownCh)
+	<-m.shutdownComplete
+	m.logger.Info("WebSocket manager stopped")
+}
+
+// HandleConnection 處理新的 WebSocket 連線
+func (m *Manager) HandleConnection(w http.ResponseWriter, r *http.Request, isDealer bool) {
+	// 從查詢參數或頭部獲取 token
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		token = r.Header.Get("Authorization")
+	}
+
+	// 驗證 token
+	userID, err := m.tokenValidator(token)
+	if err != nil {
+		m.logger.Warn("Token validation failed", zap.Error(err))
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	manager.mutex.Lock()
-	defer manager.mutex.Unlock()
-
-	// 檢查客戶端是否存在
-	if _, exists := manager.clients[client]; !exists {
-		return // 客戶端已經被移除
+	// 升級連線為 WebSocket
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		m.logger.Error("Failed to upgrade connection", zap.Error(err))
+		return
 	}
 
-	// 刪除客戶端
-	delete(manager.clients, client)
-
-	// 降低活躍連接計數
-	if manager.wsHandler != nil {
-		currentConnections := atomic.AddInt64(&manager.wsHandler.connections, -1)
-		// 只在連接數較少或者每10個連接減少時輸出日誌
-		if currentConnections < 10 || currentConnections%10 == 0 {
-			log.Printf("Dealer WebSocket Handler: Decreased active connections to %d", currentConnections)
-		}
+	// 建立客戶端
+	clientID := fmt.Sprintf("%d-%s", userID, time.Now().Format(time.RFC3339Nano))
+	client := &Client{
+		ID:        clientID,
+		conn:      conn,
+		manager:   m,
+		send:      make(chan []byte, 256),
+		userData:  make(map[string]interface{}),
+		userID:    userID,
+		isDealer:  isDealer,
+		topicSubs: make(map[string]bool),
 	}
 
-	// 刪除認證客戶端
-	if client.UserID > 0 {
-		// 從用戶ID映射中刪除
-		if clients, exists := manager.authClients[client.UserID]; exists {
-			newClients := make([]*Client, 0, len(clients)-1)
-			for _, c := range clients {
-				if c != client {
-					newClients = append(newClients, c)
-				}
-			}
+	// 註冊客戶端
+	m.register <- client
 
-			if len(newClients) > 0 {
-				manager.authClients[client.UserID] = newClients
-			} else {
-				delete(manager.authClients, client.UserID)
-			}
-		}
+	// 啟動讀寫 goroutines
+	go client.readPump()
+	go client.writePump()
+}
 
-		// 從用戶ID和客戶端ID映射中刪除
-		if clientsMap, exists := manager.userClients[client.UserID]; exists {
-			if _, exists := clientsMap[client.ID]; exists {
-				delete(clientsMap, client.ID)
-			}
+// registerClient 註冊新客戶端
+func (m *Manager) registerClient(client *Client) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-			if len(clientsMap) == 0 {
-				delete(manager.userClients, client.UserID)
-			}
-		}
+	m.clients[client.ID] = client
+	if client.isDealer {
+		m.dealerClients[client.ID] = client
+		m.logger.Info("Dealer client registered", zap.String("clientID", client.ID), zap.Uint("userID", client.userID))
+	} else {
+		m.playerClients[client.ID] = client
+		m.logger.Info("Player client registered", zap.String("clientID", client.ID), zap.Uint("userID", client.userID))
 	}
 
-	// 停止心跳協程和關閉通道
-	if client.heartbeatTicker != nil {
-		client.heartbeatTicker.Stop()
-	}
-	if client.closeChan != nil {
-		close(client.closeChan)
+	// 發送歡迎訊息
+	welcomeMsg := Response{
+		Type: "connected",
+		Payload: map[string]interface{}{
+			"message":   "連線成功",
+			"client_id": client.ID,
+			"user_id":   client.userID,
+			"is_dealer": client.isDealer,
+			"time":      time.Now().Format(time.RFC3339),
+		},
 	}
 
-	// 關閉發送通道
-	close(client.Send)
-
-	// 只有在連接非正常關閉時才輸出日誌
-	if client.closeReason != "" && client.closeReason != "normal closure" {
-		log.Printf("Dealer WebSocket Manager: Client %s removed: %s", client.ID, client.closeReason)
+	if err := client.SendJSON(welcomeMsg); err != nil {
+		m.logger.Error("Failed to send welcome message", zap.String("clientID", client.ID), zap.Error(err))
 	}
 }
 
-// 廣播消息到所有客戶端
-func (manager *Manager) broadcastMessage(message []byte) {
-	manager.mutex.RLock()
-	defer manager.mutex.RUnlock()
+// unregisterClient 取消註冊客戶端
+func (m *Manager) unregisterClient(client *Client) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	failedClients := make([]*Client, 0)
+	if _, ok := m.clients[client.ID]; ok {
+		delete(m.clients, client.ID)
+		if client.isDealer {
+			delete(m.dealerClients, client.ID)
+			m.logger.Info("Dealer client unregistered", zap.String("clientID", client.ID))
+		} else {
+			delete(m.playerClients, client.ID)
+			m.logger.Info("Player client unregistered", zap.String("clientID", client.ID))
+		}
 
-	for client := range manager.clients {
+		close(client.send)
+	}
+
+	// 從所有訂閱的主題中移除客戶端
+	m.topicsMu.Lock()
+	for topic := range client.topicSubs {
+		if subscribers, exists := m.topics[topic]; exists {
+			delete(subscribers, client.ID)
+			if len(subscribers) == 0 {
+				delete(m.topics, topic)
+			}
+		}
+	}
+	m.topicsMu.Unlock()
+
+	m.logger.Info("Client unsubscribed from all topics", zap.String("clientID", client.ID))
+}
+
+// broadcastMessage 廣播訊息給所有客戶端
+func (m *Manager) broadcastMessage(message []byte) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, client := range m.clients {
 		select {
-		case client.Send <- message:
-			// 消息已送入通道 - 不記錄日誌
+		case client.send <- message:
 		default:
-			// 發送通道已滿或已關閉，記錄待移除的客戶端
-			failedClients = append(failedClients, client)
-		}
-	}
-
-	// 如果有發送失敗的客戶端，解鎖後移除它們
-	if len(failedClients) > 0 {
-		manager.mutex.RUnlock()
-		manager.mutex.Lock()
-
-		// 只記錄總體數量而不是每個客戶端
-		if len(failedClients) > 0 {
-			log.Printf("Dealer WebSocket Manager: Removing %d clients due to full send buffer", len(failedClients))
-		}
-
-		for _, client := range failedClients {
-			// 設置關閉原因
-			client.closeReason = "broadcast buffer full"
-
-			// 停止心跳
-			if client.heartbeatTicker != nil {
-				client.heartbeatTicker.Stop()
-			}
-
-			// 關閉信號通道
-			if client.closeChan != nil {
-				close(client.closeChan)
-			}
-
-			// 關閉連接
-			client.Conn.Close()
-
-			// 從用戶映射中移除
-			if client.IsAuthed {
-				// 從 authClients 映射中移除
-				clients := manager.authClients[client.UserID]
-				for i, c := range clients {
-					if c == client {
-						// 從切片中移除元素
-						clients = append(clients[:i], clients[i+1:]...)
-						break
-					}
-				}
-
-				// 更新或刪除映射
-				if len(clients) == 0 {
-					delete(manager.authClients, client.UserID)
-				} else {
-					manager.authClients[client.UserID] = clients
-				}
-
-				// 從 userClients 映射中移除
-				if clientsMap, exists := manager.userClients[client.UserID]; exists {
-					delete(clientsMap, client.ID)
-					if len(clientsMap) == 0 {
-						delete(manager.userClients, client.UserID)
-					}
-				}
-			}
-
-			// 關閉發送通道
-			close(client.Send)
-
-			// 從客戶端列表中刪除
-			delete(manager.clients, client)
-
-			// 減少連接計數
-			if manager.wsHandler != nil {
-				atomic.AddInt64(&manager.wsHandler.connections, -1)
-			}
-		}
-
-		// 只在有較多客戶端被移除時記錄連接數
-		if len(failedClients) >= 5 && manager.wsHandler != nil {
-			log.Printf("Dealer WebSocket Handler: Active connections after broadcast cleanup: %d",
-				atomic.LoadInt64(&manager.wsHandler.connections))
-		}
-
-		manager.mutex.Unlock()
-		manager.mutex.RLock()
-	}
-}
-
-// 清理非活躍連接
-func (manager *Manager) cleanupInactiveConnections() {
-	manager.mutex.Lock()
-	defer manager.mutex.Unlock()
-
-	now := time.Now()
-	inactiveCount := 0
-
-	for client := range manager.clients {
-		// 檢查最後活動時間
-		if now.Sub(client.LastActivity) > inactivityTimeout {
-			inactiveCount++
-
-			// 關閉非活躍客戶端
-			client.closeReason = "inactivity timeout"
-			delete(manager.clients, client)
-
-			// 降低活躍連接計數
-			if manager.wsHandler != nil {
-				atomic.AddInt64(&manager.wsHandler.connections, -1)
-			}
-
-			// 停止心跳
-			if client.heartbeatTicker != nil {
-				client.heartbeatTicker.Stop()
-			}
-			if client.closeChan != nil {
-				close(client.closeChan)
-			}
-
-			// 關閉發送通道
-			close(client.Send)
-
-			// 移除從認證客戶端映射中
-			if client.UserID > 0 {
-				// 從用戶ID映射中刪除
-				if clients, exists := manager.authClients[client.UserID]; exists {
-					newClients := make([]*Client, 0, len(clients)-1)
-					for _, c := range clients {
-						if c != client {
-							newClients = append(newClients, c)
-						}
-					}
-
-					if len(newClients) > 0 {
-						manager.authClients[client.UserID] = newClients
-					} else {
-						delete(manager.authClients, client.UserID)
-					}
-				}
-
-				// 從用戶ID和客戶端ID映射中刪除
-				if clientsMap, exists := manager.userClients[client.UserID]; exists {
-					if _, exists := clientsMap[client.ID]; exists {
-						delete(clientsMap, client.ID)
-					}
-
-					if len(clientsMap) == 0 {
-						delete(manager.userClients, client.UserID)
-					}
-				}
-			}
-		}
-	}
-
-	// 只有在實際清理了連接時才輸出日誌
-	if inactiveCount > 0 {
-		log.Printf("Dealer WebSocket Manager: Cleaned up %d inactive connections", inactiveCount)
-		if manager.wsHandler != nil {
-			log.Printf("Dealer WebSocket Handler: Active connections after cleanup: %d", atomic.LoadInt64(&manager.wsHandler.connections))
+			m.unregister <- client
 		}
 	}
 }
 
-// 驗證客戶端
-func (manager *Manager) AuthenticateClient(client *Client, token string) error {
-	userID, err := manager.auth(token)
+// BroadcastToType 廣播訊息給特定類型的客戶端
+func (m *Manager) BroadcastToType(message interface{}, isDealer bool) error {
+	data, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return fmt.Errorf("error marshaling message: %w", err)
 	}
 
-	manager.mutex.Lock()
-	defer manager.mutex.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	client.UserID = userID
-	client.IsAuthed = true
-
-	// 將客戶端添加到用戶-客戶端映射
-	if _, exists := manager.userClients[userID]; !exists {
-		manager.userClients[userID] = make(map[string]*Client)
-	}
-	manager.userClients[userID][client.ID] = client
-
-	// 添加到 authClients 映射
-	manager.authClients[userID] = append(manager.authClients[userID], client)
-
-	log.Printf("Dealer WebSocket Manager: Client %s authenticated for user %d\n", client.ID, userID)
-	return nil
-}
-
-// 廣播訊息給所有已認證的客戶端
-func (manager *Manager) BroadcastToAll(message interface{}) error {
-	msgBytes, err := json.Marshal(message)
-	if err != nil {
-		return err
+	var targetClients map[string]*Client
+	if isDealer {
+		targetClients = m.dealerClients
+	} else {
+		targetClients = m.playerClients
 	}
 
-	manager.broadcast <- msgBytes
-	return nil
-}
-
-// 向指定用戶發送訊息
-func (manager *Manager) SendToUser(userID uint, message interface{}) error {
-	msgBytes, err := json.Marshal(message)
-	if err != nil {
-		return err
-	}
-
-	manager.mutex.RLock()
-	defer manager.mutex.RUnlock()
-
-	// 檢查用戶是否有連接的客戶端
-	clientMap, exists := manager.userClients[userID]
-	if !exists || len(clientMap) == 0 {
-		return fmt.Errorf("no connected clients for user %d", userID)
-	}
-
-	failedClients := 0 // 記錄失敗客戶端數量而不是每個都輸出日誌
-	totalClients := 0  // 總客戶端數量
-
-	// 發送訊息給用戶的所有客戶端
-	for _, client := range clientMap {
-		if client.IsAuthed {
-			totalClients++
-			select {
-			case client.Send <- msgBytes:
-				// 訊息已送入通道 - 不記錄日誌
-			default:
-				// 發送通道已滿或已關閉，移除客戶端
-				failedClients++
-				client.closeReason = "send buffer full"
-
-				client.connMutex.Lock()
-				if client.heartbeatTicker != nil {
-					client.heartbeatTicker.Stop()
-				}
-				if client.closeChan != nil {
-					close(client.closeChan)
-				}
-				client.Conn.Close()
-				client.connMutex.Unlock()
-
-				// 移除用戶客戶端映射
-				delete(manager.userClients[userID], client.ID)
-				if len(manager.userClients[userID]) == 0 {
-					delete(manager.userClients, userID)
-				}
-
-				// 移除客戶端
-				close(client.Send)
-				delete(manager.clients, client)
-
-				// 減少連接計數
-				if manager.wsHandler != nil {
-					atomic.AddInt64(&manager.wsHandler.connections, -1)
-				}
-			}
+	for _, client := range targetClients {
+		select {
+		case client.send <- data:
+		default:
+			// 如果客戶端的發送通道已滿，放棄此消息並計劃取消註冊該客戶端
+			go func(c *Client) {
+				m.unregister <- c
+			}(client)
 		}
-	}
-
-	// 只在有失敗的客戶端時輸出一條匯總日誌
-	if failedClients > 0 {
-		log.Printf("Dealer WebSocket Manager: Failed to send to %d/%d clients for user %d",
-			failedClients, totalClients, userID)
 	}
 
 	return nil
 }
 
-// ReadPump 從websocket連接中讀取資料
-func (c *Client) ReadPump() {
+// Subscribe 訂閱主題
+func (m *Manager) Subscribe(client *Client, topic string) error {
+	if topic == "" {
+		return fmt.Errorf("empty topic")
+	}
+
+	m.topicsMu.Lock()
+	defer m.topicsMu.Unlock()
+
+	// 在主題映射中創建訂閱者列表（如果不存在）
+	if _, exists := m.topics[topic]; !exists {
+		m.topics[topic] = make(map[string]*Client)
+	}
+
+	// 添加客戶端到訂閱者列表
+	m.topics[topic][client.ID] = client
+	client.topicSubs[topic] = true
+
+	m.logger.Info("Client subscribed to topic",
+		zap.String("clientID", client.ID),
+		zap.String("topic", topic))
+
+	return nil
+}
+
+// Unsubscribe 取消訂閱主題
+func (m *Manager) Unsubscribe(client *Client, topic string) error {
+	if topic == "" {
+		return fmt.Errorf("empty topic")
+	}
+
+	m.topicsMu.Lock()
+	defer m.topicsMu.Unlock()
+
+	// 檢查主題是否存在
+	subscribers, exists := m.topics[topic]
+	if !exists {
+		return fmt.Errorf("topic not found")
+	}
+
+	// 從訂閱者列表中移除客戶端
+	delete(subscribers, client.ID)
+	delete(client.topicSubs, topic)
+
+	// 如果主題沒有訂閱者，刪除主題
+	if len(subscribers) == 0 {
+		delete(m.topics, topic)
+	}
+
+	m.logger.Info("Client unsubscribed from topic",
+		zap.String("clientID", client.ID),
+		zap.String("topic", topic))
+
+	return nil
+}
+
+// PublishToTopic 向主題發布訊息
+func (m *Manager) PublishToTopic(topic string, message interface{}) error {
+	if topic == "" {
+		return fmt.Errorf("empty topic")
+	}
+
+	data, err := json.Marshal(Response{
+		Type: "message",
+		Payload: map[string]interface{}{
+			"topic":     topic,
+			"data":      message,
+			"timestamp": time.Now().Format(time.RFC3339),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("error marshaling message: %w", err)
+	}
+
+	m.topicsMu.RLock()
+	subscribers, exists := m.topics[topic]
+	m.topicsMu.RUnlock()
+
+	if !exists || len(subscribers) == 0 {
+		m.logger.Info("No subscribers for topic", zap.String("topic", topic))
+		return nil
+	}
+
+	m.topicsMu.RLock()
+	defer m.topicsMu.RUnlock()
+
+	for _, client := range subscribers {
+		select {
+		case client.send <- data:
+		default:
+			// 如果客戶端的發送通道已滿，放棄此消息並計劃取消註冊該客戶端
+			go func(c *Client) {
+				m.unregister <- c
+			}(client)
+		}
+	}
+
+	m.logger.Info("Published message to topic",
+		zap.String("topic", topic),
+		zap.Int("subscribers", len(subscribers)))
+
+	return nil
+}
+
+// readPump 處理從 WebSocket 讀取訊息
+func (c *Client) readPump() {
 	defer func() {
 		c.manager.unregister <- c
-		_ = c.Conn.Close()
+		c.conn.Close()
 	}()
 
-	c.Conn.SetReadLimit(maxMessageSize)
-	_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.Conn.SetPongHandler(func(string) error { _ = c.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
-
-	// 如果設置了處理連接的消息處理器，則調用它
-	if c.manager.messageHandler != nil {
-		c.manager.messageHandler.HandleConnect(c)
-	}
+	c.conn.SetReadLimit(4096) // 設置最大訊息大小
+	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
 
 	for {
-		_, message, err := c.Conn.ReadMessage()
+		_, data, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("websocket連接錯誤: %v", err)
-			}
-			// 如果設置了處理斷開連接的消息處理器，則調用它
-			if c.manager.messageHandler != nil {
-				c.manager.messageHandler.HandleDisconnect(c)
+				c.manager.logger.Error("Unexpected close",
+					zap.String("clientID", c.ID),
+					zap.Error(err))
 			}
 			break
 		}
 
-		// 嘗試將消息解析為標準命令格式
-		var cmd struct {
-			Type      string          `json:"type"`
-			Data      json.RawMessage `json:"data"`
-			Timestamp string          `json:"timestamp"`
+		// 解析訊息
+		var message Message
+		if err := json.Unmarshal(data, &message); err != nil {
+			c.manager.logger.Error("Failed to parse message",
+				zap.String("clientID", c.ID),
+				zap.Error(err))
+			continue
 		}
 
-		if err := json.Unmarshal(message, &cmd); err == nil && cmd.Type != "" {
-			// 消息是標準命令格式
-
-			// 特別處理心跳消息
-			if cmd.Type == "heartbeat" {
-				// 回應心跳消息
-				heartbeatResponse := []byte(`{"type":"heartbeat_response","data":{},"timestamp":` + strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) + `}`)
-
-				// 不阻塞地發送心跳響應
-				select {
-				case c.Send <- heartbeatResponse:
-					// 心跳響應已發送
-				default:
-					// 發送通道已滿，這種情況下只記錄一次
-					if !c.heartbeatErrorLogged {
-						log.Printf("客戶端 %s 發送緩衝區已滿，無法發送心跳響應", c.ID)
-						c.heartbeatErrorLogged = true
-					}
+		// 處理特殊訊息類型
+		switch message.Type {
+		case "ping":
+			// 回應 pong
+			if err := c.SendJSON(Response{
+				Type:    "pong",
+				Payload: map[string]string{"time": time.Now().Format(time.RFC3339)},
+			}); err != nil {
+				c.manager.logger.Error("Failed to send pong",
+					zap.String("clientID", c.ID),
+					zap.Error(err))
+			}
+			continue
+		case "subscribe":
+			// 處理訂閱請求
+			if data, ok := message.Payload["topic"].(string); ok {
+				if err := c.manager.Subscribe(c, data); err != nil {
+					c.manager.logger.Error("Failed to subscribe",
+						zap.String("clientID", c.ID),
+						zap.String("topic", data),
+						zap.Error(err))
+				} else {
+					c.SendJSON(Response{
+						Type: "subscribed",
+						Payload: map[string]interface{}{
+							"topic":     data,
+							"success":   true,
+							"timestamp": time.Now().Format(time.RFC3339),
+						},
+					})
 				}
+			}
+			continue
+		case "unsubscribe":
+			// 處理取消訂閱請求
+			if data, ok := message.Payload["topic"].(string); ok {
+				if err := c.manager.Unsubscribe(c, data); err != nil {
+					c.manager.logger.Error("Failed to unsubscribe",
+						zap.String("clientID", c.ID),
+						zap.String("topic", data),
+						zap.Error(err))
+				} else {
+					c.SendJSON(Response{
+						Type: "unsubscribed",
+						Payload: map[string]interface{}{
+							"topic":     data,
+							"success":   true,
+							"timestamp": time.Now().Format(time.RFC3339),
+						},
+					})
+				}
+			}
+			continue
+		case "publish":
+			// 處理發布請求
+			topic, hasTopic := message.Payload["topic"].(string)
+			if !hasTopic || topic == "" {
+				c.SendJSON(Response{
+					Type: "error",
+					Payload: map[string]interface{}{
+						"message":   "發布請求中缺少主題",
+						"timestamp": time.Now().Format(time.RFC3339),
+					},
+				})
 				continue
 			}
 
-			// 特別處理基準測試消息
-			if cmd.Type == "benchmark" {
-				// 回應基準測試消息
-				benchmarkResponse := []byte(`{"type":"benchmark_response","data":{},"timestamp":` + strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) + `}`)
-
-				// 不阻塞地發送基準測試響應
-				select {
-				case c.Send <- benchmarkResponse:
-					// 基準測試響應已發送
-				default:
-					// 發送通道已滿，記錄錯誤
-					log.Printf("客戶端 %s 發送緩衝區已滿，無法發送基準測試響應", c.ID)
-				}
-				continue
+			data, hasData := message.Payload["data"]
+			if !hasData {
+				data = nil
 			}
 
-			// 處理業務命令消息
-			log.Printf("處理業務命令: %s", cmd.Type)
-
-			// 如果設置了消息處理器，使用它處理消息
-			if c.manager.messageHandler != nil {
-				var data interface{}
-				if len(cmd.Data) > 0 {
-					if err := json.Unmarshal(cmd.Data, &data); err != nil {
-						log.Printf("解析命令數據失敗: %v", err)
-						// 如果解析失敗，傳遞原始數據
-						data = cmd.Data
-					}
-				}
-
-				c.manager.messageHandler.HandleMessage(c, cmd.Type, data)
+			if err := c.manager.PublishToTopic(topic, data); err != nil {
+				c.manager.logger.Error("Failed to publish to topic",
+					zap.String("clientID", c.ID),
+					zap.String("topic", topic),
+					zap.Error(err))
 			} else {
-				log.Printf("未設置消息處理器，無法處理消息: %s", cmd.Type)
+				c.SendJSON(Response{
+					Type: "published",
+					Payload: map[string]interface{}{
+						"topic":     topic,
+						"success":   true,
+						"timestamp": time.Now().Format(time.RFC3339),
+					},
+				})
 			}
-
 			continue
 		}
 
-		// 如果不是標準命令格式，則處理為普通消息
-		log.Printf("收到普通消息（非標準命令格式）: %s", message)
+		// 處理其他訊息類型
+		c.manager.mu.RLock()
+		handler := c.manager.messageHandler
+		c.manager.mu.RUnlock()
 
-		msg := Message{}
-		if err := json.Unmarshal(message, &msg); err != nil {
-			log.Printf("解析消息失敗: %v", err)
-			continue
-		}
-
-		// 如果是心跳消息，則不記錄
-		if msg.Type == "heartbeat" {
-			// 回應心跳消息
-			response := Message{
-				Type: "heartbeat_response",
-				Data: map[string]interface{}{},
-			}
-			responseJSON, _ := json.Marshal(response)
-
-			// 不阻塞地發送心跳響應
-			select {
-			case c.Send <- responseJSON:
-				// 心跳響應已發送
-			default:
-				// 發送通道已滿，這種情況下只記錄一次
-				if !c.heartbeatErrorLogged {
-					log.Printf("客戶端 %s 發送緩衝區已滿，無法發送心跳響應", c.ID)
-					c.heartbeatErrorLogged = true
-				}
-			}
-		} else if msg.Type == "benchmark" {
-			// 回應基準測試消息
-			response := Message{
-				Type: "benchmark_response",
-				Data: map[string]interface{}{},
-			}
-			responseJSON, _ := json.Marshal(response)
-
-			// 不阻塞地發送基準測試響應
-			select {
-			case c.Send <- responseJSON:
-				// 基準測試響應已發送
-			default:
-				// 發送通道已滿，記錄錯誤
-				log.Printf("客戶端 %s 發送緩衝區已滿，無法發送基準測試響應", c.ID)
+		if handler != nil {
+			if err := handler.Handle(c, message); err != nil {
+				c.manager.logger.Error("Error handling message",
+					zap.String("clientID", c.ID),
+					zap.String("type", message.Type),
+					zap.Error(err))
 			}
 		} else {
-			// 記錄重要消息
-			log.Printf("收到消息: %v", msg)
-
-			// 處理特殊消息類型
-			// 對於BETTING_STARTED消息，確保它能被正確處理
-			if msg.Type == "BETTING_STARTED" && c.manager.messageHandler != nil {
-				log.Printf("檢測到BETTING_STARTED消息，轉發給消息處理器")
-				// 調用消息處理器處理BETTING_STARTED消息
-				c.manager.messageHandler.HandleMessage(c, msg.Type, msg.Data)
-			}
+			c.manager.logger.Warn("No message handler configured",
+				zap.String("clientID", c.ID),
+				zap.String("type", message.Type))
 		}
 	}
 }
 
-// 客戶端寫入訊息
-func (client *Client) WritePump() {
-	ticker := time.NewTicker(pingPeriod)
+// writePump 處理向 WebSocket 發送訊息
+func (c *Client) writePump() {
+	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		ticker.Stop()
-		client.Conn.Close()
+		c.conn.Close()
 	}()
 
 	for {
 		select {
-		case message, ok := <-client.Send:
-			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+		case message, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
 				// 通道已關閉
-				client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
-			w, err := client.Conn.NextWriter(websocket.TextMessage)
+			w, err := c.conn.NextWriter(websocket.TextMessage)
 			if err != nil {
-				// 只在連接已關閉以外的錯誤情況下記錄日誌
-				if !strings.Contains(err.Error(), "closed") &&
-					!strings.Contains(err.Error(), "broken pipe") {
-					log.Printf("Dealer WebSocket Error (NextWriter): %v", err)
-				}
 				return
 			}
 			w.Write(message)
 
-			// 添加隊列中的所有消息
-			n := len(client.Send)
+			// 添加排隊訊息
+			n := len(c.send)
 			for i := 0; i < n; i++ {
-				w.Write(newline)
-				w.Write(<-client.Send)
+				w.Write([]byte{'\n'})
+				w.Write(<-c.send)
 			}
 
 			if err := w.Close(); err != nil {
-				// 只在連接已關閉以外的錯誤情況下記錄日誌
-				if !strings.Contains(err.Error(), "closed") &&
-					!strings.Contains(err.Error(), "broken pipe") {
-					log.Printf("Dealer WebSocket Error (Close Writer): %v", err)
-				}
 				return
 			}
 		case <-ticker.C:
-			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := client.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				// 只在連接已關閉以外的錯誤情況下記錄日誌
-				if !strings.Contains(err.Error(), "closed") &&
-					!strings.Contains(err.Error(), "broken pipe") {
-					log.Printf("Dealer WebSocket Error (Ping): %v", err)
-				}
+			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
-		case <-client.closeChan:
-			return
 		}
 	}
 }
 
-// 開始心跳
-func (client *Client) StartHeartbeat() {
-	client.connMutex.Lock()
-	defer client.connMutex.Unlock()
+// SendJSON 向客戶端發送 JSON 訊息
+func (c *Client) SendJSON(message interface{}) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	// 停止舊的心跳計時器（如果存在）
-	if client.heartbeatTicker != nil {
-		client.heartbeatTicker.Stop()
-		client.heartbeatTicker = nil
+	if c.closed {
+		return fmt.Errorf("client connection closed")
 	}
 
-	// 創建新的心跳計時器
-	client.heartbeatTicker = time.NewTicker(heartbeatInterval)
-	// 不再輸出每個客戶端的心跳啟動日誌
-
-	// 創建本地副本
-	localCloseChan := client.closeChan
-	heartbeatTicker := client.heartbeatTicker
-
-	// 啟動心跳協程
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("Dealer WebSocket Manager: Heartbeat routine for client %s recovered from panic: %v", client.ID, r)
-			}
-			// 不再輸出心跳協程退出的日誌
-		}()
-
-		for {
-			select {
-			case <-localCloseChan:
-				// 不再輸出關閉信號的日誌
-				return
-			case <-heartbeatTicker.C:
-				// 使用本地副本確保即使 client 被修改也能正確工作
-				if err := client.sendPing(); err != nil {
-					// 只在異常錯誤時輸出日誌
-					if !strings.Contains(err.Error(), "connection is nil") &&
-						!strings.Contains(err.Error(), "use of closed network connection") {
-						log.Printf("Dealer WebSocket Manager: Client %s ping failed: %v", client.ID, err)
-					}
-					return
-				}
-			}
-		}
-	}()
-}
-
-// 發送 Ping 消息
-func (client *Client) sendPing() error {
-	client.connMutex.Lock()
-	defer client.connMutex.Unlock()
-
-	// 檢查連接是否有效
-	if client.Conn == nil {
-		return fmt.Errorf("connection is nil")
+	data, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("error marshaling JSON: %w", err)
 	}
 
-	// 嘗試3次發送Ping消息
-	var pingErr error
-	for i := 0; i < 3; i++ {
-		// 發送Ping訊息
-		pingErr = client.Conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(writeTimeout))
-		if pingErr == nil {
-			break
-		}
-		// 只在第三次嘗試失敗時記錄日誌
-		if i == 2 {
-			log.Printf("Dealer WebSocket Manager: Client %s all ping attempts failed: %v", client.ID, pingErr)
-		}
-		time.Sleep(100 * time.Millisecond) // 短暫延遲後重試
-	}
-
-	if pingErr != nil {
-		// 直接調用 attemptReconnect (已在 goroutine 中)
-		client.connMutex.Unlock() // 先解鎖以避免死鎖
-		client.attemptReconnect() // 直接調用而不是啟動新的 goroutine
-		client.connMutex.Lock()   // 重新鎖定
-		return pingErr
-	}
-
-	// 發送應用層心跳訊息
-	heartbeat := HeartbeatMessage{
-		Type:      "heartbeat",
-		Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
-	}
-	heartbeatBytes, _ := json.Marshal(heartbeat)
-
-	select {
-	case client.Send <- heartbeatBytes:
-		// 心跳已送入通道，不輸出日誌
-	default:
-		// 僅在通道已滿時輸出警告
-		log.Printf("Dealer WebSocket Manager: Client %s send channel full, cannot send heartbeat", client.ID)
-	}
-
+	c.send <- data
 	return nil
 }
 
-// 嘗試重連
-func (client *Client) attemptReconnect() {
-	// 設置關閉原因
-	client.closeReason = "connection terminated"
+// GetUserID 獲取用戶ID
+func (c *Client) GetUserID() uint {
+	return c.userID
+}
 
-	// 清理客戶端資源
-	client.connMutex.Lock()
-	// 關閉舊連接前先停止心跳
-	if client.heartbeatTicker != nil {
-		client.heartbeatTicker.Stop()
-		client.heartbeatTicker = nil
-	}
+// IsDealer 檢查客戶端是否為荷官
+func (c *Client) IsDealer() bool {
+	return c.isDealer
+}
 
-	// 關閉舊連接
-	if client.Conn != nil {
-		client.Conn.Close()
-	}
-	client.connMutex.Unlock()
+// SetUserData 設置用戶數據
+func (c *Client) SetUserData(key string, value interface{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.userData[key] = value
+}
 
-	// 更新客戶端在管理器中的狀態
-	if client.manager != nil {
-		client.manager.mutex.Lock()
-		// 設置客戶端狀態為已斷開
-		client.LastActivity = time.Now() // 更新最後活動時間，防止被立即清理
-		client.manager.mutex.Unlock()
+// GetUserData 獲取用戶數據
+func (c *Client) GetUserData(key string) (interface{}, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	val, ok := c.userData[key]
+	return val, ok
+}
 
-		// 通知管理器註銷客戶端
-		client.manager.unregister <- client
+// Close 關閉客戶端連線
+func (c *Client) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.closed {
+		c.closed = true
+		c.manager.unregister <- c
 	}
 }
 
-// 關閉連接
-func (manager *Manager) Shutdown() {
-	// 檢查是否有活躍連接，只有在有連接時才記錄關閉訊息
-	manager.mutex.RLock()
-	clientCount := len(manager.clients)
-	manager.mutex.RUnlock()
+// GetTopicSubscriberCount 獲取主題訂閱者數量
+func (m *Manager) GetTopicSubscriberCount(topic string) int {
+	m.topicsMu.RLock()
+	defer m.topicsMu.RUnlock()
 
-	if clientCount > 0 {
-		log.Println("Dealer WebSocket Manager: Shutdown initiated, closing all connections...")
+	if subscribers, exists := m.topics[topic]; exists {
+		return len(subscribers)
 	}
-
-	// 通知所有客戶端關閉
-	manager.mutex.Lock()
-
-	for client := range manager.clients {
-		// 只有在有大量連接時才詳細記錄每個客戶端的關閉
-		if clientCount < 10 {
-			log.Printf("Dealer WebSocket Manager: Closing connection for client %s", client.ID)
-		}
-
-		if client.heartbeatTicker != nil {
-			client.heartbeatTicker.Stop()
-		}
-
-		if client.closeChan != nil {
-			close(client.closeChan)
-		}
-
-		// 向客戶端發送關閉消息
-		closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Server shutting down")
-		_ = client.Conn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(time.Second))
-
-		client.Conn.Close()
-		close(client.Send)
-	}
-
-	// 清空客戶端映射
-	manager.clients = make(map[*Client]bool)
-	manager.authClients = make(map[uint][]*Client)
-	manager.userClients = make(map[uint]map[string]*Client)
-	manager.mutex.Unlock()
-
-	// 重置連接計數
-	if manager.wsHandler != nil {
-		atomic.StoreInt64(&manager.wsHandler.connections, 0)
-		if clientCount > 0 {
-			log.Printf("Dealer WebSocket Handler: Reset active connections to 0")
-		}
-	}
-
-	// 關閉管理器的shutdown通道
-	close(manager.shutdown)
-
-	// 只有在實際關閉了連接時才輸出
-	if clientCount > 0 {
-		log.Printf("Dealer WebSocket Manager: Successfully closed %d connections", clientCount)
-	}
-}
-
-// 廣播消息到特定房間
-func (manager *Manager) broadcastToRoom(roomID string, message []byte) {
-	manager.mutex.RLock()
-	defer manager.mutex.RUnlock()
-
-	failedCount := 0
-	totalClients := 0
-
-	// 檢查房間是否存在
-	clients, exists := manager.roomClients[roomID]
-	if !exists {
-		// 房間不存在，沒有客戶端可廣播
-		return
-	}
-
-	// 廣播消息到房間中的所有客戶端
-	for client := range clients {
-		totalClients++
-		select {
-		case client.Send <- message:
-			// 消息發送成功 - 不記錄日誌
-		default:
-			// 客戶端發送通道已滿，跳過並計數
-			failedCount++
-		}
-	}
-
-	// 只在有發送失敗時記錄日誌
-	if failedCount > 0 {
-		log.Printf("Dealer WebSocket Manager: Failed to send to %d/%d clients in room %s",
-			failedCount, totalClients, roomID)
-	}
-}
-
-// 廣播消息到特定遊戲
-func (manager *Manager) broadcastToGame(gameID string, message []byte) {
-	manager.mutex.RLock()
-	defer manager.mutex.RUnlock()
-
-	failedCount := 0
-	totalClients := 0
-
-	// 檢查遊戲是否存在
-	clients, exists := manager.gameClients[gameID]
-	if !exists {
-		// 遊戲不存在，沒有客戶端可廣播
-		return
-	}
-
-	// 廣播消息到遊戲中的所有客戶端
-	for client := range clients {
-		totalClients++
-		select {
-		case client.Send <- message:
-			// 消息發送成功 - 不記錄日誌
-		default:
-			// 客戶端發送通道已滿，跳過並計數
-			failedCount++
-		}
-	}
-
-	// 只在有發送失敗時記錄日誌
-	if failedCount > 0 {
-		log.Printf("Dealer WebSocket Manager: Failed to send to %d/%d clients in game %s",
-			failedCount, totalClients, gameID)
-	}
-}
-
-// AddClientToRoom 將客戶端添加到指定房間
-func (m *Manager) AddClientToRoom(client *Client, roomID string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	// 檢查此客戶端是否已在該房間中
-	for _, id := range client.rooms {
-		if id == roomID {
-			return // 客戶端已在房間中，不需再添加
-		}
-	}
-
-	// 若房間不存在，則創建它
-	if _, exists := m.roomClients[roomID]; !exists {
-		m.roomClients[roomID] = make(map[*Client]bool)
-	}
-
-	// 將客戶端加入到房間
-	m.roomClients[roomID][client] = true
-	client.rooms = append(client.rooms, roomID)
-
-	log.Printf("Dealer WebSocket Manager: 客戶端 %s 已加入房間 %s", client.ID, roomID)
-}
-
-// RemoveClientFromRoom 將客戶端從指定房間移除
-func (m *Manager) RemoveClientFromRoom(client *Client, roomID string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	// 檢查房間是否存在
-	clients, exists := m.roomClients[roomID]
-	if !exists {
-		return // 房間不存在，不需處理
-	}
-
-	// 從房間中移除客戶端
-	delete(clients, client)
-
-	// 若房間為空，則移除該房間
-	if len(clients) == 0 {
-		delete(m.roomClients, roomID)
-	}
-
-	// 從客戶端的房間列表中移除
-	for i, id := range client.rooms {
-		if id == roomID {
-			client.rooms = append(client.rooms[:i], client.rooms[i+1:]...)
-			break
-		}
-	}
-
-	log.Printf("Dealer WebSocket Manager: 客戶端 %s 已離開房間 %s", client.ID, roomID)
-}
-
-// AddClientToGame 將客戶端添加到指定遊戲
-func (m *Manager) AddClientToGame(client *Client, gameID string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	// 檢查此客戶端是否已在該遊戲中
-	for _, id := range client.games {
-		if id == gameID {
-			return // 客戶端已在遊戲中，不需再添加
-		}
-	}
-
-	// 若遊戲不存在，則創建它
-	if _, exists := m.gameClients[gameID]; !exists {
-		m.gameClients[gameID] = make(map[*Client]bool)
-	}
-
-	// 將客戶端加入到遊戲
-	m.gameClients[gameID][client] = true
-	client.games = append(client.games, gameID)
-
-	log.Printf("Dealer WebSocket Manager: 客戶端 %s 已加入遊戲 %s", client.ID, gameID)
-}
-
-// RemoveClientFromGame 將客戶端從指定遊戲移除
-func (m *Manager) RemoveClientFromGame(client *Client, gameID string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	// 檢查遊戲是否存在
-	clients, exists := m.gameClients[gameID]
-	if !exists {
-		return // 遊戲不存在，不需處理
-	}
-
-	// 從遊戲中移除客戶端
-	delete(clients, client)
-
-	// 若遊戲為空，則移除該遊戲
-	if len(clients) == 0 {
-		delete(m.gameClients, gameID)
-	}
-
-	// 從客戶端的遊戲列表中移除
-	for i, id := range client.games {
-		if id == gameID {
-			client.games = append(client.games[:i], client.games[i+1:]...)
-			break
-		}
-	}
-
-	log.Printf("Dealer WebSocket Manager: 客戶端 %s 已離開遊戲 %s", client.ID, gameID)
-}
-
-// BroadcastToRoom 向特定房間內所有客戶端廣播消息
-func (m *Manager) BroadcastToRoom(roomID string, message []byte) {
-	m.mutex.RLock()
-	clients, exists := m.roomClients[roomID]
-	m.mutex.RUnlock()
-
-	if !exists {
-		// 只有當房間存在但沒有客戶端時才記錄
-		log.Printf("Dealer WebSocket Manager: 嘗試廣播到不存在的房間: %s", roomID)
-		return
-	}
-
-	failCount := 0
-	for client := range clients {
-		if client.Send == nil || len(client.Send) >= cap(client.Send) {
-			failCount++
-			continue
-		}
-
-		select {
-		case client.Send <- message:
-			// 成功發送，不需處理
-		default:
-			// 發送緩衝區已滿，移除客戶端
-			failCount++
-			m.removeClientFromRooms(client)
-			m.removeClientFromGames(client)
-			m.removeClient(client)
-		}
-	}
-
-	// 只有當有失敗時才記錄
-	if failCount > 0 {
-		log.Printf("Dealer WebSocket Manager: 向房間 %s 廣播時，有 %d 個客戶端發送失敗", roomID, failCount)
-	}
-}
-
-// BroadcastToGame 向特定遊戲內所有客戶端廣播消息
-func (m *Manager) BroadcastToGame(gameID string, message []byte) {
-	m.mutex.RLock()
-	clients, exists := m.gameClients[gameID]
-	m.mutex.RUnlock()
-
-	if !exists {
-		// 只有當遊戲存在但沒有客戶端時才記錄
-		log.Printf("Dealer WebSocket Manager: 嘗試廣播到不存在的遊戲: %s", gameID)
-		return
-	}
-
-	failCount := 0
-	for client := range clients {
-		if client.Send == nil || len(client.Send) >= cap(client.Send) {
-			failCount++
-			continue
-		}
-
-		select {
-		case client.Send <- message:
-			// 成功發送，不需處理
-		default:
-			// 發送緩衝區已滿，移除客戶端
-			failCount++
-			m.removeClientFromRooms(client)
-			m.removeClientFromGames(client)
-			m.removeClient(client)
-		}
-	}
-
-	// 只有當有失敗時才記錄
-	if failCount > 0 {
-		log.Printf("Dealer WebSocket Manager: 向遊戲 %s 廣播時，有 %d 個客戶端發送失敗", gameID, failCount)
-	}
-}
-
-// removeClientFromRooms 從所有房間中移除客戶端
-func (m *Manager) removeClientFromRooms(client *Client) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	for _, roomID := range client.rooms {
-		if clients, exists := m.roomClients[roomID]; exists {
-			delete(clients, client)
-			if len(clients) == 0 {
-				delete(m.roomClients, roomID)
-			}
-		}
-	}
-	client.rooms = []string{}
-}
-
-// removeClientFromGames 從所有遊戲中移除客戶端
-func (m *Manager) removeClientFromGames(client *Client) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	for _, gameID := range client.games {
-		if clients, exists := m.gameClients[gameID]; exists {
-			delete(clients, client)
-			if len(clients) == 0 {
-				delete(m.gameClients, gameID)
-			}
-		}
-	}
-	client.games = []string{}
-}
-
-// SetMessageHandler 設置消息處理器
-func (manager *Manager) SetMessageHandler(handler MessageHandler) {
-	manager.mutex.Lock()
-	defer manager.mutex.Unlock()
-
-	manager.messageHandler = handler
-	log.Printf("Dealer WebSocket Manager: Message handler has been set")
+	return 0
 }

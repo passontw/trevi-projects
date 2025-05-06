@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package dealer;
+
+import "internal/proto/dealer/ball.proto";
+import "internal/proto/dealer/game.proto";
+import "internal/proto/dealer/events.proto";
+
+option go_package = "g38_lottery_service/internal/proto/generated/dealer";
+
+// 經銷商服務定義
+service DealerService {
+  // 開始新一輪遊戲
+  rpc StartNewRound(StartNewRoundRequest) returns (StartNewRoundResponse) {}
+
+  // 抽取一般球
+  rpc DrawBall(DrawBallRequest) returns (DrawBallResponse) {}
+
+  // 抽取額外球
+  rpc DrawExtraBall(DrawExtraBallRequest) returns (DrawExtraBallResponse) {}
+
+  // 抽取頭獎球
+  rpc DrawJackpotBall(DrawJackpotBallRequest) returns (DrawJackpotBallResponse) {}
+
+  // 抽取幸運球
+  rpc DrawLuckyBall(DrawLuckyBallRequest) returns (DrawLuckyBallResponse) {}
+
+  // 取消遊戲
+  rpc CancelGame(CancelGameRequest) returns (GameData) {}
+
+  
+  // 獲取遊戲狀態
+  rpc GetGameStatus(GetGameStatusRequest) returns (GetGameStatusResponse) {}
+  
+  // 訂閱遊戲事件流
+  rpc SubscribeGameEvents(SubscribeGameEventsRequest) returns (stream GameEvent) {}
+} 

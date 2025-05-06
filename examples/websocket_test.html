@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 開獎服務測試</title>
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', 'Arial', sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .panel {
+            flex: 1;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #333;
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 8px 16px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button.disconnect {
+            background-color: #f44336;
+        }
+        button.disconnect:hover {
+            background-color: #d32f2f;
+        }
+        input, select {
+            padding: 8px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        #dealer-messages, #player-messages {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .message {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        .sent {
+            color: #2196F3;
+        }
+        .received {
+            color: #4CAF50;
+        }
+        .error {
+            color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocket 開獎服務測試頁面</h1>
+    
+    <div class="container">
+        <!-- 荷官端面板 -->
+        <div class="panel">
+            <h2>荷官端 (Dealer)</h2>
+            <div class="controls">
+                <button id="dealer-connect">連接</button>
+                <button id="dealer-disconnect" class="disconnect" disabled>斷開連接</button>
+                <div style="margin-top: 10px;">
+                    <input type="text" id="dealer-game-id" placeholder="遊戲ID" value="game1">
+                    <select id="dealer-lottery-result">
+                        <option value="1,2,3,4,5">1,2,3,4,5</option>
+                        <option value="2,4,6,8,10">2,4,6,8,10</option>
+                        <option value="10,20,30,40,50">10,20,30,40,50</option>
+                    </select>
+                    <button id="dealer-draw" disabled>開獎</button>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button id="dealer-ping" disabled>Ping</button>
+                </div>
+            </div>
+            <div id="dealer-messages"></div>
+        </div>
+        
+        <!-- 玩家端面板 -->
+        <div class="panel">
+            <h2>玩家端 (Player)</h2>
+            <div class="controls">
+                <button id="player-connect">連接</button>
+                <button id="player-disconnect" class="disconnect" disabled>斷開連接</button>
+                <div style="margin-top: 10px;">
+                    <input type="text" id="player-game-id" placeholder="遊戲ID" value="game1">
+                    <button id="player-subscribe" disabled>訂閱</button>
+                    <button id="player-unsubscribe" disabled>取消訂閱</button>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button id="player-ping" disabled>Ping</button>
+                </div>
+            </div>
+            <div id="player-messages"></div>
+        </div>
+    </div>
+
+    <script>
+        let dealerSocket = null;
+        let playerSocket = null;
+
+        // 用於添加訊息到面板的輔助函數
+        function addMessage(panelId, message, type = 'received') {
+            const panel = document.getElementById(panelId);
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            // 格式化 JSON
+            try {
+                if (typeof message === 'object') {
+                    message = JSON.stringify(message, null, 2);
+                } else if (typeof message === 'string' && message.trim().startsWith('{')) {
+                    message = JSON.stringify(JSON.parse(message), null, 2);
+                }
+            } catch (e) {
+                // 如果無法解析為 JSON，保持原樣
+            }
+            
+            messageDiv.textContent = message;
+            panel.appendChild(messageDiv);
+            panel.scrollTop = panel.scrollHeight;
+        }
+
+        // 荷官端連接
+        document.getElementById('dealer-connect').addEventListener('click', () => {
+            if (dealerSocket) {
+                dealerSocket.close();
+            }
+
+            const dealerUrl = 'ws://localhost:8080/dealer';
+            dealerSocket = new WebSocket(dealerUrl);
+
+            dealerSocket.onopen = () => {
+                addMessage('dealer-messages', '已連接到荷官端服務器');
+                document.getElementById('dealer-connect').disabled = true;
+                document.getElementById('dealer-disconnect').disabled = false;
+                document.getElementById('dealer-draw').disabled = false;
+                document.getElementById('dealer-ping').disabled = false;
+            };
+
+            dealerSocket.onmessage = (event) => {
+                // 解析接收到的訊息以獲得更好的顯示格式
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'hello') {
+                        addMessage('dealer-messages', `收到歡迎訊息: ${data.payload.message}`, 'received');
+                    } else {
+                        addMessage('dealer-messages', event.data);
+                    }
+                } catch (e) {
+                    addMessage('dealer-messages', event.data);
+                }
+            };
+
+            dealerSocket.onclose = () => {
+                addMessage('dealer-messages', '與荷官端服務器的連接已關閉', 'error');
+                document.getElementById('dealer-connect').disabled = false;
+                document.getElementById('dealer-disconnect').disabled = true;
+                document.getElementById('dealer-draw').disabled = true;
+                document.getElementById('dealer-ping').disabled = true;
+                dealerSocket = null;
+            };
+
+            dealerSocket.onerror = (error) => {
+                addMessage('dealer-messages', `連接錯誤: ${error}`, 'error');
+            };
+        });
+
+        // 荷官端斷開連接
+        document.getElementById('dealer-disconnect').addEventListener('click', () => {
+            if (dealerSocket) {
+                dealerSocket.close();
+            }
+        });
+
+        // 荷官開獎
+        document.getElementById('dealer-draw').addEventListener('click', () => {
+            if (dealerSocket && dealerSocket.readyState === WebSocket.OPEN) {
+                const gameId = document.getElementById('dealer-game-id').value;
+                const result = document.getElementById('dealer-lottery-result').value;
+                
+                const message = {
+                    type: 'draw_lottery',
+                    payload: {
+                        game_id: gameId,
+                        result: result.split(',').map(Number)
+                    }
+                };
+                
+                dealerSocket.send(JSON.stringify(message));
+                addMessage('dealer-messages', message, 'sent');
+            }
+        });
+
+        // 荷官 Ping
+        document.getElementById('dealer-ping').addEventListener('click', () => {
+            if (dealerSocket && dealerSocket.readyState === WebSocket.OPEN) {
+                const message = {
+                    type: 'ping',
+                    payload: {}
+                };
+                
+                dealerSocket.send(JSON.stringify(message));
+                addMessage('dealer-messages', message, 'sent');
+            }
+        });
+
+        // 玩家端連接
+        document.getElementById('player-connect').addEventListener('click', () => {
+            if (playerSocket) {
+                playerSocket.close();
+            }
+
+            const playerUrl = 'ws://localhost:8080/game';
+            playerSocket = new WebSocket(playerUrl);
+
+            playerSocket.onopen = () => {
+                addMessage('player-messages', '已連接到玩家端服務器');
+                document.getElementById('player-connect').disabled = true;
+                document.getElementById('player-disconnect').disabled = false;
+                document.getElementById('player-subscribe').disabled = false;
+                document.getElementById('player-unsubscribe').disabled = false;
+                document.getElementById('player-ping').disabled = false;
+            };
+
+            playerSocket.onmessage = (event) => {
+                // 解析接收到的訊息以獲得更好的顯示格式
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'hello') {
+                        addMessage('player-messages', `收到歡迎訊息: ${data.payload.message}`, 'received');
+                    } else {
+                        addMessage('player-messages', event.data);
+                    }
+                } catch (e) {
+                    addMessage('player-messages', event.data);
+                }
+            };
+
+            playerSocket.onclose = () => {
+                addMessage('player-messages', '與玩家端服務器的連接已關閉', 'error');
+                document.getElementById('player-connect').disabled = false;
+                document.getElementById('player-disconnect').disabled = true;
+                document.getElementById('player-subscribe').disabled = true;
+                document.getElementById('player-unsubscribe').disabled = true;
+                document.getElementById('player-ping').disabled = true;
+                playerSocket = null;
+            };
+
+            playerSocket.onerror = (error) => {
+                addMessage('player-messages', `連接錯誤: ${error}`, 'error');
+            };
+        });
+
+        // 玩家端斷開連接
+        document.getElementById('player-disconnect').addEventListener('click', () => {
+            if (playerSocket) {
+                playerSocket.close();
+            }
+        });
+
+        // 玩家訂閱
+        document.getElementById('player-subscribe').addEventListener('click', () => {
+            if (playerSocket && playerSocket.readyState === WebSocket.OPEN) {
+                const gameId = document.getElementById('player-game-id').value;
+                
+                const message = {
+                    type: 'subscribe',
+                    payload: {
+                        game_id: gameId
+                    }
+                };
+                
+                playerSocket.send(JSON.stringify(message));
+                addMessage('player-messages', message, 'sent');
+            }
+        });
+
+        // 玩家取消訂閱
+        document.getElementById('player-unsubscribe').addEventListener('click', () => {
+            if (playerSocket && playerSocket.readyState === WebSocket.OPEN) {
+                const message = {
+                    type: 'unsubscribe',
+                    payload: {}
+                };
+                
+                playerSocket.send(JSON.stringify(message));
+                addMessage('player-messages', message, 'sent');
+            }
+        });
+
+        // 玩家 Ping
+        document.getElementById('player-ping').addEventListener('click', () => {
+            if (playerSocket && playerSocket.readyState === WebSocket.OPEN) {
+                const message = {
+                    type: 'ping',
+                    payload: {}
+                };
+                
+                playerSocket.send(JSON.stringify(message));
+                addMessage('player-messages', message, 'sent');
+            }
+        });
+    </script>
+</body>
+</html> 
