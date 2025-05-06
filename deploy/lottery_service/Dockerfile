@@ -8,7 +8,7 @@ ENV GOSUMDB=off
 ENV CGO_ENABLED=0
 
 # 安裝必要工具
-RUN apk add --no-cache gcc musl-dev git
+RUN apk add --no-cache gcc musl-dev git bash protobuf protobuf-dev
 
 # 設定工作目錄 - 這裡是關鍵，確保使用正確的模組路徑
 WORKDIR /go/src/g38_lottery_service
@@ -19,11 +19,18 @@ COPY go.mod go.sum ./
 # 下載依賴
 RUN go mod download
 
+# 安裝 protoc-gen-go 和 protoc-gen-go-grpc
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0
+RUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0
+
 # 複製所有源代碼
 COPY . .
 
-# 顯示當前目錄結構，用於調試
-RUN ls -la
+# 確保 script 可執行
+RUN chmod +x scripts/gen-proto-smart.sh
+
+# 生成 protobuf 代碼
+RUN ./scripts/gen-proto-smart.sh
 
 # 構建應用程序
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o lottery_service ./cmd/lottery_service/main.go

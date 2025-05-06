@@ -102,32 +102,40 @@ pipeline {
                     writeFile file: env.DOCKERFILE_PATH, text: '''# 構建階段
 FROM golang:1.23-alpine AS builder
 
-# 設定環境變數
-ENV GO111MODULE=on
-ENV GOPROXY=https://goproxy.cn,direct
-ENV GOSUMDB=off
-ENV CGO_ENABLED=0
-
 # 安裝必要工具
 RUN apk add --no-cache gcc musl-dev git
 
-# 設定工作目錄 - 這裡是關鍵，確保使用正確的模組路徑
-WORKDIR /go/src/g38_lottery_service
-
-# 複製 go.mod 和 go.sum
-COPY go.mod go.sum ./
-
-# 下載依賴
-RUN go mod download
+# 設定工作目錄
+WORKDIR /app
 
 # 複製所有源代碼
 COPY . .
 
-# 顯示當前目錄結構，用於調試
-RUN ls -la
+# 修改 go.mod 以映射導入路徑
+RUN echo "更新導入路徑" && \\
+    if grep -q "module g38_lottery_service" go.mod; then \\
+        echo "模組已正確設定"; \\
+    else \\
+        echo "修改 go.mod"; \\
+        # 獲取當前模組名稱 \\
+        MODULE_NAME=$(grep -E "^module" go.mod | awk '{print $2}') && \\
+        # 添加路徑重新映射 \\
+        echo "replacing module paths" && \\
+        echo "replace $MODULE_NAME/internal => ./internal" >> go.mod && \\
+        echo "replace $MODULE_NAME/g38_lottery_service => ./" >> go.mod && \\
+        echo "replace g38_lottery_service => ./" >> go.mod && \\
+        cat go.mod; \\
+    fi
 
-# 構建應用程序
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o lottery_service ./cmd/lottery_service/main.go
+# 顯示當前目錄結構和 go.mod，用於調試
+RUN echo "Workspace structure:" && ls -la && cat go.mod
+
+# 使用 go.mod tidy 確保所有依賴正確
+RUN go mod tidy
+
+# 構建應用程序，顯示構建日誌
+RUN go env && \\
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -o lottery_service ./cmd/lottery_service/main.go
 
 # 最終階段
 FROM alpine:latest
@@ -139,7 +147,7 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 
 # 從構建階段複製編譯好的應用程序
-COPY --from=builder /go/src/g38_lottery_service/lottery_service .
+COPY --from=builder /app/lottery_service .
 
 # 暴露端口（根據您的應用需求調整）
 EXPOSE 8080
@@ -147,7 +155,7 @@ EXPOSE 8080
 # 運行命令
 CMD ["./lottery_service"]
 '''
-                    echo "Created optimized Dockerfile for Go modules"
+                    echo "Created optimized Dockerfile for Go modules with path remapping"
                 }
             }
         }
