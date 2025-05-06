@@ -165,9 +165,6 @@ CMD ["./lottery_service"]
                 // 修改 Docker 構建命令，添加必要的構建參數
                 sh """
                     docker build -t ${env.FULL_IMAGE_NAME} . -f ${env.DOCKERFILE_PATH} \\
-                        --build-arg GO111MODULE=on \\
-                        --build-arg GOPROXY=https://goproxy.cn,direct \\
-                        --build-arg GOSUMDB=off \\
                         --build-arg MODULE_NAME=g38_lottery_service
                 """
                 echo "Docker image built successfully: ${env.FULL_IMAGE_NAME}"
