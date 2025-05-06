@@ -458,7 +458,29 @@ StageGameOver  // 遊戲結束
 - 每次階段轉換時停止並清除舊計時器
 - 使用`time.AfterFunc`確保計時器回調在獨立的goroutine中執行
 
-## 七、總結
+## 七、編譯
+
+### 編譯 Linux 64位元版本
+
+```
+
+$ GOOS=linux GOARCH=amd64 go build -o build/lottery_service ./cmd/lottery_service/main.go
+
+```
+
+### 編譯 Windows 64位元版本
+
+```
+$ GOOS=windows GOARCH=amd64 go build -o build/lottery_service.exe ./cmd/lottery_service/main.go
+```
+
+### 編譯 macOS 64位元版本
+
+```
+$ GOOS=darwin GOARCH=amd64 go build -o build/lottery_service ./cmd/lottery_service/main.go
+```
+
+## 八、總結
 
 賓果抽球遊戲開獎服務是一個基於Golang開發的高效實時開獎系統，通過WebSocket提供雙向通訊能力，使用Redis進行狀態持久化，使用TiDB進行歷史數據儲存。系統支持完整的賓果球遊戲流程，包括常規球抽取、額外球選邊、JP抽球和幸運號碼管理。
 
