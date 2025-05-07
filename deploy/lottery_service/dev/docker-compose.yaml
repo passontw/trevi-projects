@@ -6,8 +6,8 @@ services:
     container_name: lottery-service-dev
     restart: unless-stopped
     ports:
-      - "${SERVICE_PORT}:8080"
-      - "9010:9100" #  grpc 服務 Port
+      - "9000:8080"
+      - "9010:9100"
     environment:
       - TZ=${LOTTERY_DEFAULT_TIMEZONE}
       - SERVER_MODE=${SERVER_MODE}
@@ -17,30 +17,11 @@ services:
     networks:
       - lottery_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-      
-  grpcui:
-    image: fullstorydev/grpcui:latest
-    container_name: lottery-grpcui
-    restart: on-failure
-    ports:
-      - "${GRPCUI_PORT:-8090}:8080" # 使用環境變量，如果未設定則默認為8090
-    command: [
-      "-bind=0.0.0.0",
-      "-port=8080",
-      "-plaintext",
-      "-max-msg-sz=20000000",  # 增加訊息大小限制
-      "lottery-service:9010" # 使用lottery-service的服務名稱 port 對應上面的 grpc 服務 Port
-    ]
-    depends_on:
-      lottery-service:
-        condition: service_healthy
-    networks:
-      - lottery_network
 
 networks:
   lottery_network:

@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  grpcui:
+    image: fullstorydev/grpcui:latest
+    container_name: grpcui
+    command: -plaintext ${GRPC_HOST:-10.141.1.40}:${GRPC_PORT:-9010}
+    ports:
+      - "9000:8080"
+    environment:
+      - GRPC_HOST=${GRPC_HOST:-10.141.1.40}
+      - GRPC_PORT=${GRPC_PORT:-9010}
+    networks:
+      - grpc-network
+
+networks:
+  grpc-network:
+    driver: bridge
