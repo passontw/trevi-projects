@@ -4,6 +4,7 @@ import (
 	"context"
 
 	mq "g38_lottery_service/internal/lottery_service/mq"
+	"g38_lottery_service/pkg/databaseManager"
 	redis "g38_lottery_service/pkg/redisManager"
 
 	"go.uber.org/fx"
@@ -15,11 +16,19 @@ func ProvideRedisRepository(redisManager redis.RedisManager, logger *zap.Logger)
 	return NewRedisRepository(redisManager, logger)
 }
 
+// ProvideTiDBRepository 提供 TiDB 實現的持久化儲存庫
+func ProvideTiDBRepository(dbManager databaseManager.DatabaseManager, logger *zap.Logger) *TiDBRepository {
+	return NewTiDBRepository(dbManager, logger)
+}
+
+// ProvideCompositeRepository 提供組合儲存庫
+func ProvideCompositeRepository(redisRepo *RedisRepository, tidbRepo *TiDBRepository) *CompositeRepository {
+	return NewCompositeRepository(redisRepo, tidbRepo)
+}
+
 // ProvideGameRepository 提供遊戲儲存庫實例
-func ProvideGameRepository(redisRepo *RedisRepository) GameRepository {
-	// 這裡使用組合儲存庫，但目前我們只實現了 Redis 部分
-	// 將來可以添加 TiDB 或其他持久化儲存的實現
-	return redisRepo
+func ProvideGameRepository(compositeRepo *CompositeRepository) GameRepository {
+	return compositeRepo
 }
 
 // ProvideGameManager 提供遊戲流程管理器
@@ -47,6 +56,8 @@ func StartGameManager(lc fx.Lifecycle, manager *GameManager, logger *zap.Logger)
 var Module = fx.Options(
 	// 提供遊戲儲存庫
 	fx.Provide(ProvideRedisRepository),
+	fx.Provide(ProvideTiDBRepository),
+	fx.Provide(ProvideCompositeRepository),
 	fx.Provide(ProvideGameRepository),
 
 	// 提供遊戲流程管理器

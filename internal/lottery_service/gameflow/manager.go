@@ -445,7 +445,7 @@ func (m *GameManager) finalizeGame(ctx context.Context) error {
 	}
 
 	// 清理當前遊戲數據，準備下一局
-	if err := m.prepareForNextGame(ctx); err != nil {
+	if err := m.prepareForNextGame(ctx, false); err != nil {
 		m.logger.Error("準備下一局失敗", zap.Error(err))
 		return err
 	}
@@ -454,19 +454,25 @@ func (m *GameManager) finalizeGame(ctx context.Context) error {
 }
 
 // prepareForNextGame 準備下一局遊戲
-func (m *GameManager) prepareForNextGame(ctx context.Context) error {
+func (m *GameManager) prepareForNextGame(ctx context.Context, alreadyHoldingLock bool) error {
 	// 從Redis刪除當前遊戲
 	if err := m.repo.DeleteCurrentGame(ctx); err != nil {
 		return fmt.Errorf("刪除當前遊戲數據失敗: %w", err)
 	}
 
-	// 創建新的遊戲，設置為準備階段
+	// 創建新的遊戲
 	newGameID := fmt.Sprintf("game_%s", uuid.New().String())
 	newGame := NewGameData(newGameID)
 
-	m.stageMutex.Lock()
+	if !alreadyHoldingLock {
+		m.stageMutex.Lock()
+	}
+
 	m.currentGame = newGame
-	m.stageMutex.Unlock()
+
+	if !alreadyHoldingLock {
+		m.stageMutex.Unlock()
+	}
 
 	// 保存新遊戲狀態
 	if err := m.repo.SaveGame(ctx, newGame); err != nil {
@@ -698,25 +704,42 @@ func (m *GameManager) SetHasJackpot(ctx context.Context, hasJackpot bool) error 
 	return nil
 }
 
+// isStageAllowedToBeCancelled 檢查遊戲階段是否允許取消
+func isStageAllowedToBeCancelled(stage GameStage) bool {
+	// 列出允許取消的階段
+	allowedStages := map[GameStage]bool{
+		StagePreparation:       true,
+		StageNewRound:          true,
+		StageCardPurchaseOpen:  true,
+		StageCardPurchaseClose: true,
+		// 球已經開始抽取的階段不允許取消
+	}
+
+	return allowedStages[stage]
+}
+
 // CancelGame 取消當前遊戲
 func (m *GameManager) CancelGame(ctx context.Context, reason string) error {
 	m.stageMutex.Lock()
-	defer m.stageMutex.Unlock()
 
+	// 檢查條件並設置遊戲狀態
 	if m.currentGame == nil {
+		m.stageMutex.Unlock()
 		return ErrGameNotFound
 	}
 
-	// 檢查是否已經取消
+	// 檢查當前遊戲是否已經被取消
 	if m.currentGame.IsCancelled {
-		return ErrGameAlreadyCancelled
+		m.stageMutex.Unlock()
+		return NewGameFlowError("GAME_ALREADY_CANCELLED", "遊戲已被取消")
 	}
 
-	// 檢查當前階段是否允許取消
-	stageConfig := GetStageConfig(m.currentGame.CurrentStage)
-	if !stageConfig.AllowCanceling {
-		return NewGameFlowErrorWithFormat("CANNOT_CANCEL_AT_STAGE",
-			"當前階段 %s 不允許取消遊戲", m.currentGame.CurrentStage)
+	// 檢查遊戲階段，不是所有階段都可以被取消
+	stage := m.currentGame.CurrentStage
+	if !isStageAllowedToBeCancelled(stage) {
+		m.stageMutex.Unlock()
+		return NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_CANCELLATION",
+			"當前階段 %s 不允許取消遊戲", stage)
 	}
 
 	// 設置取消狀態
@@ -725,29 +748,35 @@ func (m *GameManager) CancelGame(ctx context.Context, reason string) error {
 	m.currentGame.CancelTime = time.Now()
 	m.currentGame.EndTime = time.Now()
 
-	// 保存更新後的遊戲狀態
-	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
+	// 保存遊戲狀態副本和ID以便在釋放鎖後使用
+	gameCopy := *m.currentGame
+	gameID := m.currentGame.GameID
+
+	// 解鎖，後續操作不需要鎖定
+	m.stageMutex.Unlock()
+
+	// 保存遊戲狀態到 Redis (可能較快的操作)
+	if err := m.repo.SaveGame(ctx, &gameCopy); err != nil {
 		return fmt.Errorf("保存取消狀態失敗: %w", err)
 	}
 
-	// 保存遊戲歷史記錄
-	if err := m.repo.SaveGameHistory(ctx, m.currentGame); err != nil {
+	// 保存歷史記錄到 TiDB
+	if err := m.repo.SaveGameHistory(ctx, &gameCopy); err != nil {
 		m.logger.Error("保存取消遊戲的歷史記錄失敗", zap.Error(err))
-		// 繼續執行，不返回錯誤
+	} else {
+		if err := m.repo.DeleteCurrentGame(ctx); err != nil {
+			m.logger.Error("刪除當前遊戲數據失敗", zap.Error(err))
+		}
 	}
 
-	m.logger.Info("遊戲已取消",
-		zap.String("gameID", m.currentGame.GameID),
-		zap.String("reason", reason))
-
-	// 觸發取消事件
+	// 觸發事件
 	if m.onGameCancelled != nil {
-		m.onGameCancelled(m.currentGame.GameID, reason)
+		m.onGameCancelled(gameID, reason)
 	}
 
 	// 準備下一局
-	if err := m.prepareForNextGame(ctx); err != nil {
-		m.logger.Error("取消遊戲後準備下一局失敗", zap.Error(err))
+	if err := m.prepareForNextGame(ctx, false); err != nil {
+		m.logger.Error("準備下一局失敗", zap.Error(err))
 		return err
 	}
 

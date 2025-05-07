@@ -37,19 +37,26 @@ func NewGrpcServer(
 	dealerServer *dealerWebsocket.DealerServer,
 ) *GrpcServer {
 	// 設定 gRPC keepalive 參數，確保連接活躍
-	keepAliveOpts := grpc.KeepaliveParams(keepalive.ServerParameters{
-		MaxConnectionIdle:     15 * time.Second, // 如果連接閒置超過此時間，發送 ping
-		MaxConnectionAge:      30 * time.Second, // 連接最大存活時間
-		MaxConnectionAgeGrace: 5 * time.Second,  // 強制關閉連接前的寬限期
-		Time:                  5 * time.Second,  // 每隔 x 秒發送一次 ping
-		Timeout:               2 * time.Second,  // ping 超時後等待的時間
+	keepAliveParams := grpc.KeepaliveParams(keepalive.ServerParameters{
+		MaxConnectionIdle:     60 * time.Second, // 如果連接閒置超過此時間，發送 ping (延長至 60 秒)
+		MaxConnectionAge:      3 * time.Hour,    // 連接最大存活時間 (延長至 3 小時)
+		MaxConnectionAgeGrace: 30 * time.Second, // 強制關閉連接前的寬限期 (延長至 30 秒)
+		Time:                  20 * time.Second, // 每隔 x 秒發送一次 ping (延長至 20 秒)
+		Timeout:               10 * time.Second, // ping 超時後等待的時間 (延長至 10 秒)
+	})
+
+	// 設定 keepalive 強制執行策略
+	keepAlivePolicy := grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+		MinTime:             10 * time.Second, // 允許客戶端最小 ping 間隔
+		PermitWithoutStream: true,             // 允許沒有活動流的連接發送 ping
 	})
 
 	// 創建 gRPC 服務器
 	logger.Info("創建 gRPC 服務器")
 	server := grpc.NewServer(
-		keepAliveOpts,
-		grpc.ConnectionTimeout(10*time.Second), // 連接超時設置
+		keepAliveParams,
+		keepAlivePolicy,
+		grpc.ConnectionTimeout(30*time.Second), // 連接超時設置 (延長至 30 秒)
 	)
 
 	// 創建實例

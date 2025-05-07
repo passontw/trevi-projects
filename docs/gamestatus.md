@@ -11,47 +11,66 @@
 ```json
 {
   "game": {
-    "id": "G20240619001",
-    "state": "BETTING",
-    "startTime": "2024-06-19T08:00:00Z",
-    "endTime": null,
+    "id": "game_64adfb18-d0c7-47b8-8f14-26d6ec3466b9",
+    "state": "GAME_OVER",
+    "startTime": "2025-05-05:00:00Z",
+    "endTime": "2025-05-05:15:00Z",
     "hasJackpot": false,
-    "extraBallCount": 3,
-    "timeline": {
-      "currentTime": "2024-06-19T08:05:30Z",
-      "stateStartTime": "2024-06-19T08:05:00Z",
-      "remainingTime": 25,
-      "maxTimeout": 60
-    }
+    "extraBallCount": 3
   },
   "luckyNumbers": [1, 12, 23, 34, 45, 56, 67],
   "drawnBalls": [
-    {
-      "number": 5,
-      "drawnTime": "2024-06-19T08:06:00Z",
-      "sequence": 1
-    },
-    {
-      "number": 17,
-      "drawnTime": "2024-06-19T08:06:01Z",
-      "sequence": 2
-    }
+    { "number": 1, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 2, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 3, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 4, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 5, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 6, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 7, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 8, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 9, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 10, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 11, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 12, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 13, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 14, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 15, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 16, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 17, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 18, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 19, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 20, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 21, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 22, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 23, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 24, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 25, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 26, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 27, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 28, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 29, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 30, "type": "BALL_TYPE_REGULAR", "isLast": true, "timestamp": "2024-06-19T08:00:00Z" }
   ],
   "extraBalls": [
-    {
-      "number": 42,
-      "drawnTime": "2024-06-19T08:10:00Z",
-      "sequence": 1,
-      "side": "LEFT"
-    }
+    { "number": 1, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 2, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+    { "number": 3, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" }
   ],
   "jackpot": {
-    "active": false,
-    "gameId": null,
+    "active": true,
+    "gameId": "game_64adfb18-d0c7-47b8-8f14-26d6ec3466b5",
     "amount": 500000,
-    "startTime": null,
-    "endTime": null,
-    "drawnBalls": [],
+    "startTime": "2025-05-05:00:10Z",
+    "endTime": "2025-05-05:00:12Z",
+    "drawnBalls": [
+      { "number": 1, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 2, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 3, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 4, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 5, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 6, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 7, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" }
+    ],
     "winner": null
   },
   "topPlayers": [

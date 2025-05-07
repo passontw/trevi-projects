@@ -8,12 +8,14 @@ import (
 	"syscall"
 	"time"
 
+	"g38_lottery_service/internal/lottery_service/api"
 	"g38_lottery_service/internal/lottery_service/config"
 	"g38_lottery_service/internal/lottery_service/dealerWebsocket"
 	"g38_lottery_service/internal/lottery_service/gameflow"
 	"g38_lottery_service/internal/lottery_service/grpc"
 	"g38_lottery_service/internal/lottery_service/mq"
 	"g38_lottery_service/internal/lottery_service/service"
+	"g38_lottery_service/pkg/databaseManager"
 	"g38_lottery_service/pkg/nacosManager"
 	redis "g38_lottery_service/pkg/redisManager"
 
@@ -39,6 +41,20 @@ func main() {
 		config.Module,
 		// 註冊 Redis 模塊
 		redis.Module,
+		// 註冊數據庫模塊
+		fx.Provide(func(cfg *config.AppConfig) *databaseManager.MySQLConfig {
+			return &databaseManager.MySQLConfig{
+				Host:      cfg.Database.Host,
+				Port:      cfg.Database.Port,
+				User:      cfg.Database.Username,
+				Password:  cfg.Database.Password,
+				Name:      cfg.Database.DBName,
+				Charset:   "utf8mb4",
+				ParseTime: true,
+				Loc:       "Local",
+			}
+		}),
+		fx.Provide(databaseManager.ProvideMySQLDatabaseManager),
 		// 註冊 RocketMQ 生產者模塊
 		mq.Module,
 		// 註冊荷官端 WebSocket 模塊
@@ -49,6 +65,8 @@ func main() {
 		service.Module,
 		// 註冊 gRPC 服務模塊
 		grpc.Module,
+		// 註冊 HTTP API 服務模塊
+		api.Module,
 
 		fx.Provide(
 			func() *zap.Logger {

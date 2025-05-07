@@ -22,7 +22,7 @@ func main() {
 
 	// 設定 gRPC 連接參數
 	kacp := keepalive.ClientParameters{
-		Time:                10 * time.Second, // 每10秒發送ping
+		Time:                15 * time.Second, // 每15秒發送ping (增加間隔時間)
 		Timeout:             5 * time.Second,  // 如果ping 5秒內未收到回應，視為連接斷開
 		PermitWithoutStream: true,             // 允許在沒有活躍RPC的情況下發送ping
 	}
@@ -31,8 +31,8 @@ func main() {
 	serverAddr := "localhost:9100"
 	fmt.Printf("連接 gRPC 服務器 %s...\n", serverAddr)
 
-	// 設定連接超時為10秒
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// 設定連接超時為15秒
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer dialCancel()
 
 	conn, err := grpc.DialContext(

@@ -36,8 +36,8 @@ func main() {
 
 	// 設置 gRPC 連接選項
 	var kacp = keepalive.ClientParameters{
-		Time:                10 * time.Second, // 每 10 秒發送 ping
-		Timeout:             time.Second,      // 等待 ping ack 的時間
+		Time:                15 * time.Second, // 每 15 秒發送 ping (增加間隔時間)
+		Timeout:             5 * time.Second,  // 等待 ping ack 的時間 (增加超時時間)
 		PermitWithoutStream: true,             // 即使沒有 RPC，也允許 ping
 	}
 
