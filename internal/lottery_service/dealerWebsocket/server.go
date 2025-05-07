@@ -479,9 +479,17 @@ func (s *DealerServer) RegisterExternalHandler(messageType string, handler Messa
 func (s *DealerServer) Start(lc fx.Lifecycle) {
 	// 使用應用配置中的荷官 WebSocket 端口
 	serverAddr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.DealerWsPort)
-	s.logger.Info("Starting dealer WebSocket server",
+	s.logger.Info("正在啟動荷官 WebSocket 服務器",
 		zap.String("address", serverAddr),
-		zap.Int("port", s.config.Server.DealerWsPort))
+		zap.Int("port", s.config.Server.DealerWsPort),
+		zap.String("配置來源", "AppConfig.Server.DealerWsPort"))
+
+	// 輸出更多配置信息用於調試
+	s.logger.Info("WebSocket 配置詳情",
+		zap.String("Host", s.config.Server.Host),
+		zap.Int("DealerWsPort", s.config.Server.DealerWsPort),
+		zap.Int("GrpcPort", s.config.Server.GrpcPort),
+		zap.String("ServiceName", s.config.Server.ServiceName))
 
 	// 建立 ServeMux
 	mux := http.NewServeMux()
@@ -513,15 +521,18 @@ func (s *DealerServer) Start(lc fx.Lifecycle) {
 		OnStart: func(ctx context.Context) error {
 			// 啟動 HTTP 服務器
 			go func() {
-				s.logger.Info("Dealer WebSocket server listening", zap.String("address", serverAddr))
+				s.logger.Info("荷官 WebSocket 服務器已啟動",
+					zap.String("監聽地址", serverAddr),
+					zap.Int("端口", s.config.Server.DealerWsPort))
+
 				if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					s.logger.Error("Dealer WebSocket server failed", zap.Error(err))
+					s.logger.Error("荷官 WebSocket 服務器運行失敗", zap.Error(err))
 				}
 			}()
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			s.logger.Info("Stopping dealer WebSocket server")
+			s.logger.Info("正在停止荷官 WebSocket 服務器")
 			return s.server.Shutdown(ctx)
 		},
 	})

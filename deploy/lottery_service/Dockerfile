@@ -53,6 +53,7 @@ COPY --from=builder /go/src/g38_lottery_service/lottery_service .
 
 # 暴露端口（根據您的應用需求調整）
 EXPOSE 8080
+EXPOSE 9100
 
 # 運行命令
 CMD ["./lottery_service"]
