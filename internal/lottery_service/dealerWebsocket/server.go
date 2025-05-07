@@ -9,7 +9,6 @@ import (
 
 	"g38_lottery_service/internal/lottery_service/config"
 	"g38_lottery_service/internal/lottery_service/gameflow"
-	"g38_lottery_service/internal/lottery_service/websocket"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -19,10 +18,10 @@ import (
 type DealerServer struct {
 	config      *config.AppConfig
 	logger      *zap.Logger
-	engine      *websocket.Engine
+	engine      *Engine
 	server      *http.Server
 	gameManager *gameflow.GameManager
-	topics      map[string]map[string]*websocket.Client // 每個主題的訂閱者
+	topics      map[string]map[string]*Client // 每個主題的訂閱者
 	mu          sync.Mutex
 }
 
@@ -33,7 +32,7 @@ func NewDealerServer(
 	gameManager *gameflow.GameManager,
 ) *DealerServer {
 	// 創建 WebSocket 引擎
-	engine := websocket.NewEngine(logger)
+	engine := NewEngine(logger)
 
 	// 初始化服務器
 	server := &DealerServer{
@@ -41,16 +40,16 @@ func NewDealerServer(
 		logger:      logger.With(zap.String("component", "dealer_websocket")),
 		engine:      engine,
 		gameManager: gameManager,
-		topics:      make(map[string]map[string]*websocket.Client), // 初始化主題映射
+		topics:      make(map[string]map[string]*Client), // 初始化主題映射
 	}
 
 	// 註冊訊息處理函數
 	server.registerHandlers()
 
 	// 設置連接回調處理函數
-	server.engine.SetOnConnectHandler(func(client *websocket.Client) {
+	server.engine.SetOnConnectHandler(func(client *Client) {
 		// 發送 HelloResponse 到客戶端
-		err := client.SendJSON(websocket.Response{
+		err := client.SendJSON(Response{
 			Type: "hello",
 			Payload: map[string]interface{}{
 				"message": "歡迎連接到開獎服務荷官端 (Dealer WebSocket)",
@@ -76,15 +75,15 @@ func NewDealerServer(
 // 註冊訊息處理函數
 func (s *DealerServer) registerHandlers() {
 	// 處理 ping 訊息
-	s.engine.RegisterHandler("ping", func(client *websocket.Client, message websocket.Message) error {
-		return client.SendJSON(websocket.Response{
+	s.engine.RegisterHandler("ping", func(client *Client, message Message) error {
+		return client.SendJSON(Response{
 			Type:    "pong",
 			Payload: map[string]string{"time": time.Now().Format(time.RFC3339)},
 		})
 	})
 
 	// 處理荷官開獎訊息
-	s.engine.RegisterHandler("draw_lottery", func(client *websocket.Client, message websocket.Message) error {
+	s.engine.RegisterHandler("draw_lottery", func(client *Client, message Message) error {
 		// 從訊息中獲取開獎數據
 		result, ok := message.Payload["result"]
 		if !ok {
@@ -106,7 +105,7 @@ func (s *DealerServer) registerHandlers() {
 			zap.Any("result", result))
 
 		// 廣播開獎結果給所有連接的荷官
-		return s.engine.Broadcast(websocket.Response{
+		return s.engine.Broadcast(Response{
 			Type: "lottery_result",
 			Payload: map[string]interface{}{
 				"game_id": gameID,
@@ -117,7 +116,7 @@ func (s *DealerServer) registerHandlers() {
 	})
 
 	// 處理開始新局請求
-	s.engine.RegisterHandler("START_NEW_ROUND", func(client *websocket.Client, message websocket.Message) error {
+	s.engine.RegisterHandler("START_NEW_ROUND", func(client *Client, message Message) error {
 		s.logger.Info("收到開始新局請求",
 			zap.String("clientID", client.ID),
 			zap.Any("payload", message.Payload))
@@ -133,7 +132,7 @@ func (s *DealerServer) registerHandlers() {
 			s.logger.Warn(errorMessage, zap.String("clientID", client.ID))
 
 			// 返回錯誤回應
-			return client.SendJSON(websocket.Response{
+			return client.SendJSON(Response{
 				Type: "response",
 				Payload: map[string]interface{}{
 					"success": false,
@@ -152,7 +151,7 @@ func (s *DealerServer) registerHandlers() {
 				zap.Error(err))
 
 			// 返回錯誤回應
-			return client.SendJSON(websocket.Response{
+			return client.SendJSON(Response{
 				Type: "response",
 				Payload: map[string]interface{}{
 					"success": false,
@@ -170,7 +169,7 @@ func (s *DealerServer) registerHandlers() {
 			s.logger.Error(errorMessage, zap.String("clientID", client.ID))
 
 			// 返回錯誤回應
-			return client.SendJSON(websocket.Response{
+			return client.SendJSON(Response{
 				Type: "response",
 				Payload: map[string]interface{}{
 					"success": false,
@@ -189,7 +188,7 @@ func (s *DealerServer) registerHandlers() {
 				zap.Error(err))
 
 			// 返回錯誤回應
-			return client.SendJSON(websocket.Response{
+			return client.SendJSON(Response{
 				Type: "response",
 				Payload: map[string]interface{}{
 					"success": false,
@@ -209,7 +208,7 @@ func (s *DealerServer) registerHandlers() {
 			zap.String("gameID", gameID),
 			zap.String("stage", string(game.CurrentStage)))
 
-		return client.SendJSON(websocket.Response{
+		return client.SendJSON(Response{
 			Type: "response",
 			Payload: map[string]interface{}{
 				"success":   true,
@@ -223,7 +222,7 @@ func (s *DealerServer) registerHandlers() {
 	})
 
 	// 處理客戶端斷開連接
-	s.engine.RegisterHandler("__disconnect", func(client *websocket.Client, message websocket.Message) error {
+	s.engine.RegisterHandler("__disconnect", func(client *Client, message Message) error {
 		// 從所有訂閱主題中移除客戶端
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -242,7 +241,7 @@ func (s *DealerServer) registerHandlers() {
 	})
 
 	// 處理訂閱主題請求
-	s.engine.RegisterHandler("SUBSCRIBE", func(client *websocket.Client, message websocket.Message) error {
+	s.engine.RegisterHandler("SUBSCRIBE", func(client *Client, message Message) error {
 		// 從訊息中獲取訂閱主題
 		topicData, ok := message.Payload["data"].(map[string]interface{})
 		if !ok {
@@ -251,7 +250,7 @@ func (s *DealerServer) registerHandlers() {
 
 		topic, ok := topicData["topic"].(string)
 		if !ok || topic == "" {
-			return client.SendJSON(websocket.Response{
+			return client.SendJSON(Response{
 				Type: "response",
 				Payload: map[string]interface{}{
 					"success": false,
@@ -265,7 +264,7 @@ func (s *DealerServer) registerHandlers() {
 		// 添加客戶端到主題訂閱者列表
 		s.mu.Lock()
 		if _, exists := s.topics[topic]; !exists {
-			s.topics[topic] = make(map[string]*websocket.Client)
+			s.topics[topic] = make(map[string]*Client)
 		}
 		s.topics[topic][client.ID] = client
 		s.mu.Unlock()
@@ -275,7 +274,7 @@ func (s *DealerServer) registerHandlers() {
 			zap.String("topic", topic))
 
 		// 發送訂閱成功回應
-		return client.SendJSON(websocket.Response{
+		return client.SendJSON(Response{
 			Type: "response",
 			Payload: map[string]interface{}{
 				"success": true,
@@ -288,7 +287,7 @@ func (s *DealerServer) registerHandlers() {
 	})
 
 	// 處理取消訂閱主題請求
-	s.engine.RegisterHandler("UNSUBSCRIBE", func(client *websocket.Client, message websocket.Message) error {
+	s.engine.RegisterHandler("UNSUBSCRIBE", func(client *Client, message Message) error {
 		// 從訊息中獲取要取消訂閱的主題
 		topicData, ok := message.Payload["data"].(map[string]interface{})
 		if !ok {
@@ -297,7 +296,7 @@ func (s *DealerServer) registerHandlers() {
 
 		topic, ok := topicData["topic"].(string)
 		if !ok || topic == "" {
-			return client.SendJSON(websocket.Response{
+			return client.SendJSON(Response{
 				Type: "response",
 				Payload: map[string]interface{}{
 					"success": false,
@@ -314,7 +313,7 @@ func (s *DealerServer) registerHandlers() {
 
 		clients, topicExists := s.topics[topic]
 		if !topicExists || clients[client.ID] == nil {
-			return client.SendJSON(websocket.Response{
+			return client.SendJSON(Response{
 				Type: "response",
 				Payload: map[string]interface{}{
 					"success": false,
@@ -337,7 +336,7 @@ func (s *DealerServer) registerHandlers() {
 			zap.String("topic", topic))
 
 		// 發送取消訂閱成功回應
-		return client.SendJSON(websocket.Response{
+		return client.SendJSON(Response{
 			Type: "response",
 			Payload: map[string]interface{}{
 				"success": true,
@@ -350,7 +349,7 @@ func (s *DealerServer) registerHandlers() {
 	})
 
 	// 處理發布訊息請求
-	s.engine.RegisterHandler("PUBLISH", func(client *websocket.Client, message websocket.Message) error {
+	s.engine.RegisterHandler("PUBLISH", func(client *Client, message Message) error {
 		// 從訊息中獲取要發布的主題和數據
 		publishData, ok := message.Payload["data"].(map[string]interface{})
 		if !ok {
@@ -359,7 +358,7 @@ func (s *DealerServer) registerHandlers() {
 
 		topic, ok := publishData["topic"].(string)
 		if !ok || topic == "" {
-			return client.SendJSON(websocket.Response{
+			return client.SendJSON(Response{
 				Type: "response",
 				Payload: map[string]interface{}{
 					"success": false,
@@ -383,7 +382,7 @@ func (s *DealerServer) registerHandlers() {
 			zap.String("topic", topic))
 
 		// 發送發布成功回應
-		return client.SendJSON(websocket.Response{
+		return client.SendJSON(Response{
 			Type: "response",
 			Payload: map[string]interface{}{
 				"success": true,
@@ -399,7 +398,7 @@ func (s *DealerServer) registerHandlers() {
 // 向主題發布訊息
 func (s *DealerServer) publishToTopic(topic string, data interface{}) {
 	// 建立要發送的訊息
-	message := websocket.Response{
+	message := Response{
 		Type: "MESSAGE",
 		Payload: map[string]interface{}{
 			"topic":     topic,
@@ -471,7 +470,7 @@ func (s *DealerServer) publishToTopic(topic string, data interface{}) {
 // }
 
 // RegisterExternalHandler 註冊外部處理函數
-func (s *DealerServer) RegisterExternalHandler(messageType string, handler websocket.MessageHandler) {
+func (s *DealerServer) RegisterExternalHandler(messageType string, handler MessageHandler) {
 	s.engine.RegisterHandler(messageType, handler)
 	s.logger.Info("Registered external handler for message type", zap.String("type", messageType))
 }
@@ -537,13 +536,13 @@ var Module = fx.Options(
 )
 
 // 添加獲取引擎方法
-func (s *DealerServer) GetEngine() *websocket.Engine {
+func (s *DealerServer) GetEngine() *Engine {
 	return s.engine
 }
 
 // BroadcastMessage 廣播消息到所有連接的客戶端
 func (s *DealerServer) BroadcastMessage(message interface{}) error {
-	return s.engine.Broadcast(websocket.Response{
+	return s.engine.Broadcast(Response{
 		Type:    "event",
 		Payload: message,
 	})

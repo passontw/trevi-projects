@@ -3,7 +3,6 @@ package service
 import (
 	"g38_lottery_service/internal/lottery_service/dealerWebsocket"
 	"g38_lottery_service/internal/lottery_service/mq"
-	"g38_lottery_service/internal/lottery_service/websocket"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -40,7 +39,7 @@ func (s *LotteryService) Start() {
 // 註冊荷官端訊息處理函數
 func (s *LotteryService) registerDealerHandlers() {
 	// 監聽荷官端的開獎事件
-	dealerLotteryHandler := func(client *websocket.Client, message websocket.Message) error {
+	dealerLotteryHandler := func(client *dealerWebsocket.Client, message dealerWebsocket.Message) error {
 		// 從訊息中提取必要的信息
 		gameID, ok := message.Payload["game_id"].(string)
 		if !ok {

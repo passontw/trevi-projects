@@ -328,9 +328,11 @@ func parseNacosConfig(content string, config *AppConfig) error {
 		return fmt.Errorf("從 Nacos 獲取的配置不是有效的 JSON")
 	}
 
-	// 解析 JSON
+	// 解析 JSON，使用 json.Number 保留數值精確性
 	var jsonMap map[string]interface{}
-	if err := json.Unmarshal([]byte(processedContent), &jsonMap); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(processedContent))
+	decoder.UseNumber() // 使用 json.Number 而不是 float64
+	if err := decoder.Decode(&jsonMap); err != nil {
 		return fmt.Errorf("解析 Nacos 配置失敗: %w", err)
 	}
 
@@ -372,23 +374,43 @@ func parseNacosConfig(content string, config *AppConfig) error {
 func restoreWebSocketPorts(config *AppConfig, dealerWsPort int, grpcPort int) {
 	// 保存原始的荷官WebSocket端口
 	if dealerWsPort > 0 {
-		config.Server.DealerWsPort = dealerWsPort
+		// 只有當配置中沒有設置值或值為 0 時才設置
+		if config.Server.DealerWsPort <= 0 {
+			config.Server.DealerWsPort = dealerWsPort
+			log.Printf("從保存的值恢復 DealerWsPort: %d", dealerWsPort)
+		} else {
+			log.Printf("保留 Nacos 配置的 DealerWsPort: %d (未使用保存的值: %d)",
+				config.Server.DealerWsPort, dealerWsPort)
+		}
 	} else {
 		envPort := getEnvAsInt("DEALER_WS_PORT", 0)
-		if envPort > 0 {
+		if envPort > 0 && config.Server.DealerWsPort <= 0 {
 			config.Server.DealerWsPort = envPort
+			log.Printf("從環境變量恢復 DealerWsPort: %d", envPort)
 		}
 	}
 
 	// 保存原始的gRPC端口
 	if grpcPort > 0 {
-		config.Server.GrpcPort = grpcPort
+		// 只有當配置中沒有設置值或值為 0 時才設置
+		if config.Server.GrpcPort <= 0 {
+			config.Server.GrpcPort = grpcPort
+			log.Printf("從保存的值恢復 GrpcPort: %d", grpcPort)
+		} else {
+			log.Printf("保留 Nacos 配置的 GrpcPort: %d (未使用保存的值: %d)",
+				config.Server.GrpcPort, grpcPort)
+		}
 	} else {
 		envPort := getEnvAsInt("GRPC_PORT", 0)
-		if envPort > 0 {
+		if envPort > 0 && config.Server.GrpcPort <= 0 {
 			config.Server.GrpcPort = envPort
+			log.Printf("從環境變量恢復 GrpcPort: %d", envPort)
 		}
 	}
+
+	// 輸出最終端口設置
+	log.Printf("最終端口設置: DealerWsPort=%d, GrpcPort=%d",
+		config.Server.DealerWsPort, config.Server.GrpcPort)
 }
 
 // preserveNacosConnectionInfo 保留 Nacos 連接信息
@@ -396,6 +418,9 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 	// 保存原始的WebSocket端口和gRPC端口設置
 	dealerWsPort := config.Server.DealerWsPort
 	grpcPort := config.Server.GrpcPort
+
+	log.Printf("保存端口值以進行還原: DealerWsPort=%d, GrpcPort=%d",
+		dealerWsPort, grpcPort)
 
 	// 設置Nacos連接信息
 	config.Nacos = NacosConfig{
@@ -411,24 +436,28 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 		ServicePort: getEnvAsInt("SERVICE_PORT", 8080),
 	}
 
-	// 保留原始的 DealerWsPort 設定，如果它有效
-	if dealerWsPort > 0 {
+	// 保留原始的 DealerWsPort 設定，如果它有效且 Nacos 未設置
+	if dealerWsPort > 0 && config.Server.DealerWsPort <= 0 {
 		config.Server.DealerWsPort = dealerWsPort
+		log.Printf("恢復之前保存的 DealerWsPort: %d", dealerWsPort)
 	}
 
-	// 保留原始的 GrpcPort 設定，如果它有效
-	if grpcPort > 0 {
+	// 保留原始的 GrpcPort 設定，如果它有效且 Nacos 未設置
+	if grpcPort > 0 && config.Server.GrpcPort <= 0 {
 		config.Server.GrpcPort = grpcPort
+		log.Printf("恢復之前保存的 GrpcPort: %d", grpcPort)
 	}
 
 	// 確保 WebSocket 端口設置不為0
 	if config.Server.DealerWsPort <= 0 {
 		config.Server.DealerWsPort = 3002 // 默認值
+		log.Printf("DealerWsPort 為 0，設置默認值: 3002")
 	}
 
 	// 確保 gRPC 端口設置不為0
 	if config.Server.GrpcPort <= 0 {
 		config.Server.GrpcPort = 9100 // 默認值
+		log.Printf("GrpcPort 為 0，設置默認值: 9100")
 	}
 
 	// 若端口為 3002，嘗試使用備用端口 3033，因為 3002 可能被佔用
@@ -437,7 +466,8 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 		config.Server.DealerWsPort = 3033
 	}
 
-	log.Printf("Nacos 初始配置設置完成，DealerWsPort=%d, GrpcPort=%d", config.Server.DealerWsPort, config.Server.GrpcPort)
+	log.Printf("Nacos 初始配置設置完成，最終設置: DealerWsPort=%d, GrpcPort=%d",
+		config.Server.DealerWsPort, config.Server.GrpcPort)
 }
 
 // mapJsonToAppConfig 將 JSON 映射到 AppConfig 結構
@@ -456,19 +486,14 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 				config.Debug = strings.ToLower(s) == "true"
 			}
 		},
-		"PORT": func(v interface{}) {
-			if port, ok := parseIntValue(v); ok {
-				config.Server.Port = port
-			}
-		},
 		"DEALER_WS_PORT": func(v interface{}) {
+			log.Printf("Nacos 配置中的 DEALER_WS_PORT 原始值: %v (類型: %T)", v, v)
+
 			if port, ok := parseIntValue(v); ok {
 				config.Server.DealerWsPort = port
-			}
-		},
-		"API_HOST": func(v interface{}) {
-			if s, ok := v.(string); ok {
-				config.Server.Host = s
+				log.Printf("成功設置 DEALER_WS_PORT 為: %d", port)
+			} else {
+				log.Printf("無法解析 DEALER_WS_PORT 值: %v", v)
 			}
 		},
 		"VERSION": func(v interface{}) {
@@ -476,7 +501,6 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 				config.Server.Version = s
 			}
 		},
-
 		"REDIS_HOST": func(v interface{}) {
 			if s, ok := v.(string); ok {
 				config.Redis.Host = s
@@ -526,24 +550,6 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 		"DB_PASSWORD": func(v interface{}) {
 			if s, ok := v.(string); ok {
 				config.Database.Password = s
-			}
-		},
-
-		"JWT_SECRET": func(v interface{}) {
-			if s, ok := v.(string); ok {
-				config.JWT.Secret = s
-			}
-		},
-		"ADMIN_JWT_SECRET": func(v interface{}) {
-			if s, ok := v.(string); ok {
-				config.JWT.AdminSecret = s
-			}
-		},
-		"JWT_EXPIRES_IN": func(v interface{}) {
-			if s, ok := v.(string); ok {
-				if duration, err := time.ParseDuration(s); err == nil {
-					config.JWT.ExpiresIn = duration
-				}
 			}
 		},
 		// RocketMQ 配置映射
@@ -602,16 +608,6 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 				config.RocketMQ.ConsumerGroup = s
 			}
 		},
-		"ROCKETMQ_ACCESS_KEY": func(v interface{}) {
-			if s, ok := v.(string); ok {
-				config.RocketMQ.AccessKey = s
-			}
-		},
-		"ROCKETMQ_SECRET_KEY": func(v interface{}) {
-			if s, ok := v.(string); ok {
-				config.RocketMQ.SecretKey = s
-			}
-		},
 	}
 
 	// 應用映射
@@ -626,16 +622,56 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 
 // parseIntValue 解析整數值，支持字符串或數字
 func parseIntValue(v interface{}) (int, bool) {
+	log.Printf("嘗試解析整數值: %v (類型: %T)", v, v)
+
 	switch val := v.(type) {
 	case int:
+		log.Printf("直接使用整數值: %d", val)
 		return val, true
 	case float64:
+		log.Printf("將浮點數轉換為整數: %f -> %d", val, int(val))
 		return int(val), true
 	case string:
+		// 嘗試直接轉換字符串
 		if i, err := strconv.Atoi(val); err == nil {
+			log.Printf("成功將字符串轉換為整數: %s -> %d", val, i)
 			return i, true
 		}
+
+		// 嘗試解析浮點數然後轉為整數
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			i := int(f)
+			log.Printf("通過浮點數將字符串轉換為整數: %s -> %f -> %d", val, f, i)
+			return i, true
+		}
+
+		log.Printf("無法將字符串轉換為整數: %s", val)
+	case json.Number:
+		// 處理 json.Number 類型
+		if i, err := val.Int64(); err == nil {
+			log.Printf("成功將 json.Number 轉換為整數: %s -> %d", val.String(), i)
+			return int(i), true
+		}
+
+		// 嘗試解析為浮點數
+		if f, err := val.Float64(); err == nil {
+			i := int(f)
+			log.Printf("通過浮點數將 json.Number 轉換為整數: %s -> %f -> %d", val.String(), f, i)
+			return i, true
+		}
+
+		log.Printf("無法將 json.Number 轉換為整數: %s", val.String())
+	default:
+		// 嘗試將其他類型轉換為字符串再解析
+		str := fmt.Sprintf("%v", v)
+		if i, err := strconv.Atoi(str); err == nil {
+			log.Printf("成功將其他類型轉換為整數: %v -> %s -> %d", v, str, i)
+			return i, true
+		}
+
+		log.Printf("無法將其他類型轉換為整數: %v", v)
 	}
+
 	return 0, false
 }
 
