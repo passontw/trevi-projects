@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	pb "g38_lottery_service/internal/proto/generated/dealer"
+	pb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -110,22 +110,17 @@ func main() {
 
 	// 顯示遊戲狀態
 	fmt.Printf("是否有JP: %v\n", gameData.GetHasJackpot())
-	fmt.Printf("遊戲是否取消: %v\n", gameData.GetCancelTime() > 0)
-	fmt.Printf("最後更新時間: %v\n", time.Unix(gameData.GetLastUpdateTime(), 0))
+	fmt.Printf("額外球數量: %d\n", gameData.GetExtraBallCount())
+	if cancelTime := gameData.GetCancelTime(); cancelTime != nil {
+		fmt.Printf("遊戲已取消，取消時間: %s\n", cancelTime.AsTime().UTC().Format(time.RFC3339))
+	}
+	if lastUpdateTime := gameData.GetLastUpdateTime(); lastUpdateTime != nil {
+		fmt.Printf("最後更新時間: %s\n", lastUpdateTime.AsTime().UTC().Format(time.RFC3339))
+	}
 	displayBalls("正球", gameData.GetRegularBalls())
 	displayBalls("加球", gameData.GetExtraBalls())
-
-	jackpotBalls := make([]int32, 0)
-	if gameData.GetJackpot() != nil {
-		jackpotBalls = gameData.GetJackpot().GetDrawnBalls()
-	}
-	displayBalls("JP球", jackpotBalls)
-
-	luckyBalls := make([]int32, 0)
-	if gameData.GetJackpot() != nil {
-		luckyBalls = gameData.GetJackpot().GetLuckyBalls()
-	}
-	displayBalls("幸運球", luckyBalls)
+	displayBalls("JP球", gameData.GetJackpotBalls())
+	displayBalls("幸運球", gameData.GetLuckyBalls())
 
 	// 顯示完整的 JSON 格式
 	fmt.Println("完整回應 JSON 格式:")

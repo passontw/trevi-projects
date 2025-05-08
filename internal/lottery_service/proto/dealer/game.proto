@@ -97,16 +97,10 @@ message GameData {
   ExtraBallSide selected_side = 9;
   // 是否有JP
   bool has_jackpot = 10;
-  // JP獲獎者ID
-  string jackpot_winner = 11;
-  // 是否已取消
-  bool is_cancelled = 12;
-  // 取消原因
-  string cancel_reason = 13;
-  // 取消時間
-  google.protobuf.Timestamp cancel_time = 14;
+  // 額外球數量，範圍是1~3
+  int32 extra
   // 最後更新時間
-  google.protobuf.Timestamp last_update_time = 15;
+  google.protobuf.Timestamp last_update_time = 12;
 }
 
 // 開始新局遊戲請求
@@ -142,9 +136,6 @@ message GetGameStatusRequest {
 message GetGameStatusResponse {
   // 完整的遊戲數據
   GameData game_data = 1;
-  
-  // 符合 docs/gamestatus.md 格式的 JSON 字符串
-  string json_response = 2;
 }
 
 
