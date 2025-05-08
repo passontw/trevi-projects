@@ -159,6 +159,17 @@ func (r *RedisRepository) GetLuckyBalls(ctx context.Context) ([]Ball, error) {
 
 // SaveLuckyBalls 保存新的幸運號碼球
 func (r *RedisRepository) SaveLuckyBalls(ctx context.Context, balls []Ball) error {
+	// 先刪除現有的幸運號碼球資料
+	err := r.redisClient.Delete(ctx, redisLuckyBallsKey)
+	if err != nil {
+		r.logger.Warn("刪除現有幸運號碼球資料失敗",
+			zap.Error(err),
+			zap.String("key", redisLuckyBallsKey))
+		// 繼續執行，不要因為刪除失敗而停止
+	} else {
+		r.logger.Debug("已刪除現有幸運號碼球資料", zap.String("key", redisLuckyBallsKey))
+	}
+
 	// 序列化球數據
 	ballsJSON, err := json.Marshal(balls)
 	if err != nil {
@@ -171,7 +182,20 @@ func (r *RedisRepository) SaveLuckyBalls(ctx context.Context, balls []Ball) erro
 		return fmt.Errorf("保存幸運號碼球到 Redis 失敗: %w", err)
 	}
 
-	r.logger.Debug("已保存幸運號碼球到 Redis", zap.Int("數量", len(balls)))
+	r.logger.Info("已保存幸運號碼球到 Redis",
+		zap.Int("數量", len(balls)),
+		zap.String("key", redisLuckyBallsKey))
+
+	// 驗證寫入是否成功
+	verifyJSON, err := r.redisClient.Get(ctx, redisLuckyBallsKey)
+	if err != nil {
+		r.logger.Warn("無法驗證幸運號碼球寫入", zap.Error(err))
+	} else if verifyJSON != string(ballsJSON) {
+		r.logger.Warn("幸運號碼球寫入驗證失敗，資料不匹配")
+	} else {
+		r.logger.Debug("幸運號碼球寫入驗證成功")
+	}
+
 	return nil
 }
 

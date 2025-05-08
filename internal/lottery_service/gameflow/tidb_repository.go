@@ -43,6 +43,22 @@ func (GameModel) TableName() string {
 	return "games"
 }
 
+// Jackpot遊戲模型
+type JackpotGameModel struct {
+	ID        uint       `gorm:"primaryKey;autoIncrement"`
+	GameID    string     `gorm:"column:game_id;type:varchar(50);not null"`
+	JackpotID string     `gorm:"column:jackpot_id;type:varchar(50);uniqueIndex;not null"`
+	StartTime *time.Time `gorm:"column:start_time;type:timestamp;null"`
+	EndTime   *time.Time `gorm:"column:end_time;type:timestamp;null"`
+	CreatedAt time.Time  `gorm:"column:created_at;type:timestamp;not null;default:CURRENT_TIMESTAMP"`
+	UpdatedAt time.Time  `gorm:"column:updated_at;type:timestamp;not null;default:CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"`
+}
+
+// 設置表名
+func (JackpotGameModel) TableName() string {
+	return "jackpot_games"
+}
+
 // 球資料庫模型
 type DrawnBallModel struct {
 	ID         uint      `gorm:"primaryKey;autoIncrement"`
@@ -118,6 +134,7 @@ func NewTiDBRepository(dbManager databaseManager.DatabaseManager, logger *zap.Lo
 		&DrawnBallModel{},
 		&LuckyBallsModel{},
 		&GameStateLogModel{},
+		&JackpotGameModel{},
 	)
 
 	if err != nil {
@@ -148,6 +165,10 @@ func (r *TiDBRepository) SaveGameHistory(ctx context.Context, game *GameData) er
 		}
 	}()
 
+	// 檢查是否已存在此遊戲記錄
+	var existingGame GameModel
+	result := tx.Where("game_id = ?", game.GameID).First(&existingGame)
+
 	// 1. 儲存遊戲基本資訊
 	gameModel := convertGameDataToGameModel(game)
 
@@ -159,13 +180,34 @@ func (r *TiDBRepository) SaveGameHistory(ctx context.Context, game *GameData) er
 	}
 	gameModel.GameSnapshot = string(gameSnapshot)
 
-	// 寫入遊戲記錄
-	if err := tx.Create(&gameModel).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("保存遊戲基本資訊失敗: %w", err)
+	// 根據是否已存在記錄決定創建或更新
+	if result.Error == nil { // 記錄已存在，執行更新
+		r.logger.Info("更新現有遊戲記錄",
+			zap.String("gameID", game.GameID),
+			zap.String("stage", string(game.CurrentStage)))
+
+		if err := tx.Model(&existingGame).Updates(gameModel).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("更新遊戲基本資訊失敗: %w", err)
+		}
+	} else { // 記錄不存在，執行創建
+		r.logger.Info("創建新遊戲記錄",
+			zap.String("gameID", game.GameID),
+			zap.String("stage", string(game.CurrentStage)))
+
+		if err := tx.Create(&gameModel).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("保存遊戲基本資訊失敗: %w", err)
+		}
 	}
 
-	// 2. 儲存已抽出的球
+	// 2. 先刪除現有球記錄，然後重新儲存已抽出的球
+	if err := tx.Where("game_id = ?", game.GameID).Delete(&DrawnBallModel{}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("刪除舊球記錄失敗: %w", err)
+	}
+
+	// 重新保存所有球
 	if err := saveDrawnBalls(tx, game); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("保存已抽出的球失敗: %w", err)
@@ -173,6 +215,10 @@ func (r *TiDBRepository) SaveGameHistory(ctx context.Context, game *GameData) er
 
 	// 3. 儲存最新的幸運號碼球 (如果有)
 	if game.Jackpot != nil && len(game.Jackpot.LuckyBalls) == 7 {
+		r.logger.Info("保存幸運號碼球到lucky_balls表",
+			zap.String("gameID", game.GameID),
+			zap.Int("luckyBallsCount", len(game.Jackpot.LuckyBalls)))
+
 		if err := saveLuckyBalls(tx, game); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("保存幸運號碼球失敗: %w", err)
@@ -185,6 +231,37 @@ func (r *TiDBRepository) SaveGameHistory(ctx context.Context, game *GameData) er
 		return fmt.Errorf("保存遊戲階段記錄失敗: %w", err)
 	}
 
+	// 5. 儲存Jackpot遊戲數據（如果有）
+	if game.HasJackpot && game.Jackpot != nil {
+		r.logger.Info("準備保存Jackpot遊戲數據",
+			zap.String("gameID", game.GameID),
+			zap.String("jackpotID", game.Jackpot.ID),
+			zap.Bool("endTimeSet", !game.Jackpot.EndTime.IsZero()))
+
+		// 僅保存與資料庫表對應的欄位，JackpotGame中的其他欄位（如Amount、Active、WinnerUserID等）只在內存中使用
+		jpModel := JackpotGameModel{
+			GameID:    game.GameID,
+			JackpotID: game.Jackpot.ID,
+		}
+
+		// 設置開始時間
+		if !game.Jackpot.StartTime.IsZero() {
+			startTime := game.Jackpot.StartTime
+			jpModel.StartTime = &startTime
+		}
+
+		// 設置結束時間
+		if !game.Jackpot.EndTime.IsZero() {
+			endTime := game.Jackpot.EndTime
+			jpModel.EndTime = &endTime
+		}
+
+		if err := tx.Create(&jpModel).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("保存jackpot遊戲記錄失敗: %w", err)
+		}
+	}
+
 	// 提交事務
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("提交事務失敗: %w", err)
@@ -193,7 +270,14 @@ func (r *TiDBRepository) SaveGameHistory(ctx context.Context, game *GameData) er
 	r.logger.Info("已成功保存遊戲歷史記錄到數據庫",
 		zap.String("gameID", game.GameID),
 		zap.String("stage", string(game.CurrentStage)),
-		zap.Bool("cancelled", game.IsCancelled))
+		zap.Bool("cancelled", game.IsCancelled),
+		zap.Bool("hasJackpot", game.HasJackpot),
+		zap.Int("luckyBallsCount", func() int {
+			if game.Jackpot != nil {
+				return len(game.Jackpot.LuckyBalls)
+			}
+			return 0
+		}()))
 
 	return nil
 }
@@ -532,17 +616,61 @@ func saveDrawnBalls(tx *gorm.DB, game *GameData) error {
 
 // 輔助函數：保存幸運號碼球
 func saveLuckyBalls(tx *gorm.DB, game *GameData) error {
+	logger := zap.L().With(zap.String("component", "tidb_repository.saveLuckyBalls"))
+
 	// 檢查 Jackpot 是否存在
 	if game.Jackpot == nil || len(game.Jackpot.LuckyBalls) < 7 {
-		return nil // 不足7顆球或無 Jackpot，不保存
+		errMsg := fmt.Sprintf("幸運號碼球數量不足，需要7顆，目前有 %d 顆",
+			func() int {
+				if game.Jackpot != nil {
+					return len(game.Jackpot.LuckyBalls)
+				}
+				return 0
+			}())
+		logger.Error(errMsg, zap.String("gameID", game.GameID))
+		return fmt.Errorf(errMsg)
 	}
 
-	// 1. 將現有的活躍幸運號碼設為非活躍
+	// 打印所有幸運號碼球，方便排查
+	var luckyNumbers []int
+	for _, ball := range game.Jackpot.LuckyBalls {
+		luckyNumbers = append(luckyNumbers, ball.Number)
+	}
+	logger.Info("準備保存幸運號碼球到TiDB",
+		zap.String("gameID", game.GameID),
+		zap.Ints("luckyNumbers", luckyNumbers),
+		zap.Bool("isLastBall", game.Jackpot.LuckyBalls[len(game.Jackpot.LuckyBalls)-1].IsLast))
+
+	// 1. 判斷是否已存在此遊戲的幸運號碼球記錄
+	var existingRecord LuckyBallsModel
+	result := tx.Where("game_id = ?", game.GameID).First(&existingRecord)
+
+	if result.Error == nil {
+		// 已有記錄，先刪除
+		logger.Info("此遊戲已有幸運號碼記錄，準備更新",
+			zap.String("gameID", game.GameID),
+			zap.Uint("recordID", existingRecord.ID))
+
+		if err := tx.Where("game_id = ?", game.GameID).Delete(&LuckyBallsModel{}).Error; err != nil {
+			logger.Error("刪除舊的幸運號碼記錄失敗",
+				zap.String("gameID", game.GameID),
+				zap.Error(err))
+			return fmt.Errorf("刪除舊的幸運號碼記錄失敗: %w", err)
+		}
+	} else {
+		logger.Info("此遊戲沒有現有幸運號碼記錄，將創建新記錄",
+			zap.String("gameID", game.GameID))
+	}
+
+	// 2. 將現有的活躍幸運號碼設為非活躍
 	if err := tx.Model(&LuckyBallsModel{}).Where("active = ?", true).Update("active", false).Error; err != nil {
-		return err
+		logger.Error("更新舊的活躍幸運號碼狀態失敗",
+			zap.Error(err))
+		return fmt.Errorf("更新舊的活躍幸運號碼狀態失敗: %w", err)
 	}
+	logger.Info("已將現有活躍幸運號碼設為非活躍")
 
-	// 2. 保存新的幸運號碼
+	// 3. 保存新的幸運號碼
 	model := LuckyBallsModel{
 		GameID:    game.GameID,
 		DrawDate:  time.Now(),
@@ -557,7 +685,18 @@ func saveLuckyBalls(tx *gorm.DB, game *GameData) error {
 		CreatedAt: time.Now(),
 	}
 
-	return tx.Create(&model).Error
+	// 創建新記錄
+	if err := tx.Create(&model).Error; err != nil {
+		logger.Error("保存新的幸運號碼記錄失敗",
+			zap.String("gameID", game.GameID),
+			zap.Error(err))
+		return fmt.Errorf("保存新的幸運號碼記錄失敗: %w", err)
+	}
+	logger.Info("成功保存新的幸運號碼記錄到TiDB",
+		zap.String("gameID", game.GameID),
+		zap.Ints("luckyNumbers", luckyNumbers))
+
+	return nil
 }
 
 // 輔助函數：保存遊戲階段記錄

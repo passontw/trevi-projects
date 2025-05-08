@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -291,32 +292,105 @@ func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBall
 	// 檢查是否有已存在的球
 	existingBalls := req.GetBalls()
 
-	// 獲取最後一個球的數字（如果存在）
-	var lastBallNumber int
-	var isLast bool
-
-	if len(existingBalls) > 0 {
-		lastBall := existingBalls[len(existingBalls)-1]
-		lastBallNumber = int(lastBall.Number)
-		isLast = lastBall.IsLast
+	// 獲取當前遊戲狀態來檢查實際幸運球數量
+	gameData := s.gameManager.GetCurrentGame()
+	if gameData == nil || gameData.Jackpot == nil {
+		s.logger.Error("獲取遊戲狀態失敗或Jackpot為空")
+		return nil, fmt.Errorf("獲取遊戲狀態失敗")
 	}
 
-	// 抽取幸運號碼球
-	ball, err := s.gameManager.HandleDrawLuckyBall(ctx, lastBallNumber, isLast)
+	// 檢查實際LuckyBalls數量，如果是6個但用戶沒有提供新球，自動添加第7個
+	currentLuckyBallsCount := len(gameData.Jackpot.LuckyBalls)
+	s.logger.Info("當前幸運號碼球數量",
+		zap.Int("luckyBalls數量", currentLuckyBallsCount),
+		zap.Int("請求中的球數量", len(existingBalls)))
+
+	// 如果當前有6個幸運球但請求中沒有任何球，我們需要添加第7個球
+	if currentLuckyBallsCount == 6 && len(existingBalls) == 0 {
+		s.logger.Info("檢測到已有6個幸運號碼球，自動添加第7個球以完成抽取")
+
+		// 生成隨機球號（1-75）
+		// Go 1.22 中不再需要顯式設置隨機種子，math/rand 現在自動處理
+		randomBallNumber := rand.Intn(75) + 1
+
+		// 創建新的幸運球
+		newBall := &pb.Ball{
+			Number:    int32(randomBallNumber),
+			Type:      pb.BallType_BALL_TYPE_LUCKY,
+			IsLast:    true,
+			Timestamp: timestamppb.New(time.Now()),
+		}
+
+		// 添加到請求中
+		existingBalls = append(existingBalls, newBall)
+		s.logger.Info("已自動添加第7個幸運號碼球",
+			zap.Int("球號", randomBallNumber))
+	}
+
+	// 檢查是否已達7球上限
+	if len(existingBalls) > 7 {
+		s.logger.Warn("幸運號碼球數量超過7個，將截取前7個",
+			zap.Int("當前球數", len(existingBalls)))
+		existingBalls = existingBalls[:7]
+	} else if len(existingBalls) == 7 {
+		s.logger.Info("已達到幸運號碼球的上限數量(7球)",
+			zap.Int("當前球數", len(existingBalls)))
+	}
+
+	// 將 protobuf 的球轉換為內部類型的球
+	luckyBalls := make([]gameflow.Ball, len(existingBalls))
+	for i, pbBall := range existingBalls {
+		luckyBalls[i] = gameflow.Ball{
+			Number:    int(pbBall.Number),
+			Type:      gameflow.BallTypeLucky,
+			IsLast:    pbBall.IsLast,
+			Timestamp: pbBall.Timestamp.AsTime(),
+		}
+	}
+
+	// 確保最後一個球被標記為最後一個
+	if len(luckyBalls) > 0 {
+		// 先將所有球設為非最後一球
+		for i := range luckyBalls {
+			luckyBalls[i].IsLast = false
+		}
+		// 設置最後一個球為最後一個
+		luckyBalls[len(luckyBalls)-1].IsLast = true
+	}
+
+	s.logger.Info("調用 HandleDrawLuckyBall",
+		zap.Int("球數量", len(luckyBalls)))
+
+	// 調用新的處理方法，直接使用整個球陣列
+	err := s.gameManager.HandleDrawLuckyBall(ctx, luckyBalls)
 	if err != nil {
+		s.logger.Error("處理幸運號碼球失敗", zap.Error(err))
 		return nil, err
 	}
 
-	// 創建新的球對象
-	pbBall := &pb.Ball{
-		Number:    int32(ball.Number),
-		Type:      pb.BallType_BALL_TYPE_LUCKY,
-		IsLast:    ball.IsLast,
-		Timestamp: timestamppb.New(ball.Timestamp),
+	// 獲取更新後的遊戲狀態
+	gameData = s.gameManager.GetCurrentGame()
+	if gameData == nil || gameData.Jackpot == nil {
+		s.logger.Error("獲取更新後的遊戲狀態失敗或Jackpot為空")
+		return nil, fmt.Errorf("獲取更新後的遊戲狀態失敗")
 	}
 
-	// 將新球添加到現有球列表
-	updatedBalls := append(existingBalls, pbBall)
+	// 轉換所有幸運號碼球為 proto 類型
+	updatedBalls := make([]*pb.Ball, 0, len(gameData.Jackpot.LuckyBalls))
+	for _, ball := range gameData.Jackpot.LuckyBalls {
+		updatedBalls = append(updatedBalls, convertBallToPb(ball))
+	}
+
+	// 確保只返回最多7顆球
+	if len(updatedBalls) > 7 {
+		updatedBalls = updatedBalls[:7]
+		s.logger.Warn("修正返回的幸運號碼球數量，限制為7球",
+			zap.Int("原球數", len(gameData.Jackpot.LuckyBalls)),
+			zap.Int("修正後", len(updatedBalls)))
+	}
+
+	s.logger.Info("已處理幸運號碼球",
+		zap.Int("當前幸運球總數", len(updatedBalls)))
 
 	return &pb.DrawLuckyBallResponse{
 		Balls: updatedBalls,

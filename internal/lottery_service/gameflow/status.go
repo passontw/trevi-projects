@@ -47,14 +47,15 @@ type GameStatusExtraBall struct {
 	Side      string `json:"side"`
 }
 
+// GameStatusJackpot 表示JP狀態響應
 type GameStatusJackpot struct {
-	Active     bool                  `json:"active"`
-	GameID     *string               `json:"gameId"`
-	Amount     int64                 `json:"amount"`
-	StartTime  *string               `json:"startTime"`
-	EndTime    *string               `json:"endTime"`
-	DrawnBalls []GameStatusDrawnBall `json:"drawnBalls"`
-	Winner     *string               `json:"winner"`
+	Active     bool                  `json:"active"`           // 是否啟用（僅內存使用，不保存到資料庫）
+	GameID     *string               `json:"gameId"`           // 遊戲ID
+	Amount     int64                 `json:"amount"`           // 獎金金額（僅內存使用，不保存到資料庫）
+	StartTime  *string               `json:"startTime"`        // 開始時間
+	EndTime    *string               `json:"endTime"`          // 結束時間
+	DrawnBalls []GameStatusDrawnBall `json:"drawnBalls"`       // 已抽出的JP球
+	Winner     *string               `json:"winner,omitempty"` // 獲獎者信息（僅內存使用，不保存到資料庫）
 }
 
 type GameStatusTopPlayer struct {

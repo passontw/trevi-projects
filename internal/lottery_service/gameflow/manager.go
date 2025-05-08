@@ -356,6 +356,12 @@ func (m *GameManager) AdvanceStage(ctx context.Context, autoAdvance bool) error 
 			m.wsNotifier.OnStageChanged(newGame.GameID, previousStage, nextStage, newGame)
 		}
 
+		// 清理當前遊戲數據，準備下一局
+		if err := m.prepareForNextGame(ctx, false); err != nil {
+			m.logger.Error("準備下一局失敗", zap.Error(err))
+			return err
+		}
+
 		return nil // 提前返回，避免執行下面的代碼
 	}
 
@@ -386,12 +392,52 @@ func (m *GameManager) AdvanceStage(ctx context.Context, autoAdvance bool) error 
 				StartTime:  time.Now(),
 				LuckyBalls: luckyBalls,
 				DrawnBalls: make([]Ball, 0),
+				Amount:     500000, // 設置預設金額為500000（僅內存使用，不保存到資料庫）
+				Active:     true,   // 設置為啟用（僅內存使用，不保存到資料庫）
 			}
 
 			m.logger.Info("在階段轉換中初始化JP遊戲",
 				zap.String("gameID", m.currentGame.GameID),
 				zap.String("jackpotID", jpID),
 				zap.Int("luckyNumbersCount", len(luckyBalls)))
+		}
+	} else if previousStage == StageDrawingLuckyBallsStart && nextStage == StageDrawingLuckyBallsClosed {
+		// 在幸運號碼球環節結束時，檢查並確保幸運號碼已保存到Redis
+		if m.currentGame.Jackpot != nil && len(m.currentGame.Jackpot.LuckyBalls) == 7 {
+			// 記錄所有幸運球號碼，方便排查問題
+			var luckyNumbers []int
+			for _, b := range m.currentGame.Jackpot.LuckyBalls {
+				luckyNumbers = append(luckyNumbers, b.Number)
+			}
+
+			m.logger.Info("階段轉換時保存幸運號碼球到Redis",
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Ints("luckyNumbers", luckyNumbers),
+				zap.String("fromStage", string(previousStage)),
+				zap.String("toStage", string(nextStage)))
+
+			// 確保最後一個球被標記為最後一個
+			m.currentGame.Jackpot.LuckyBalls[len(m.currentGame.Jackpot.LuckyBalls)-1].IsLast = true
+
+			// 執行保存操作
+			if err := m.repo.SaveLuckyBalls(ctx, m.currentGame.Jackpot.LuckyBalls); err != nil {
+				m.logger.Error("在階段轉換時保存幸運號碼失敗",
+					zap.Error(err),
+					zap.String("gameID", m.currentGame.GameID))
+			} else {
+				m.logger.Info("在階段轉換時成功保存幸運號碼",
+					zap.String("gameID", m.currentGame.GameID))
+			}
+		} else {
+			m.logger.Warn("幸運號碼球數量不足或Jackpot未初始化，無法在階段轉換時保存",
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Int("luckyBallsCount", func() int {
+					if m.currentGame.Jackpot != nil {
+						return len(m.currentGame.Jackpot.LuckyBalls)
+					}
+					return 0
+				}()),
+				zap.Bool("hasJackpot", m.currentGame.Jackpot != nil))
 		}
 	}
 
@@ -434,6 +480,49 @@ func (m *GameManager) AdvanceStage(ctx context.Context, autoAdvance bool) error 
 	// 使用 WebSocket 通知器
 	if m.wsNotifier != nil {
 		m.wsNotifier.OnStageChanged(gameCopy.GameID, oldStage, nextStage, &gameCopy)
+	}
+
+	// 遊戲結束前再次檢查並保存幸運號碼球
+	if nextStage == StageGameOver {
+		if m.currentGame.Jackpot != nil && len(m.currentGame.Jackpot.LuckyBalls) > 0 {
+			m.logger.Info("遊戲結束前保存幸運號碼球到Redis",
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Int("luckyBallsCount", len(m.currentGame.Jackpot.LuckyBalls)))
+
+			if len(m.currentGame.Jackpot.LuckyBalls) >= 7 {
+				m.currentGame.Jackpot.LuckyBalls[len(m.currentGame.Jackpot.LuckyBalls)-1].IsLast = true
+
+				if err := m.repo.SaveLuckyBalls(ctx, m.currentGame.Jackpot.LuckyBalls); err != nil {
+					m.logger.Error("遊戲結束前保存幸運號碼失敗",
+						zap.Error(err),
+						zap.String("gameID", m.currentGame.GameID))
+				} else {
+					m.logger.Info("遊戲結束前成功保存幸運號碼",
+						zap.String("gameID", m.currentGame.GameID))
+				}
+			} else {
+				m.logger.Warn("遊戲結束時幸運號碼球數量不足，無法保存",
+					zap.String("gameID", m.currentGame.GameID),
+					zap.Int("luckyBallsCount", len(m.currentGame.Jackpot.LuckyBalls)))
+			}
+		}
+
+		// 在GAME_OVER階段，提前保存遊戲歷史到TiDB
+		if err := m.repo.SaveGameHistory(ctx, m.currentGame); err != nil {
+			m.logger.Error("在遊戲結束階段保存遊戲歷史失敗",
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Error(err))
+		} else {
+			m.logger.Info("在遊戲結束階段成功保存遊戲歷史",
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Bool("hasJackpot", m.currentGame.HasJackpot),
+				zap.Int("luckyBallsCount", func() int {
+					if m.currentGame.Jackpot != nil {
+						return len(m.currentGame.Jackpot.LuckyBalls)
+					}
+					return 0
+				}()))
+		}
 	}
 
 	return nil
@@ -598,21 +687,14 @@ func (m *GameManager) executeStageSpecificActions(ctx context.Context, stage Gam
 				StartTime:  time.Now(),
 				LuckyBalls: luckyBalls,
 				DrawnBalls: make([]Ball, 0),
+				Amount:     500000, // 設置預設金額為500000（僅內存使用，不保存到資料庫）
+				Active:     true,   // 設置為啟用（僅內存使用，不保存到資料庫）
 			}
 
-			// 保存遊戲狀態
-			err = m.repo.SaveGame(ctx, m.currentGame)
-
-			m.logger.Info("初始化JP遊戲",
+			m.logger.Info("在階段轉換中初始化JP遊戲",
 				zap.String("gameID", m.currentGame.GameID),
 				zap.String("jackpotID", jpID),
 				zap.Int("luckyNumbersCount", len(luckyBalls)))
-
-			if err != nil {
-				m.logger.Error("保存JP初始化狀態失敗", zap.Error(err))
-				m.stageMutex.Unlock()
-				return err
-			}
 		}
 
 		m.stageMutex.Unlock()
@@ -633,25 +715,73 @@ func (m *GameManager) finalizeGame(ctx context.Context) error {
 	// 設置遊戲結束時間
 	m.currentGame.EndTime = time.Now()
 
+	// 檢查並確保jackpot相關資料完整
+	if m.currentGame.HasJackpot && m.currentGame.Jackpot != nil {
+		// 設置Jackpot結束時間
+		if m.currentGame.Jackpot.EndTime.IsZero() {
+			m.currentGame.Jackpot.EndTime = time.Now()
+			m.logger.Info("設置Jackpot結束時間",
+				zap.String("gameID", gameID),
+				zap.String("jackpotID", m.currentGame.Jackpot.ID))
+		}
+
+		// 確保設置了Amount字段（僅用於內存和日誌記錄，不保存到資料庫）
+		if m.currentGame.Jackpot.Amount == 0 {
+			m.currentGame.Jackpot.Amount = 500000
+			m.logger.Info("設置Jackpot預設金額（僅用於內存）",
+				zap.String("gameID", gameID),
+				zap.String("jackpotID", m.currentGame.Jackpot.ID),
+				zap.Float64("amount", m.currentGame.Jackpot.Amount))
+		}
+
+		// 確保幸運號碼球最後一個球標記為最後
+		if len(m.currentGame.Jackpot.LuckyBalls) >= 7 {
+			m.currentGame.Jackpot.LuckyBalls[len(m.currentGame.Jackpot.LuckyBalls)-1].IsLast = true
+
+			// 再次確保幸運號碼球保存到Redis
+			if err := m.repo.SaveLuckyBalls(ctx, m.currentGame.Jackpot.LuckyBalls); err != nil {
+				m.logger.Error("最終處理時保存幸運號碼球失敗",
+					zap.Error(err),
+					zap.String("gameID", gameID))
+			} else {
+				m.logger.Info("最終處理時成功保存幸運號碼球",
+					zap.String("gameID", gameID))
+			}
+		} else {
+			m.logger.Warn("幸運號碼球數量不足, 無法在最終處理時保存",
+				zap.String("gameID", gameID),
+				zap.Int("luckyBallsCount", len(m.currentGame.Jackpot.LuckyBalls)))
+		}
+	}
+
 	// 保存遊戲歷史記錄
 	if err := m.repo.SaveGameHistory(ctx, m.currentGame); err != nil {
 		m.logger.Error("保存遊戲歷史記錄失敗",
 			zap.String("gameID", gameID),
+			zap.Bool("hasJackpot", m.currentGame.HasJackpot),
+			zap.Int("luckyBallsCount", func() int {
+				if m.currentGame.Jackpot != nil {
+					return len(m.currentGame.Jackpot.LuckyBalls)
+				}
+				return 0
+			}()),
 			zap.Error(err))
 		return err
 	}
 
-	m.logger.Info("遊戲歷史記錄已保存", zap.String("gameID", gameID))
+	m.logger.Info("遊戲歷史記錄已保存",
+		zap.String("gameID", gameID),
+		zap.Bool("hasJackpot", m.currentGame.HasJackpot),
+		zap.Int("luckyBallsCount", func() int {
+			if m.currentGame.Jackpot != nil {
+				return len(m.currentGame.Jackpot.LuckyBalls)
+			}
+			return 0
+		}()))
 
 	// 觸發遊戲完成事件
 	if m.onGameCompleted != nil {
 		m.onGameCompleted(gameID)
-	}
-
-	// 清理當前遊戲數據，準備下一局
-	if err := m.prepareForNextGame(ctx, false); err != nil {
-		m.logger.Error("準備下一局失敗", zap.Error(err))
-		return err
 	}
 
 	return nil
@@ -812,6 +942,8 @@ func (m *GameManager) HandleDrawJackpotBall(ctx context.Context, number int, isL
 			StartTime:  time.Now(),
 			LuckyBalls: make([]Ball, 0),
 			DrawnBalls: make([]Ball, 0),
+			Amount:     500000, // 設置預設金額為500000（僅內存使用，不保存到資料庫）
+			Active:     true,   // 設置為啟用（僅內存使用，不保存到資料庫）
 		}
 		m.logger.Info("初始化JP遊戲",
 			zap.String("gameID", m.currentGame.GameID),
@@ -835,106 +967,49 @@ func (m *GameManager) HandleDrawJackpotBall(ctx context.Context, number int, isL
 	m.currentGame.Jackpot.DrawnBalls = append(m.currentGame.Jackpot.DrawnBalls, newBall)
 	m.currentGame.LastUpdateTime = time.Now()
 
-	// 保存更新後的遊戲狀態
-	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
-		return nil, fmt.Errorf("保存遊戲狀態失敗: %w", err)
-	}
-
-	m.logger.Info("抽取JP球",
-		zap.String("gameID", m.currentGame.GameID),
-		zap.String("jackpotID", m.currentGame.Jackpot.ID),
-		zap.Int("ballNumber", number),
-		zap.Bool("isLast", isLast))
-
-	// 觸發球抽取事件
-	if m.onBallDrawn != nil {
-		m.onBallDrawn(m.currentGame.GameID, newBall)
-	}
-
-	// 如果是最後一顆球，安排自動推進到下一階段，但不在持有鎖的情況下執行
-	if isLast {
-		// 設置JP結束時間
-		m.currentGame.Jackpot.EndTime = time.Now()
-
-		// 再次保存遊戲狀態
-		if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
-			m.logger.Error("保存JP結束時間失敗",
-				zap.String("gameID", m.currentGame.GameID),
-				zap.Error(err))
-		}
-
-		// 保存當前遊戲ID，用於在goroutine中使用
-		gameID := m.currentGame.GameID
-
-		// 在goroutine中執行階段推進，但首先釋放當前持有的鎖
-		go func(gameID string) {
-			// 創建新的上下文
-			advanceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			// 嘗試推進階段
-			if err := m.AdvanceStage(advanceCtx, true); err != nil {
-				m.logger.Error("最後一顆JP球抽取後自動推進階段失敗",
-					zap.String("gameID", gameID),
-					zap.Error(err))
-			}
-		}(gameID)
-	}
-
-	return &newBall, nil
-}
-
-// HandleDrawLuckyBall 處理幸運號碼球抽取
-func (m *GameManager) HandleDrawLuckyBall(ctx context.Context, number int, isLast bool) (*Ball, error) {
-	m.stageMutex.Lock()
-	defer m.stageMutex.Unlock()
-
-	if m.currentGame == nil {
-		return nil, ErrGameNotFound
-	}
-
-	// 確認當前階段允許抽取幸運號碼球
-	if m.currentGame.CurrentStage != StageDrawingLuckyBallsStart {
-		return nil, NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_LUCKY_BALL",
-			"當前階段 %s 不允許抽取幸運號碼球", m.currentGame.CurrentStage)
-	}
-
-	// 添加球
-	ball, err := AddBall(m.currentGame, number, BallTypeLucky, isLast)
-	if err != nil {
-		return nil, err
-	}
-
-	// 保存更新後的遊戲狀態
+	// 保存遊戲狀態
 	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
 		return nil, fmt.Errorf("保存遊戲狀態失敗: %w", err)
 	}
 
 	// 同時更新全局幸運號碼記錄
 	if isLast && m.currentGame.Jackpot != nil && len(m.currentGame.Jackpot.LuckyBalls) == 7 {
-		if err := m.repo.SaveLuckyBalls(ctx, m.currentGame.Jackpot.LuckyBalls); err != nil {
-			m.logger.Error("更新全局幸運號碼記錄失敗", zap.Error(err))
-			// 不返回錯誤，繼續執行
+		m.logger.Info("檢測到最後一顆幸運號碼球，準備更新全局幸運號碼記錄",
+			zap.String("gameID", m.currentGame.GameID),
+			zap.Int("luckyBallsCount", len(m.currentGame.Jackpot.LuckyBalls)))
+
+		// 記錄所有幸運球號碼，方便排查問題
+		var luckyNumbers []int
+		for _, b := range m.currentGame.Jackpot.LuckyBalls {
+			luckyNumbers = append(luckyNumbers, b.Number)
 		}
-	}
+		m.logger.Info("幸運號碼球列表",
+			zap.Ints("luckyNumbers", luckyNumbers),
+			zap.String("gameID", m.currentGame.GameID))
 
-	m.logger.Info("抽取幸運號碼球",
-		zap.String("gameID", m.currentGame.GameID),
-		zap.Int("ballNumber", number),
-		zap.Bool("isLast", isLast))
+		// 確保在將數據保存到Redis前正確標記isLast
+		m.currentGame.Jackpot.LuckyBalls[len(m.currentGame.Jackpot.LuckyBalls)-1].IsLast = true
 
-	// 觸發球抽取事件
-	if m.onBallDrawn != nil {
-		m.onBallDrawn(m.currentGame.GameID, *ball)
-	}
+		if err := m.repo.SaveLuckyBalls(ctx, m.currentGame.Jackpot.LuckyBalls); err != nil {
+			m.logger.Error("更新全局幸運號碼記錄失敗",
+				zap.Error(err),
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Ints("luckyNumbers", luckyNumbers))
+		} else {
+			m.logger.Info("全局幸運號碼記錄更新成功",
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Ints("luckyNumbers", luckyNumbers))
+		}
 
-	// 如果是最後一顆球，安排自動推進到下一階段，但不在持有鎖的情況下執行
-	if isLast {
+		// 如果是最後一顆球，使用goroutine安排自動推進階段
 		// 保存當前遊戲ID，用於在goroutine中使用
 		gameID := m.currentGame.GameID
 
-		// 在goroutine中執行階段推進，但首先釋放當前持有的鎖
+		// 在goroutine中執行階段推進，以避免持有鎖
 		go func(gameID string) {
+			// 稍微延遲一下，確保當前操作完成
+			time.Sleep(200 * time.Millisecond)
+
 			// 創建新的上下文
 			advanceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -944,11 +1019,172 @@ func (m *GameManager) HandleDrawLuckyBall(ctx context.Context, number int, isLas
 				m.logger.Error("最後一顆幸運號碼球抽取後自動推進階段失敗",
 					zap.String("gameID", gameID),
 					zap.Error(err))
+			} else {
+				m.logger.Info("最後一顆幸運號碼球抽取後成功自動推進階段",
+					zap.String("gameID", gameID))
 			}
 		}(gameID)
 	}
 
-	return ball, nil
+	m.logger.Info("抽取幸運號碼球",
+		zap.String("gameID", m.currentGame.GameID),
+		zap.Int("ballNumber", number),
+		zap.Bool("isLast", isLast),
+		zap.Int("totalBalls", len(m.currentGame.Jackpot.LuckyBalls)))
+
+	// 觸發球抽取事件
+	if m.onBallDrawn != nil {
+		m.onBallDrawn(m.currentGame.GameID, newBall)
+	}
+
+	return &newBall, nil
+}
+
+// HandleDrawLuckyBall 處理抽取幸運號碼球的請求
+func (m *GameManager) HandleDrawLuckyBall(ctx context.Context, balls []Ball) error {
+	m.stageMutex.Lock()
+	defer m.stageMutex.Unlock()
+
+	if m.currentGame == nil {
+		m.logger.Error("沒有正在進行的遊戲")
+		return ErrGameNotFound
+	}
+
+	// 確保在幸運號碼球環節
+	if m.currentGame.CurrentStage != StageDrawingLuckyBallsStart {
+		m.logger.Error("當前遊戲階段不是抽取幸運號碼球階段",
+			zap.String("gameID", m.currentGame.GameID),
+			zap.String("currentStage", string(m.currentGame.CurrentStage)))
+		return NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_LUCKY_BALL",
+			"當前階段 %s 不允許抽取幸運號碼球", m.currentGame.CurrentStage)
+	}
+
+	// 檢查球陣列長度
+	if len(balls) > 7 {
+		m.logger.Error("幸運號碼球數量超過7個",
+			zap.String("gameID", m.currentGame.GameID),
+			zap.Int("ballCount", len(balls)))
+		return NewGameFlowError("TOO_MANY_LUCKY_BALLS", "幸運號碼球數量不能超過7個")
+	}
+
+	// 初始化 Jackpot (如果不存在)
+	if m.currentGame.Jackpot == nil {
+		jpID := fmt.Sprintf("jackpot_%s", uuid.New().String())
+		m.currentGame.Jackpot = &JackpotGame{
+			ID:         jpID,
+			StartTime:  time.Now(),
+			LuckyBalls: make([]Ball, 0),
+			DrawnBalls: make([]Ball, 0),
+			Amount:     500000, // 設置預設金額為500000（僅內存使用，不保存到資料庫）
+			Active:     true,   // 設置為啟用（僅內存使用，不保存到資料庫）
+		}
+		m.logger.Info("初始化JP遊戲",
+			zap.String("gameID", m.currentGame.GameID),
+			zap.String("jackpotID", jpID))
+	}
+
+	// 創建新的球陣列，以便我們可以修改它們
+	newBalls := make([]Ball, len(balls))
+	usedNumbers := make(map[int]bool)
+
+	for i, ball := range balls {
+		// 驗證球號是否合法
+		if err := ValidateBallNumber(ball.Number); err != nil {
+			return err
+		}
+
+		// 檢查是否有重複球號
+		if usedNumbers[ball.Number] {
+			return fmt.Errorf("幸運號碼球中有重複的球號: %d", ball.Number)
+		}
+		usedNumbers[ball.Number] = true
+
+		// 複製並修改球
+		newBalls[i] = Ball{
+			Number:    ball.Number,
+			Type:      BallTypeLucky,
+			IsLast:    false, // 預設為 false，稍後會設置最後一個球
+			Timestamp: ball.Timestamp,
+		}
+
+		// 如果時間戳是零值，設置為當前時間
+		if newBalls[i].Timestamp.IsZero() {
+			newBalls[i].Timestamp = time.Now()
+		}
+	}
+
+	// 如果有球，則設置最後一個球的 isLast 標誌
+	if len(newBalls) > 0 {
+		newBalls[len(newBalls)-1].IsLast = true
+	}
+
+	// 直接覆蓋 LuckyBalls 陣列
+	m.currentGame.Jackpot.LuckyBalls = newBalls
+	m.currentGame.LastUpdateTime = time.Now()
+
+	// 保存遊戲狀態
+	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
+		m.logger.Error("保存遊戲狀態失敗", zap.Error(err))
+		return err
+	}
+
+	m.logger.Info("更新幸運號碼球陣列",
+		zap.String("gameID", m.currentGame.GameID),
+		zap.Int("ballCount", len(newBalls)))
+
+	// 觸發球抽取事件
+	if m.onBallDrawn != nil {
+		for _, ball := range newBalls {
+			m.onBallDrawn(m.currentGame.GameID, ball)
+		}
+	}
+
+	// 如果設置了完整的7個幸運球，則同時更新Redis中的全局幸運號碼記錄
+	if len(newBalls) == 7 {
+		// 記錄所有幸運球號碼，方便排查問題
+		var luckyNumbers []int
+		for _, b := range newBalls {
+			luckyNumbers = append(luckyNumbers, b.Number)
+		}
+
+		m.logger.Info("設置了完整的7個幸運號碼球，更新全局幸運號碼記錄",
+			zap.String("gameID", m.currentGame.GameID),
+			zap.Ints("luckyNumbers", luckyNumbers))
+
+		if err := m.repo.SaveLuckyBalls(ctx, newBalls); err != nil {
+			m.logger.Error("更新全局幸運號碼記錄失敗",
+				zap.Error(err),
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Ints("luckyNumbers", luckyNumbers))
+		} else {
+			m.logger.Info("全局幸運號碼記錄更新成功",
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Ints("luckyNumbers", luckyNumbers))
+		}
+
+		// 使用goroutine在短暫延遲後推進階段
+		gameID := m.currentGame.GameID
+		go func(gameID string) {
+			// 稍微延遲一下，確保當前操作完成
+			time.Sleep(200 * time.Millisecond)
+
+			// 創建新的上下文
+			advanceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// 嘗試推進階段
+			if err := m.AdvanceStage(advanceCtx, true); err != nil {
+				m.logger.Error("設置7個幸運號碼球後自動推進階段失敗",
+					zap.String("gameID", gameID),
+					zap.Error(err))
+			} else {
+				m.logger.Info("設置7個幸運號碼球後成功自動推進階段",
+					zap.String("gameID", gameID))
+			}
+		}(gameID)
+	}
+
+	return nil
 }
 
 // SetHasJackpot 設置遊戲是否啟用JP

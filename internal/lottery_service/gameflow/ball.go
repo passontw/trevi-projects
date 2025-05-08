@@ -33,13 +33,20 @@ const (
 	ExtraBallSideRight ExtraBallSide = "RIGHT"
 )
 
-// JackpotGame 代表JP遊戲數據
+// JackpotGame 代表樂透遊戲的大獎相關資訊
 type JackpotGame struct {
-	ID         string    `json:"id"`                 // JP遊戲ID
-	StartTime  time.Time `json:"start_time"`         // JP開始時間
-	EndTime    time.Time `json:"end_time,omitempty"` // JP結束時間
-	LuckyBalls []Ball    `json:"lucky_numbers"`      // JP幸運號碼球
-	DrawnBalls []Ball    `json:"drawn_balls"`        // JP抽出的球
+	ID         string    // 大獎ID
+	StartTime  time.Time // 開始時間
+	EndTime    time.Time // 結束時間
+	LuckyBalls []Ball    // 幸運號碼球
+	DrawnBalls []Ball    // 已抽出的大獎球
+
+	// 以下欄位僅在內存中使用，不保存到資料庫
+	Amount         float64 // 獎金金額（僅內存使用，不保存到資料庫）
+	Active         bool    // 是否啟用（僅內存使用，不保存到資料庫）
+	WinnerUserID   string  // 獲獎者ID（僅內存使用，不保存到資料庫）
+	WinnerNickname string  // 獲獎者暱稱（僅內存使用，不保存到資料庫）
+	WinAmount      float64 // 獲獎金額（僅內存使用，不保存到資料庫）
 }
 
 // GameData 代表遊戲數據
@@ -159,17 +166,7 @@ func GenerateLuckyBalls() ([]Ball, error) {
 
 // AddBall 添加一顆球到遊戲中
 func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball, error) {
-	// 驗證球號
-	if err := ValidateBallNumber(number); err != nil {
-		return nil, err
-	}
-
-	// 檢查該階段是否允許抽球
-	if !IsBallDrawingStage(game.CurrentStage) {
-		return nil, fmt.Errorf("當前階段 %s 不允許抽球", game.CurrentStage)
-	}
-
-	// 根據球類型和當前階段執行特定的檢查
+	// 檢查球類型和遊戲階段的兼容性
 	switch ballType {
 	case BallTypeRegular:
 		if game.CurrentStage != StageDrawingStart {
@@ -177,9 +174,6 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 		}
 		if IsBallDuplicate(number, game.RegularBalls) {
 			return nil, fmt.Errorf("重複的常規球號: %d", number)
-		}
-		if len(game.RegularBalls) >= 75 {
-			return nil, fmt.Errorf("已達到最大常規球數量")
 		}
 
 	case BallTypeExtra:
@@ -189,25 +183,8 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 		if IsBallDuplicate(number, game.ExtraBalls) {
 			return nil, fmt.Errorf("重複的額外球號: %d", number)
 		}
-		if IsBallDuplicate(number, game.RegularBalls) {
-			return nil, fmt.Errorf("額外球號 %d 與常規球重複", number)
-		}
 		if len(game.ExtraBalls) >= game.ExtraBallCount {
-			return nil, fmt.Errorf("已達到最大額外球數量 %d", game.ExtraBallCount)
-		}
-
-	case BallTypeJackpot:
-		if game.CurrentStage != StageJackpotDrawingStart {
-			return nil, fmt.Errorf("JP球只能在 %s 階段抽取", StageJackpotDrawingStart)
-		}
-		if game.Jackpot == nil {
-			return nil, fmt.Errorf("JP遊戲未初始化")
-		}
-		if IsBallDuplicate(number, game.Jackpot.DrawnBalls) {
-			return nil, fmt.Errorf("重複的JP球號: %d", number)
-		}
-		if len(game.Jackpot.DrawnBalls) >= 75 {
-			return nil, fmt.Errorf("已達到最大JP球數量")
+			return nil, fmt.Errorf("已達到最大額外球數量")
 		}
 
 	case BallTypeLucky:
@@ -228,7 +205,7 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 			return nil, fmt.Errorf("重複的幸運號碼球號: %d", number)
 		}
 		if len(game.Jackpot.LuckyBalls) >= 7 {
-			return nil, fmt.Errorf("已達到最大幸運號碼球數量")
+			return nil, fmt.Errorf("已達到最大幸運號碼球數量(7球)")
 		}
 
 	default:
@@ -256,7 +233,12 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 	case BallTypeLucky:
 		// 幸運號碼球直接添加到 Jackpot.LuckyBalls
 		if game.Jackpot != nil {
-			game.Jackpot.LuckyBalls = append(game.Jackpot.LuckyBalls, newBall)
+			// 確保不超過7顆球
+			if len(game.Jackpot.LuckyBalls) < 7 {
+				game.Jackpot.LuckyBalls = append(game.Jackpot.LuckyBalls, newBall)
+			} else {
+				return nil, fmt.Errorf("已達到最大幸運號碼球數量(7球)")
+			}
 		}
 	}
 

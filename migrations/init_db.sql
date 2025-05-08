@@ -80,19 +80,14 @@ CREATE TABLE jackpot_games (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     game_id VARCHAR(50) NOT NULL,            -- 對應的主遊戲 ID
     jackpot_id VARCHAR(50) NOT NULL UNIQUE,  -- Jackpot 遊戲 ID
-    amount DECIMAL(18, 2) NOT NULL,          -- Jackpot 金額
-    active BOOLEAN NOT NULL DEFAULT FALSE,   -- 是否啟用
     start_time TIMESTAMP NULL,               -- 開始時間
     end_time TIMESTAMP NULL,                 -- 結束時間
-    winner_user_id VARCHAR(50) NULL,         -- 得獎玩家 ID
-    winner_nickname VARCHAR(100) NULL,       -- 得獎玩家暱稱
-    win_amount DECIMAL(18, 2) DEFAULT 0,     -- 獲獎金額
     
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     
     FOREIGN KEY (game_id) REFERENCES games(game_id),
-    INDEX idx_active (active)
+    INDEX idx_jackpot_id (jackpot_id)
 );
 
 -- 遊戲階段記錄表
