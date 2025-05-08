@@ -44,6 +44,7 @@ type GameData struct {
 	JackpotBalls   []Ball        `json:"jackpot_balls"`      // JP球
 	LuckyBalls     []Ball        `json:"lucky_balls"`        // 幸運號碼球
 	SelectedSide   ExtraBallSide `json:"selected_side"`      // 選擇的額外球一側
+	ExtraBallCount int           `json:"extra_ball_count"`   // 額外球數量，範圍是1~3
 	HasJackpot     bool          `json:"has_jackpot"`        // 是否有JP
 	JackpotWinner  string        `json:"jackpot_winner"`     // JP獲獎者ID
 	IsCancelled    bool          `json:"is_cancelled"`       // 是否已取消
@@ -55,6 +56,14 @@ type GameData struct {
 // 建立一個新的遊戲
 func NewGameData(gameID string) *GameData {
 	now := time.Now()
+
+	// 隨機生成額外球數量 (1-3)
+	n, err := rand.Int(rand.Reader, big.NewInt(3))
+	extraBallCount := 1
+	if err == nil {
+		extraBallCount = int(n.Int64()) + 1 // 加1確保範圍是1-3
+	}
+
 	return &GameData{
 		GameID:         gameID,
 		CurrentStage:   StagePreparation,
@@ -63,6 +72,7 @@ func NewGameData(gameID string) *GameData {
 		ExtraBalls:     make([]Ball, 0),
 		JackpotBalls:   make([]Ball, 0),
 		LuckyBalls:     make([]Ball, 0),
+		ExtraBallCount: extraBallCount,
 		HasJackpot:     false,
 		IsCancelled:    false,
 		LastUpdateTime: now,
@@ -165,8 +175,8 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 		if IsBallDuplicate(number, game.RegularBalls) {
 			return nil, fmt.Errorf("額外球號 %d 與常規球重複", number)
 		}
-		if len(game.ExtraBalls) >= 3 {
-			return nil, fmt.Errorf("已達到最大額外球數量")
+		if len(game.ExtraBalls) >= game.ExtraBallCount {
+			return nil, fmt.Errorf("已達到最大額外球數量 %d", game.ExtraBallCount)
 		}
 
 	case BallTypeJackpot:

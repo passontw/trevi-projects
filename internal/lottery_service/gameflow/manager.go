@@ -152,7 +152,8 @@ func (m *GameManager) GetCurrentGame() *GameData {
 
 	m.logger.Info("GetCurrentGame-成功獲取遊戲狀態",
 		zap.String("gameID", gameCopy.GameID),
-		zap.String("stage", string(gameCopy.CurrentStage)))
+		zap.String("stage", string(gameCopy.CurrentStage)),
+		zap.Int("extraBallCount", gameCopy.ExtraBallCount))
 
 	return &gameCopy
 }
@@ -193,7 +194,9 @@ func (m *GameManager) CreateNewGame(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	m.logger.Info("已創建新遊戲", zap.String("gameID", gameID))
+	m.logger.Info("已創建新遊戲",
+		zap.String("gameID", gameID),
+		zap.Int("extraBallCount", newGame.ExtraBallCount))
 	m.currentGame = newGame
 
 	// 觸發事件
@@ -494,47 +497,85 @@ func (m *GameManager) prepareForNextGame(ctx context.Context, alreadyHoldingLock
 }
 
 // HandleDrawExtraBall 處理額外球抽取
-func (m *GameManager) HandleDrawExtraBall(ctx context.Context, number int, isLast bool) (*Ball, error) {
+func (m *GameManager) HandleDrawExtraBall(ctx context.Context, balls []Ball) error {
 	m.stageMutex.Lock()
 	defer m.stageMutex.Unlock()
 
 	if m.currentGame == nil {
-		return nil, ErrGameNotFound
+		return ErrGameNotFound
 	}
 
 	// 確認當前階段允許抽取額外球
 	if m.currentGame.CurrentStage != StageExtraBallDrawingStart {
-		return nil, NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_EXTRA_BALL",
+		return NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_EXTRA_BALL",
 			"當前階段 %s 不允許抽取額外球", m.currentGame.CurrentStage)
 	}
 
-	// 添加球
-	ball, err := AddBall(m.currentGame, number, BallTypeExtra, isLast)
-	if err != nil {
-		return nil, err
+	// 確認球的數量不超過 ExtraBallCount
+	if len(balls) > m.currentGame.ExtraBallCount {
+		return NewGameFlowErrorWithFormat("INVALID_EXTRA_BALL_COUNT",
+			"額外球數量 %d 超過了設定的最大值 %d", len(balls), m.currentGame.ExtraBallCount)
 	}
+
+	// 創建一個新的球陣列，以便我們可以修改它們
+	newBalls := make([]Ball, len(balls))
+	for i, ball := range balls {
+		// 驗證球號是否合法
+		if err := ValidateBallNumber(ball.Number); err != nil {
+			return err
+		}
+
+		// 檢查是否與常規球重複
+		if IsBallDuplicate(ball.Number, m.currentGame.RegularBalls) {
+			return fmt.Errorf("額外球號 %d 與常規球重複", ball.Number)
+		}
+
+		// 複製並修改球
+		newBalls[i] = Ball{
+			Number:    ball.Number,
+			Type:      BallTypeExtra,
+			IsLast:    false, // 預設為 false，稍後會設置最後一個球
+			Timestamp: ball.Timestamp,
+		}
+
+		// 如果時間戳是零值，設置為當前時間
+		if newBalls[i].Timestamp.IsZero() {
+			newBalls[i].Timestamp = time.Now()
+		}
+	}
+
+	// 設置最後一個球的 isLast 標誌（如果陣列長度等於 ExtraBallCount）
+	if len(newBalls) > 0 && len(newBalls) == m.currentGame.ExtraBallCount {
+		newBalls[len(newBalls)-1].IsLast = true
+	}
+
+	// 直接覆蓋陣列
+	m.currentGame.ExtraBalls = newBalls
+	m.currentGame.LastUpdateTime = time.Now()
 
 	// 保存更新後的遊戲狀態
 	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
-		return nil, fmt.Errorf("保存遊戲狀態失敗: %w", err)
+		return fmt.Errorf("保存遊戲狀態失敗: %w", err)
 	}
 
-	m.logger.Info("抽取額外球",
+	m.logger.Info("更新額外球陣列",
 		zap.String("gameID", m.currentGame.GameID),
-		zap.Int("ballNumber", number),
-		zap.Bool("isLast", isLast))
+		zap.Int("ballCount", len(newBalls)),
+		zap.Int("extraBallCount", m.currentGame.ExtraBallCount))
 
-	// 觸發球抽取事件
+	// 觸發所有球的事件
 	if m.onBallDrawn != nil {
-		m.onBallDrawn(m.currentGame.GameID, *ball)
+		for _, ball := range newBalls {
+			m.onBallDrawn(m.currentGame.GameID, ball)
+		}
 	}
 
-	// 如果是最後一顆球，安排自動推進到下一階段，但不在持有鎖的情況下執行
-	if isLast {
-		// 保存當前遊戲ID，用於在goroutine中使用
+	// 如果球的數量等於 ExtraBallCount，則自動推進到下一階段
+	if len(newBalls) == m.currentGame.ExtraBallCount {
+		// 保存當前遊戲ID
 		gameID := m.currentGame.GameID
 
-		// 在goroutine中執行階段推進，但首先釋放當前持有的鎖
+		// 在 goroutine 中推進階段
 		go func(gameID string) {
 			// 創建新的上下文
 			advanceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -542,14 +583,14 @@ func (m *GameManager) HandleDrawExtraBall(ctx context.Context, number int, isLas
 
 			// 嘗試推進階段
 			if err := m.AdvanceStage(advanceCtx, true); err != nil {
-				m.logger.Error("最後一顆額外球抽取後自動推進階段失敗",
+				m.logger.Error("更新額外球後自動推進階段失敗",
 					zap.String("gameID", gameID),
 					zap.Error(err))
 			}
 		}(gameID)
 	}
 
-	return ball, nil
+	return nil
 }
 
 // HandleDrawJackpotBall 處理JP球抽取
@@ -716,18 +757,9 @@ func (m *GameManager) SetHasJackpot(ctx context.Context, hasJackpot bool) error 
 
 // isStageAllowedToBeCancelled 檢查遊戲階段是否允許取消
 func isStageAllowedToBeCancelled(stage GameStage) bool {
-	// 列出允許取消的階段
-	allowedStages := map[GameStage]bool{
-		StagePreparation:       true,
-		StageNewRound:          true,
-		StageCardPurchaseOpen:  true,
-		StageCardPurchaseClose: true,
-		StageDrawingStart:      true, // 允許在抽球階段取消遊戲
-		StageDrawingClose:      true, // 允許在抽球結束階段取消遊戲
-		// 其他階段不允許取消
-	}
-
-	return allowedStages[stage]
+	// 使用 StageConfig 中的 AllowCanceling 設定來決定是否允許取消遊戲
+	config := GetStageConfig(stage)
+	return config.AllowCanceling
 }
 
 // CancelGame 取消當前遊戲
@@ -910,6 +942,75 @@ func (m *GameManager) UpdateRegularBalls(ctx context.Context, balls []Ball) erro
 	m.logger.Info("更新常規球陣列",
 		zap.String("gameID", m.currentGame.GameID),
 		zap.Int("ballCount", len(balls)))
+
+	return nil
+}
+
+// UpdateExtraBalls 直接更新遊戲的額外球陣列
+func (m *GameManager) UpdateExtraBalls(ctx context.Context, balls []Ball) error {
+	m.stageMutex.Lock()
+	defer m.stageMutex.Unlock()
+
+	if m.currentGame == nil {
+		return ErrGameNotFound
+	}
+
+	// 確認當前階段允許抽取額外球
+	if m.currentGame.CurrentStage != StageExtraBallDrawingStart {
+		return NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_EXTRA_BALL",
+			"當前階段 %s 不允許更新額外球", m.currentGame.CurrentStage)
+	}
+
+	// 確認球的數量不超過 ExtraBallCount
+	if len(balls) > m.currentGame.ExtraBallCount {
+		return NewGameFlowErrorWithFormat("INVALID_EXTRA_BALL_COUNT",
+			"額外球數量 %d 超過了設定的最大值 %d", len(balls), m.currentGame.ExtraBallCount)
+	}
+
+	// 驗證所有球是否合法
+	for _, ball := range balls {
+		if err := ValidateBallNumber(ball.Number); err != nil {
+			return err
+		}
+
+		// 檢查是否與常規球重複
+		if IsBallDuplicate(ball.Number, m.currentGame.RegularBalls) {
+			return fmt.Errorf("額外球號 %d 與常規球重複", ball.Number)
+		}
+	}
+
+	// 直接覆蓋陣列
+	m.currentGame.ExtraBalls = balls
+	m.currentGame.LastUpdateTime = time.Now()
+
+	// 保存更新後的遊戲狀態
+	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
+		return fmt.Errorf("保存遊戲狀態失敗: %w", err)
+	}
+
+	m.logger.Info("更新額外球陣列",
+		zap.String("gameID", m.currentGame.GameID),
+		zap.Int("ballCount", len(balls)))
+
+	// 如果球的數量等於 ExtraBallCount，則自動推進到下一階段
+	if len(balls) == m.currentGame.ExtraBallCount {
+		// 保存當前遊戲ID
+		gameID := m.currentGame.GameID
+
+		// 在 goroutine 中推進階段
+		go func(gameID string) {
+			// 創建新的上下文
+			advanceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// 嘗試推進階段
+			if err := m.AdvanceStage(advanceCtx, true); err != nil {
+				m.logger.Error("更新額外球後自動推進階段失敗",
+					zap.String("gameID", gameID),
+					zap.Error(err))
+			}
+		}(gameID)
+	}
 
 	return nil
 }

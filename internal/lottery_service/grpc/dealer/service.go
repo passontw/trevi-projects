@@ -215,32 +215,34 @@ func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBall
 	// 檢查是否有已存在的球
 	existingBalls := req.GetBalls()
 
-	// 獲取最後一個球的數字（如果存在）
-	var lastBallNumber int
-	var isLast bool
-
-	if len(existingBalls) > 0 {
-		lastBall := existingBalls[len(existingBalls)-1]
-		lastBallNumber = int(lastBall.Number)
-		isLast = lastBall.IsLast
+	// 將 proto 球轉換為 gameflow 球
+	gameBalls := make([]gameflow.Ball, 0, len(existingBalls))
+	for _, pbBall := range existingBalls {
+		gameBalls = append(gameBalls, gameflow.Ball{
+			Number:    int(pbBall.Number),
+			Type:      gameflow.BallTypeExtra,
+			IsLast:    pbBall.IsLast,
+			Timestamp: pbBall.Timestamp.AsTime(),
+		})
 	}
 
-	// 抽取額外球
-	ball, err := s.gameManager.HandleDrawExtraBall(ctx, lastBallNumber, isLast)
+	// 處理額外球請求 - 使用新的 HandleDrawExtraBall 函數，接受整個球陣列
+	err := s.gameManager.HandleDrawExtraBall(ctx, gameBalls)
 	if err != nil {
 		return nil, err
 	}
 
-	// 創建新的球對象
-	pbBall := &pb.Ball{
-		Number:    int32(ball.Number),
-		Type:      pb.BallType_BALL_TYPE_EXTRA,
-		IsLast:    ball.IsLast,
-		Timestamp: timestamppb.New(ball.Timestamp),
+	// 獲取當前遊戲狀態以獲取更新後的球陣列
+	gameData := s.gameManager.GetCurrentGame()
+	if gameData == nil {
+		return nil, gameflow.ErrGameNotFound
 	}
 
-	// 將新球添加到現有球列表
-	updatedBalls := append(existingBalls, pbBall)
+	// 將更新後的額外球轉換為 proto 球
+	updatedBalls := make([]*pb.Ball, len(gameData.ExtraBalls))
+	for i, ball := range gameData.ExtraBalls {
+		updatedBalls[i] = convertBallToPb(ball)
+	}
 
 	return &pb.DrawExtraBallResponse{
 		Balls: updatedBalls,

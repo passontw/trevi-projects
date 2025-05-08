@@ -150,7 +150,7 @@ func GetStageConfig(stage GameStage) StageConfig {
 			RequireDealer:  true,
 			RequireGame:    false,
 			AllowDrawBall:  true,
-			MaxBalls:       3,
+			MaxBalls:       3, // 最大值 3，實際上限由 GameData 中的 ExtraBallCount 決定
 			AllowCanceling: true,
 		},
 		StageExtraBallDrawingClose: {
@@ -207,7 +207,7 @@ func GetStageConfig(stage GameStage) StageConfig {
 			RequireGame:    false,
 			AllowDrawBall:  true,
 			MaxBalls:       7,
-			AllowCanceling: false, // 已經到幸運號碼階段，不允許取消
+			AllowCanceling: true, // 允許在幸運號碼階段取消遊戲
 		},
 		StageDrawingLuckyBallsClosed: {
 			Timeout:        1 * time.Second,

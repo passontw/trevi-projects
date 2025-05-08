@@ -224,9 +224,9 @@
 ```json
 {
     "balls": [
-        { "number": 1, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 2, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 3, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" }
+        { "number": 31, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 32, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 33, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" }
     ]
 }
 ```
@@ -238,9 +238,9 @@
 ```json
 {
     "balls": [
-        { "number": 1, "type": "BALL_TYPE_JACKPOT", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 2, "type": "BALL_TYPE_JACKPOT", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 3, "type": "BALL_TYPE_JACKPOT", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" }
+        { "number": 41, "type": "BALL_TYPE_JACKPOT", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 42, "type": "BALL_TYPE_JACKPOT", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 43, "type": "BALL_TYPE_JACKPOT", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" }
     ]
 }
 ```
@@ -252,13 +252,13 @@
 ```json
 {
     "balls": [
-        { "number": 1, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 2, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 3, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 4, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 5, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 6, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 7, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" }
+        { "number": 51, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 52, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 53, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 54, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 55, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 56, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+        { "number": 57, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" }
     ]
 }
 ```
