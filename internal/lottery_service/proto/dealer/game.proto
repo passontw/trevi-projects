@@ -98,7 +98,7 @@ message GameData {
   // 是否有JP
   bool has_jackpot = 10;
   // 額外球數量，範圍是1~3
-  int32 extra
+  int32 extra_ball_count = 11;
   // 最後更新時間
   google.protobuf.Timestamp last_update_time = 12;
 }
@@ -173,4 +173,21 @@ message StartJackpotResponse {
   string game_id = 2;
   // JP 相關資訊
   GameResponseData.Jackpot jackpot_info = 3;
+}
+
+// 開始 JP 回合請求
+message StartJackpotRoundRequest {
+  // 空的請求
+}
+
+// 開始 JP 回合回應
+message StartJackpotRoundResponse {
+  // 是否成功啟動 JP 回合
+  bool success = 1;
+  // 遊戲ID
+  string game_id = 2;
+  // 舊階段
+  GameStage old_stage = 3;
+  // 新階段
+  GameStage new_stage = 4;
 } 

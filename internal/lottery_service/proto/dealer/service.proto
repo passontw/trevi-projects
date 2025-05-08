@@ -32,6 +32,9 @@ service DealerService {
   // 獲取遊戲狀態
   rpc GetGameStatus(GetGameStatusRequest) returns (GetGameStatusResponse) {}
   
+  // 開始 JP 回合
+  rpc StartJackpotRound(StartJackpotRoundRequest) returns (StartJackpotRoundResponse) {}
+  
   // 訂閱遊戲事件流
   rpc SubscribeGameEvents(SubscribeGameEventsRequest) returns (stream GameEvent) {}
 } 

@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -991,9 +993,49 @@ func convertGameDataToPb(game *gameflow.GameData) *pb.GameData {
 		pbGame.EndTime = timestamppb.New(game.EndTime)
 	}
 
-	if !game.CancelTime.IsZero() {
-		pbGame.CancelTime = timestamppb.New(game.CancelTime)
+	if !game.LastUpdateTime.IsZero() {
+		pbGame.LastUpdateTime = timestamppb.New(game.LastUpdateTime)
 	}
 
 	return pbGame
+}
+
+// StartJackpotRound 開始JP回合，從 StageJackpotPreparation 進入到 StageJackpotDrawingStart
+func (s *DealerService) StartJackpotRound(ctx context.Context, req *pb.StartJackpotRoundRequest) (*pb.StartJackpotRoundResponse, error) {
+	s.logger.Info("接收到開始JP回合請求")
+
+	// 取得當前遊戲
+	game := s.gameManager.GetCurrentGame()
+	if game == nil {
+		return nil, status.Errorf(codes.NotFound, "找不到進行中的遊戲")
+	}
+
+	// 確認當前階段是否為 StageJackpotPreparation
+	if game.CurrentStage != gameflow.StageJackpotPreparation {
+		return nil, status.Errorf(codes.FailedPrecondition, "當前階段 %s 不是 JP準備階段", game.CurrentStage)
+	}
+
+	// 記錄原始階段
+	oldStage := game.CurrentStage
+
+	// 手動推進遊戲階段
+	err := s.gameManager.AdvanceStage(ctx, false)
+	if err != nil {
+		s.logger.Error("推進遊戲階段失敗", zap.Error(err))
+		return nil, status.Errorf(codes.Internal, "推進遊戲階段失敗: %v", err)
+	}
+
+	// 重新獲取最新的遊戲狀態
+	game = s.gameManager.GetCurrentGame()
+
+	// 傳送通知
+	s.broadcastNewGameEvent(game.GameID, game)
+
+	// 返回成功響應
+	return &pb.StartJackpotRoundResponse{
+		Success:  true,
+		GameId:   game.GameID,
+		OldStage: convertGameStageToPb(oldStage),
+		NewStage: convertGameStageToPb(game.CurrentStage),
+	}, nil
 }

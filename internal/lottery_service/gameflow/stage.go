@@ -170,8 +170,8 @@ func GetStageConfig(stage GameStage) StageConfig {
 			AllowCanceling: true,
 		},
 		StageJackpotPreparation: {
-			Timeout:        3 * time.Second,
-			RequireDealer:  false,
+			Timeout:        -1,   // 無限，等待荷官手動觸發
+			RequireDealer:  true, // 需要荷官確認
 			RequireGame:    false,
 			AllowDrawBall:  false,
 			MaxBalls:       0,
