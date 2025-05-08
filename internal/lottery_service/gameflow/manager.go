@@ -12,6 +12,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// WebSocketNotifier 接口
+type WebSocketNotifier interface {
+	OnStageChanged(gameID string, oldStage, newStage GameStage, game *GameData)
+}
+
 // GameManager 遊戲流程管理器
 type GameManager struct {
 	repo            GameRepository         // 資料儲存庫介面
@@ -22,6 +27,7 @@ type GameManager struct {
 	stageTimers     map[string]*time.Timer // 階段計時器
 	stageTimerMutex sync.Mutex             // 計時器鎖
 	mqProducer      *mq.MessageProducer    // RocketMQ 生產者
+	wsNotifier      WebSocketNotifier      // WebSocket 通知器
 
 	// 事件處理回調
 	onStageChanged          func(gameID string, oldStage, newStage GameStage) // 階段變更回調
@@ -198,6 +204,12 @@ func (m *GameManager) CreateNewGame(ctx context.Context) (string, error) {
 	return gameID, nil
 }
 
+// RegisterWebSocketNotifier 註冊 WebSocket 通知器
+func (m *GameManager) RegisterWebSocketNotifier(notifier WebSocketNotifier) {
+	m.wsNotifier = notifier
+	m.logger.Info("已註冊 WebSocket 通知器")
+}
+
 // AdvanceStage 將遊戲推進到下一階段
 func (m *GameManager) AdvanceStage(ctx context.Context, autoAdvance bool) error {
 	m.stageMutex.Lock()
@@ -237,45 +249,43 @@ func (m *GameManager) AdvanceStage(ctx context.Context, autoAdvance bool) error 
 
 	// 保存遊戲狀態
 	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
+		m.logger.Error("保存遊戲狀態失敗",
+			zap.String("gameID", m.currentGame.GameID),
+			zap.String("stage", string(nextStage)),
+			zap.Error(err))
 		m.stageMutex.Unlock()
-		return fmt.Errorf("保存遊戲狀態失敗: %w", err)
+		return err
 	}
 
-	// 必須在釋放鎖之前保存遊戲的副本，因為特定動作可能需要訪問遊戲數據
-	// 但不應該在持有鎖的情況下執行這些動作
-	gameCopy := m.currentGame
+	// 建立階段計時器
+	if err := m.setupStageTimer(ctx, m.currentGame.GameID, nextStage); err != nil {
+		m.logger.Error("設置階段計時器失敗",
+			zap.String("gameID", m.currentGame.GameID),
+			zap.String("stage", string(nextStage)),
+			zap.Error(err))
+		// 不返回錯誤，繼續執行
+	}
 
-	// 推送遊戲快照
-	go func() {
-		if err := m.pushGameSnapshot(ctx); err != nil {
-			m.logger.Error("推送遊戲快照失敗", zap.Error(err))
-		}
-	}()
-
-	// 釋放鎖，然後在不持有鎖的情況下執行階段特定操作
+	// 複製當前遊戲狀態以供事件處理使用
+	gameCopy := *m.currentGame
 	m.stageMutex.Unlock()
 
 	// 執行階段特定操作
 	if err := m.executeStageSpecificActions(ctx, nextStage); err != nil {
 		m.logger.Error("執行階段特定操作失敗",
-			zap.String("gameID", gameCopy.GameID),
 			zap.String("stage", string(nextStage)),
 			zap.Error(err))
-		return err
-	}
-
-	// 設置新階段的計時器
-	if err := m.setupStageTimer(ctx, gameCopy.GameID, nextStage); err != nil {
-		m.logger.Error("設置階段計時器失敗",
-			zap.String("gameID", gameCopy.GameID),
-			zap.String("stage", string(nextStage)),
-			zap.Error(err))
-		return err
+		// 不返回錯誤，繼續執行
 	}
 
 	// 觸發階段變更事件
 	if m.onStageChanged != nil {
 		m.onStageChanged(gameCopy.GameID, oldStage, nextStage)
+	}
+
+	// 使用 WebSocket 通知器
+	if m.wsNotifier != nil {
+		m.wsNotifier.OnStageChanged(gameCopy.GameID, oldStage, nextStage, &gameCopy)
 	}
 
 	return nil
@@ -712,7 +722,9 @@ func isStageAllowedToBeCancelled(stage GameStage) bool {
 		StageNewRound:          true,
 		StageCardPurchaseOpen:  true,
 		StageCardPurchaseClose: true,
-		// 球已經開始抽取的階段不允許取消
+		StageDrawingStart:      true, // 允許在抽球階段取消遊戲
+		StageDrawingClose:      true, // 允許在抽球結束階段取消遊戲
+		// 其他階段不允許取消
 	}
 
 	return allowedStages[stage]

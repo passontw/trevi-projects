@@ -23,6 +23,54 @@ import (
 	"go.uber.org/zap"
 )
 
+// WebSocketNotifier 負責將遊戲事件推送到 WebSocket
+type WebSocketNotifier struct {
+	logger       *zap.Logger
+	dealerServer *dealerWebsocket.DealerServer
+}
+
+// NewWebSocketNotifier 創建一個新的 WebSocket 通知服務
+func NewWebSocketNotifier(logger *zap.Logger, dealerServer *dealerWebsocket.DealerServer) *WebSocketNotifier {
+	return &WebSocketNotifier{
+		logger:       logger.With(zap.String("component", "websocket_notifier")),
+		dealerServer: dealerServer,
+	}
+}
+
+// OnStageChanged 處理階段變更事件並推送到 WebSocket
+func (n *WebSocketNotifier) OnStageChanged(gameID string, oldStage, newStage gameflow.GameStage, game *gameflow.GameData) {
+	if game == nil {
+		n.logger.Warn("OnStageChanged: 遊戲數據為空")
+		return
+	}
+
+	// 構建遊戲狀態響應
+	status := gameflow.BuildGameStatusResponse(game)
+
+	// 推送到 WebSocket
+	n.dealerServer.PublishToTopic("game_events", status)
+
+	n.logger.Info("已推送遊戲狀態到 WebSocket",
+		zap.String("topic", "game_events"),
+		zap.String("gameID", gameID),
+		zap.String("oldStage", string(oldStage)),
+		zap.String("newStage", string(newStage)))
+}
+
+// 註冊 WebSocketNotifier 模塊
+var WebSocketNotifierModule = fx.Module("websocket_notifier",
+	fx.Provide(NewWebSocketNotifier),
+	fx.Invoke(func(notifier *WebSocketNotifier, gameManager *gameflow.GameManager, lifecycle fx.Lifecycle) {
+		lifecycle.Append(fx.Hook{
+			OnStart: func(context.Context) error {
+				// 註冊通知回調
+				gameManager.RegisterWebSocketNotifier(notifier)
+				return nil
+			},
+		})
+	}),
+)
+
 // 主函數：使用 fx 框架
 // 測試 air 熱重載功能
 func main() {
@@ -61,6 +109,8 @@ func main() {
 		dealerWebsocket.Module,
 		// 註冊遊戲流程管理模塊
 		gameflow.Module,
+		// 註冊 WebSocket 通知模塊 (放在遊戲流程管理模塊之後)
+		WebSocketNotifierModule,
 		// 註冊開獎服務模塊
 		service.Module,
 		// 註冊 gRPC 服務模塊
@@ -73,21 +123,6 @@ func main() {
 				return logger
 			},
 		),
-
-		// 新增：設置 GameManager 的 onStageChanged 事件，推送 game_events
-		fx.Invoke(func(gm *gameflow.GameManager, ds *dealerWebsocket.DealerServer) {
-			gm.SetEventHandlers(
-				func(gameID string, oldStage, newStage gameflow.GameStage) {
-					game := gm.GetCurrentGame()
-					if game == nil {
-						return
-					}
-					status := gameflow.BuildGameStatusResponse(game)
-					ds.PublishToTopic("game_events", status)
-				},
-				nil, nil, nil, nil, nil,
-			)
-		}),
 	)
 
 	// 啟動應用

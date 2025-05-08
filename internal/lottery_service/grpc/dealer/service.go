@@ -3,6 +3,8 @@ package dealer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
 	"time"
 
 	"g38_lottery_service/internal/lottery_service/dealerWebsocket"
@@ -17,9 +19,11 @@ import (
 // DealerService 實現 gRPC 中定義的 DealerService 接口
 type DealerService struct {
 	pb.UnimplementedDealerServiceServer
-	logger       *zap.Logger
-	gameManager  *gameflow.GameManager
-	dealerServer *dealerWebsocket.DealerServer
+	logger         *zap.Logger
+	gameManager    *gameflow.GameManager
+	dealerServer   *dealerWebsocket.DealerServer
+	subscribers    map[string]chan *pb.GameEvent // 訂閱者映射表
+	subscribersMux sync.RWMutex                  // 訂閱者鎖
 }
 
 // NewDealerService 創建新的 DealerService 實例
@@ -33,6 +37,7 @@ func NewDealerService(
 		logger:       logger.With(zap.String("component", "dealer_service")),
 		gameManager:  gameManager,
 		dealerServer: dealerServer,
+		subscribers:  make(map[string]chan *pb.GameEvent),
 	}
 
 	// 註冊事件處理函數
@@ -43,6 +48,8 @@ func NewDealerService(
 
 // 註冊事件處理函數
 func (s *DealerService) registerEventHandlers() {
+	s.logger.Info("正在註冊事件處理函數")
+
 	// 註冊階段變更事件處理函數
 	s.gameManager.SetEventHandlers(
 		s.onStageChanged,          // 階段變更
@@ -52,6 +59,8 @@ func (s *DealerService) registerEventHandlers() {
 		s.onBallDrawn,             // 球抽取
 		s.onExtraBallSideSelected, // 額外球選邊
 	)
+
+	s.logger.Info("事件處理函數註冊完成")
 }
 
 // StartNewRound 實現 DealerService.StartNewRound RPC 方法
@@ -378,24 +387,146 @@ func (s *DealerService) GetGameStatus(ctx context.Context, req *pb.GetGameStatus
 	}, nil
 }
 
+// sendNotificationToSubscribers 發送通知給所有訂閱者
+func (s *DealerService) sendNotificationToSubscribers(notification *pb.GameEvent) {
+	s.subscribersMux.RLock()
+	defer s.subscribersMux.RUnlock()
+
+	// 遍歷所有訂閱者並發送通知
+	for subID, subChan := range s.subscribers {
+		// 使用非阻塞方式發送，避免一個訂閱者阻塞其他訂閱者
+		select {
+		case subChan <- notification:
+			s.logger.Debug("已發送通知事件到訂閱者",
+				zap.String("subscriberID", subID),
+				zap.String("gameID", notification.GameId),
+				zap.String("eventType", notification.EventType.String()))
+		default:
+			s.logger.Warn("訂閱者通道已滿，無法發送通知",
+				zap.String("subscriberID", subID),
+				zap.String("gameID", notification.GameId))
+		}
+	}
+}
+
+// 添加和移除訂閱者
+func (s *DealerService) addSubscriber(subscriberID string, channel chan *pb.GameEvent) {
+	s.subscribersMux.Lock()
+	defer s.subscribersMux.Unlock()
+	s.subscribers[subscriberID] = channel
+	s.logger.Info("添加新訂閱者", zap.String("subscriberID", subscriberID))
+}
+
+func (s *DealerService) removeSubscriber(subscriberID string) {
+	s.subscribersMux.Lock()
+	defer s.subscribersMux.Unlock()
+	if _, exists := s.subscribers[subscriberID]; exists {
+		delete(s.subscribers, subscriberID)
+		s.logger.Info("移除訂閱者", zap.String("subscriberID", subscriberID))
+	}
+}
+
 // SubscribeGameEvents 實現 DealerService.SubscribeGameEvents RPC 方法 (流式 RPC)
 func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, stream pb.DealerService_SubscribeGameEventsServer) error {
 	// 創建一個唯一的訂閱 ID
 	subscriptionID := uuid.New().String()
 	s.logger.Info("收到新的事件訂閱請求",
-		zap.String("subscriptionID", subscriptionID),
-		zap.Any("eventTypes", req.EventTypes))
+		zap.String("subscriptionID", subscriptionID))
 
 	// 創建通道以接收事件
 	eventChan := make(chan *pb.GameEvent, 100)
 
-	// TODO: 在實際實現中，可以使用更複雜的事件訂閱系統，
-	// 例如使用 Redis Pub/Sub 或其他消息代理。
-	// 這裡只是一個簡單的示例。
-
 	// 創建一個取消的 context
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
+
+	// 預設訂閱 UNSPECIFIED, HEARTBEAT 和 NOTIFICATION 事件
+	hasHeartbeatSubscription := true
+	hasNotificationSubscription := true
+
+	// 注意：由於我們不再使用 req.EventTypes，所以不需要檢查它
+
+	// 如果訂閱了通知事件，註冊為訂閱者
+	if hasNotificationSubscription {
+		s.addSubscriber(subscriptionID, eventChan)
+		// 確保在函數結束時移除訂閱者
+		defer s.removeSubscriber(subscriptionID)
+
+		// 立即發送當前遊戲狀態作為通知
+		s.logger.Info("客戶端訂閱了通知事件，立即發送當前遊戲狀態",
+			zap.String("subscriptionID", subscriptionID))
+
+		// 獲取當前遊戲狀態
+		currentGame := s.gameManager.GetCurrentGame()
+		if currentGame != nil {
+			// 建立通知事件
+			notificationEvent := &pb.GameEvent{
+				EventType: pb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
+				GameId:    currentGame.GameID,
+				Timestamp: timestamppb.Now(),
+				EventData: &pb.GameEvent_Notification{
+					Notification: &pb.NotificationEvent{
+						GameData: convertGameDataToPb(currentGame),
+						Message:  "訂閱時的遊戲狀態",
+					},
+				},
+			}
+
+			// 直接發送到事件通道
+			select {
+			case eventChan <- notificationEvent:
+				s.logger.Debug("已發送初始通知事件到通道",
+					zap.String("subscriptionID", subscriptionID))
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				s.logger.Warn("事件通道已滿，無法發送初始通知事件",
+					zap.String("subscriptionID", subscriptionID))
+			}
+		}
+	}
+
+	// 如果訂閱了心跳事件，啟動定時器每 10 秒發送一次心跳訊息
+	if hasHeartbeatSubscription {
+		s.logger.Info("客戶端訂閱了心跳事件，將每 10 秒發送一次心跳訊息",
+			zap.String("subscriptionID", subscriptionID))
+
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					// 建立心跳事件
+					heartbeatEvent := &pb.GameEvent{
+						EventType: pb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT,
+						GameId:    "system",
+						Timestamp: timestamppb.Now(),
+						EventData: &pb.GameEvent_Heartbeat{
+							Heartbeat: &pb.HeartbeatEvent{
+								Message: "hello",
+							},
+						},
+					}
+
+					// 發送到事件通道
+					select {
+					case eventChan <- heartbeatEvent:
+						s.logger.Debug("已發送心跳事件到通道",
+							zap.String("subscriptionID", subscriptionID))
+					case <-ctx.Done():
+						return
+					default:
+						s.logger.Warn("事件通道已滿，無法發送心跳事件",
+							zap.String("subscriptionID", subscriptionID))
+					}
+				}
+			}
+		}()
+	}
 
 	// 在 goroutine 中處理收到的事件
 	go func() {
@@ -414,18 +545,15 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 					continue
 				}
 
-				// 檢查事件類型是否匹配訂閱的類型
-				if len(req.EventTypes) > 0 {
-					found := false
-					for _, t := range req.EventTypes {
-						if t == event.EventType {
-							found = true
-							break
-						}
-					}
-					if !found {
-						continue // 跳過不匹配的事件類型
-					}
+				// 檢查事件類型，允許處理 UNSPECIFIED、HEARTBEAT 和 NOTIFICATION 事件
+				if event.EventType != pb.GameEventType_GAME_EVENT_TYPE_UNSPECIFIED &&
+					event.EventType != pb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT &&
+					event.EventType != pb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION {
+					// 跳過不需要的事件類型
+					s.logger.Debug("跳過不支持的事件類型",
+						zap.String("subscriptionID", subscriptionID),
+						zap.String("eventType", event.EventType.String()))
+					continue
 				}
 
 				// 發送事件到客戶端
@@ -435,6 +563,11 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 						zap.Any("event", event),
 						zap.Error(err))
 					return
+				} else {
+					s.logger.Debug("成功發送事件到客戶端",
+						zap.String("subscriptionID", subscriptionID),
+						zap.String("eventType", event.EventType.String()),
+						zap.String("gameID", event.GameId))
 				}
 			}
 		}
@@ -475,6 +608,27 @@ func (s *DealerService) onStageChanged(gameID string, oldStage, newStage gameflo
 				zap.String("oldStage", string(oldStage)),
 				zap.String("newStage", string(newStage)),
 				zap.Error(err))
+		}
+
+		// 發送通知事件給訂閱 NOTIFICATION 的客戶端
+		// 獲取當前遊戲狀態
+		currentGame := s.gameManager.GetCurrentGame()
+		if currentGame != nil {
+			notificationEvent := &pb.GameEvent{
+				EventType: pb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
+				GameId:    gameID,
+				Timestamp: timestamppb.Now(),
+				EventData: &pb.GameEvent_Notification{
+					Notification: &pb.NotificationEvent{
+						GameData: convertGameDataToPb(currentGame),
+						Message:  fmt.Sprintf("遊戲階段從 %s 變更為 %s", oldStage, newStage),
+					},
+				},
+			}
+
+			// 這裡應該將通知事件發送到通知發送系統
+			// 實際實現中，您可能需要添加一個通知管理器來處理訂閱和發布
+			s.sendNotificationToSubscribers(notificationEvent)
 		}
 	}()
 }
