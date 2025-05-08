@@ -223,7 +223,77 @@ func (m *GameManager) AdvanceStage(ctx context.Context, autoAdvance bool) error 
 
 	// 記錄當前階段
 	previousStage := m.currentGame.CurrentStage
-	nextStage := GetNextStage(previousStage, m.currentGame.HasJackpot)
+
+	// 如果是 StagePayoutSettlement 階段，進行幸運球檢查並決定下一階段
+	var nextStage GameStage
+	if previousStage == StagePayoutSettlement {
+		// 從 Redis 獲取當前幸運球
+		luckyBalls, err := m.repo.GetLuckyBalls(ctx)
+		if err != nil {
+			m.logger.Error("獲取幸運球失敗，使用標準流程轉換",
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Error(err))
+			nextStage = GetNextStage(previousStage, m.currentGame.HasJackpot)
+		} else {
+			// 記錄幸運球號碼
+			var luckyBallNumbers []int
+			for _, ball := range luckyBalls {
+				luckyBallNumbers = append(luckyBallNumbers, ball.Number)
+			}
+
+			// 記錄已抽出的球號碼
+			var regularBallNumbers, extraBallNumbers []int
+			for _, ball := range m.currentGame.RegularBalls {
+				regularBallNumbers = append(regularBallNumbers, ball.Number)
+			}
+			for _, ball := range m.currentGame.ExtraBalls {
+				extraBallNumbers = append(extraBallNumbers, ball.Number)
+			}
+
+			// 進行幸運球檢查
+			var checkResult *LuckyBallCheckResult
+			nextStage, checkResult = GetNextStageWithGameDetailed(previousStage, m.currentGame, luckyBalls)
+
+			m.logger.Info("檢查幸運球是否在抽出球中",
+				zap.String("gameID", m.currentGame.GameID),
+				zap.Int("luckyBallsCount", len(luckyBalls)),
+				zap.Ints("luckyBallNumbers", luckyBallNumbers),
+				zap.Ints("regularBallNumbers", regularBallNumbers),
+				zap.Ints("extraBallNumbers", extraBallNumbers),
+				zap.Bool("allLuckyBallsDrawn", checkResult != nil && checkResult.AllMatched),
+				zap.Ints("matchedLuckyBalls", func() []int {
+					if checkResult != nil {
+						return checkResult.MatchedBalls
+					}
+					return nil
+				}()),
+				zap.Ints("unmatchedLuckyBalls", func() []int {
+					if checkResult != nil {
+						return checkResult.UnmatchedBalls
+					}
+					return nil
+				}()))
+
+			// 記錄階段轉換結果
+			if nextStage == StageJackpotPreparation {
+				if m.currentGame.HasJackpot {
+					m.logger.Info("遊戲有JP標記，進入JP階段",
+						zap.String("gameID", m.currentGame.GameID))
+				} else {
+					m.logger.Info("所有幸運球都在已抽出球中，進入JP階段",
+						zap.String("gameID", m.currentGame.GameID),
+						zap.Ints("matchedLuckyBalls", checkResult.MatchedBalls))
+				}
+			} else if nextStage == StageGameOver {
+				m.logger.Info("存在幸運球不在已抽出球中，直接進入遊戲結束階段",
+					zap.String("gameID", m.currentGame.GameID),
+					zap.Ints("unmatchedLuckyBalls", checkResult.UnmatchedBalls))
+			}
+		}
+	} else {
+		// 其他階段使用標準流程轉換
+		nextStage = GetNextStage(previousStage, m.currentGame.HasJackpot)
+	}
 
 	m.logger.Info("推進遊戲階段",
 		zap.String("gameID", m.currentGame.GameID),

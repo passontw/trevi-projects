@@ -258,6 +258,109 @@ func GetNextStage(currentStage GameStage, hasJackpot bool) GameStage {
 	return StagePreparation
 }
 
+// GetNextStageWithGame 根據當前階段和遊戲數據計算下一個階段，加入了幸運球檢查邏輯
+func GetNextStageWithGame(currentStage GameStage, game *GameData, luckyBalls []Ball) GameStage {
+	// 特殊轉換：從 StagePayoutSettlement 到 StageJackpotPreparation 或 StageGameOver
+	if currentStage == StagePayoutSettlement {
+		// 檢查幸運球是否都在已抽出的球中
+		if game.HasJackpot || areLuckyBallsDrawn(game, luckyBalls) {
+			return StageJackpotPreparation
+		}
+		return StageGameOver
+	}
+
+	// 特殊轉換規則
+	if currentStage == StagePayoutSettlement && !game.HasJackpot {
+		return StageDrawingLuckyBallsStart
+	}
+
+	// 使用自然轉換表
+	if nextStage, ok := naturalStageTransition[currentStage]; ok {
+		return nextStage
+	}
+
+	// 找不到轉換規則，返回準備階段
+	return StagePreparation
+}
+
+// LuckyBallCheckResult 幸運球檢查結果
+type LuckyBallCheckResult struct {
+	MatchedBalls   []int // 符合的幸運球
+	UnmatchedBalls []int // 不符合的幸運球
+	AllMatched     bool  // 是否全部符合
+}
+
+// GetNextStageWithGameDetailed 根據當前階段和遊戲數據計算下一個階段，加入了幸運球檢查邏輯，並返回詳細檢查結果
+func GetNextStageWithGameDetailed(currentStage GameStage, game *GameData, luckyBalls []Ball) (GameStage, *LuckyBallCheckResult) {
+	// 特殊轉換：從 StagePayoutSettlement 到 StageJackpotPreparation 或 StageGameOver
+	if currentStage == StagePayoutSettlement {
+		// 檢查幸運球是否都在已抽出的球中
+		checkResult := areLuckyBallsDrawnDetailed(game, luckyBalls)
+		if game.HasJackpot || checkResult.AllMatched {
+			return StageJackpotPreparation, checkResult
+		}
+		return StageGameOver, checkResult
+	}
+
+	// 特殊轉換規則
+	if currentStage == StagePayoutSettlement && !game.HasJackpot {
+		return StageDrawingLuckyBallsStart, nil
+	}
+
+	// 使用自然轉換表
+	if nextStage, ok := naturalStageTransition[currentStage]; ok {
+		return nextStage, nil
+	}
+
+	// 找不到轉換規則，返回準備階段
+	return StagePreparation, nil
+}
+
+// areLuckyBallsDrawn 檢查幸運球是否都在已抽出的球中
+func areLuckyBallsDrawn(game *GameData, luckyBalls []Ball) bool {
+	result := areLuckyBallsDrawnDetailed(game, luckyBalls)
+	return result.AllMatched
+}
+
+// areLuckyBallsDrawnDetailed 檢查幸運球是否都在已抽出的球中，並返回詳細的檢查結果
+func areLuckyBallsDrawnDetailed(game *GameData, luckyBalls []Ball) *LuckyBallCheckResult {
+	result := &LuckyBallCheckResult{
+		MatchedBalls:   []int{},
+		UnmatchedBalls: []int{},
+		AllMatched:     false,
+	}
+
+	if len(luckyBalls) != 7 {
+		return result
+	}
+
+	// 將已抽出的球號放入map中便於查詢
+	drawnNumbers := make(map[int]bool)
+	for _, ball := range game.RegularBalls {
+		drawnNumbers[ball.Number] = true
+	}
+	for _, ball := range game.ExtraBalls {
+		drawnNumbers[ball.Number] = true
+	}
+
+	// 建立符合和不符合的幸運球清單，用於記錄日誌
+	// 檢查每個幸運球是否都在已抽出的球中
+	for _, ball := range luckyBalls {
+		if drawnNumbers[ball.Number] {
+			result.MatchedBalls = append(result.MatchedBalls, ball.Number)
+		} else {
+			result.UnmatchedBalls = append(result.UnmatchedBalls, ball.Number)
+		}
+	}
+
+	// 如果有不匹配的球，返回 false
+	if len(result.UnmatchedBalls) == 0 {
+		result.AllMatched = true
+	}
+
+	return result
+}
+
 // IsBallDrawingStage 判斷當前階段是否允許抽球
 func IsBallDrawingStage(stage GameStage) bool {
 	config := GetStageConfig(stage)
