@@ -33,24 +33,32 @@ const (
 	ExtraBallSideRight ExtraBallSide = "RIGHT"
 )
 
+// JackpotGame 代表JP遊戲數據
+type JackpotGame struct {
+	ID         string    `json:"id"`                 // JP遊戲ID
+	StartTime  time.Time `json:"start_time"`         // JP開始時間
+	EndTime    time.Time `json:"end_time,omitempty"` // JP結束時間
+	LuckyBalls []Ball    `json:"lucky_numbers"`      // JP幸運號碼球
+	DrawnBalls []Ball    `json:"drawn_balls"`        // JP抽出的球
+}
+
 // GameData 代表遊戲數據
 type GameData struct {
-	GameID         string        `json:"game_id"`            // 遊戲ID
-	CurrentStage   GameStage     `json:"current_stage"`      // 當前階段
-	StartTime      time.Time     `json:"start_time"`         // 開始時間
-	EndTime        time.Time     `json:"end_time,omitempty"` // 結束時間
-	RegularBalls   []Ball        `json:"regular_balls"`      // 常規球
-	ExtraBalls     []Ball        `json:"extra_balls"`        // 額外球
-	JackpotBalls   []Ball        `json:"jackpot_balls"`      // JP球
-	LuckyBalls     []Ball        `json:"lucky_balls"`        // 幸運號碼球
-	SelectedSide   ExtraBallSide `json:"selected_side"`      // 選擇的額外球一側
-	ExtraBallCount int           `json:"extra_ball_count"`   // 額外球數量，範圍是1~3
-	HasJackpot     bool          `json:"has_jackpot"`        // 是否有JP
-	JackpotWinner  string        `json:"jackpot_winner"`     // JP獲獎者ID
-	IsCancelled    bool          `json:"is_cancelled"`       // 是否已取消
-	CancelReason   string        `json:"cancel_reason"`      // 取消原因
-	CancelTime     time.Time     `json:"cancel_time"`        // 取消時間
-	LastUpdateTime time.Time     `json:"last_update_time"`   // 最後更新時間
+	GameID       string    `json:"game_id"`            // 遊戲ID
+	CurrentStage GameStage `json:"current_stage"`      // 當前階段
+	StartTime    time.Time `json:"start_time"`         // 開始時間
+	EndTime      time.Time `json:"end_time,omitempty"` // 結束時間
+	RegularBalls []Ball    `json:"regular_balls"`      // 常規球
+	ExtraBalls   []Ball    `json:"extra_balls"`        // 額外球
+
+	SelectedSide   ExtraBallSide `json:"selected_side"`     // 選擇的額外球一側
+	ExtraBallCount int           `json:"extra_ball_count"`  // 額外球數量，範圍是1~3
+	HasJackpot     bool          `json:"has_jackpot"`       // 是否有JP
+	Jackpot        *JackpotGame  `json:"jackpot,omitempty"` // JP遊戲數據
+	IsCancelled    bool          `json:"is_cancelled"`      // 是否已取消
+	CancelReason   string        `json:"cancel_reason"`     // 取消原因
+	CancelTime     time.Time     `json:"cancel_time"`       // 取消時間
+	LastUpdateTime time.Time     `json:"last_update_time"`  // 最後更新時間
 }
 
 // 建立一個新的遊戲
@@ -70,10 +78,8 @@ func NewGameData(gameID string) *GameData {
 		StartTime:      now,
 		RegularBalls:   make([]Ball, 0),
 		ExtraBalls:     make([]Ball, 0),
-		JackpotBalls:   make([]Ball, 0),
-		LuckyBalls:     make([]Ball, 0),
 		ExtraBallCount: extraBallCount,
-		HasJackpot:     false,
+		HasJackpot:     true, // 將所有遊戲設為有 JP
 		IsCancelled:    false,
 		LastUpdateTime: now,
 	}
@@ -99,10 +105,21 @@ func IsBallDuplicate(number int, existingBalls []Ball) bool {
 
 // IsBallDuplicateAcrossAllTypes 檢查球是否在所有類型中出現過
 func IsBallDuplicateAcrossAllTypes(number int, game *GameData) bool {
-	return IsBallDuplicate(number, game.RegularBalls) ||
-		IsBallDuplicate(number, game.ExtraBalls) ||
-		IsBallDuplicate(number, game.JackpotBalls) ||
-		IsBallDuplicate(number, game.LuckyBalls)
+	// 檢查常規球和額外球
+	if IsBallDuplicate(number, game.RegularBalls) ||
+		IsBallDuplicate(number, game.ExtraBalls) {
+		return true
+	}
+
+	// 檢查JP球（如果存在）
+	if game.Jackpot != nil {
+		if IsBallDuplicate(number, game.Jackpot.DrawnBalls) ||
+			IsBallDuplicate(number, game.Jackpot.LuckyBalls) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GenerateLuckyBalls 生成7顆幸運號碼球
@@ -183,10 +200,13 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 		if game.CurrentStage != StageJackpotDrawingStart {
 			return nil, fmt.Errorf("JP球只能在 %s 階段抽取", StageJackpotDrawingStart)
 		}
-		if IsBallDuplicate(number, game.JackpotBalls) {
+		if game.Jackpot == nil {
+			return nil, fmt.Errorf("JP遊戲未初始化")
+		}
+		if IsBallDuplicate(number, game.Jackpot.DrawnBalls) {
 			return nil, fmt.Errorf("重複的JP球號: %d", number)
 		}
-		if len(game.JackpotBalls) >= 75 {
+		if len(game.Jackpot.DrawnBalls) >= 75 {
 			return nil, fmt.Errorf("已達到最大JP球數量")
 		}
 
@@ -194,10 +214,20 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 		if game.CurrentStage != StageDrawingLuckyBallsStart {
 			return nil, fmt.Errorf("幸運號碼球只能在 %s 階段抽取", StageDrawingLuckyBallsStart)
 		}
-		if IsBallDuplicate(number, game.LuckyBalls) {
+		// 幸運號碼球現在應該直接添加到 Jackpot.LuckyBalls
+		if game.Jackpot == nil {
+			// 如果 Jackpot 不存在，初始化它
+			game.Jackpot = &JackpotGame{
+				ID:         fmt.Sprintf("jackpot_%s", time.Now().Format("20060102150405")),
+				StartTime:  time.Now(),
+				LuckyBalls: make([]Ball, 0),
+				DrawnBalls: make([]Ball, 0),
+			}
+		}
+		if IsBallDuplicate(number, game.Jackpot.LuckyBalls) {
 			return nil, fmt.Errorf("重複的幸運號碼球號: %d", number)
 		}
-		if len(game.LuckyBalls) >= 7 {
+		if len(game.Jackpot.LuckyBalls) >= 7 {
 			return nil, fmt.Errorf("已達到最大幸運號碼球數量")
 		}
 
@@ -220,9 +250,14 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 	case BallTypeExtra:
 		game.ExtraBalls = append(game.ExtraBalls, newBall)
 	case BallTypeJackpot:
-		game.JackpotBalls = append(game.JackpotBalls, newBall)
+		if game.Jackpot != nil {
+			game.Jackpot.DrawnBalls = append(game.Jackpot.DrawnBalls, newBall)
+		}
 	case BallTypeLucky:
-		game.LuckyBalls = append(game.LuckyBalls, newBall)
+		// 幸運號碼球直接添加到 Jackpot.LuckyBalls
+		if game.Jackpot != nil {
+			game.Jackpot.LuckyBalls = append(game.Jackpot.LuckyBalls, newBall)
+		}
 	}
 
 	// 更新遊戲最後更新時間

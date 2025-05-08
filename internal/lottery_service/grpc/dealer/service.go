@@ -879,7 +879,7 @@ func convertGameDataToPb(game *gameflow.GameData) *pb.GameData {
 		return nil
 	}
 
-	// 準備球的切片
+	// 初始化球數組
 	regularBalls := make([]*pb.Ball, len(game.RegularBalls))
 	for i, ball := range game.RegularBalls {
 		regularBalls[i] = convertBallToPb(ball)
@@ -890,14 +890,24 @@ func convertGameDataToPb(game *gameflow.GameData) *pb.GameData {
 		extraBalls[i] = convertBallToPb(ball)
 	}
 
-	jackpotBalls := make([]*pb.Ball, len(game.JackpotBalls))
-	for i, ball := range game.JackpotBalls {
-		jackpotBalls[i] = convertBallToPb(ball)
-	}
+	// 初始化JP球和幸運球
+	var jackpotBalls []*pb.Ball
+	var luckyBalls []*pb.Ball
 
-	luckyBalls := make([]*pb.Ball, len(game.LuckyBalls))
-	for i, ball := range game.LuckyBalls {
-		luckyBalls[i] = convertBallToPb(ball)
+	if game.Jackpot != nil {
+		// 如果有 Jackpot 數據，從 Jackpot 結構中獲取
+		jackpotBalls = make([]*pb.Ball, len(game.Jackpot.DrawnBalls))
+		for i, ball := range game.Jackpot.DrawnBalls {
+			jackpotBalls[i] = convertBallToPb(ball)
+		}
+
+		luckyBalls = make([]*pb.Ball, len(game.Jackpot.LuckyBalls))
+		for i, ball := range game.Jackpot.LuckyBalls {
+			luckyBalls[i] = convertBallToPb(ball)
+		}
+	} else {
+		jackpotBalls = make([]*pb.Ball, 0)
+		luckyBalls = make([]*pb.Ball, 0)
 	}
 
 	// 創建 proto GameData
@@ -911,7 +921,6 @@ func convertGameDataToPb(game *gameflow.GameData) *pb.GameData {
 		LuckyBalls:     luckyBalls,
 		SelectedSide:   convertExtraBallSideToPb(game.SelectedSide),
 		HasJackpot:     game.HasJackpot,
-		JackpotWinner:  game.JackpotWinner,
 		IsCancelled:    game.IsCancelled,
 		CancelReason:   game.CancelReason,
 		LastUpdateTime: timestamppb.New(game.LastUpdateTime),

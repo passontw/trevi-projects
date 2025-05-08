@@ -301,7 +301,7 @@ StageGameOver  // 遊戲結束
 - 驗證規則：
   - 球號必須在1-75之間
   - 不能重複抽取同一顆JP球
-- 儲存位置：`JackpotBalls`陣列
+- 儲存位置：`Jackpot.DrawnBalls`陣列
 - 結束條件：收到標記為最後一顆的球或遊戲端通知有人中獎
 
 #### 2.4 幸運號碼球處理
@@ -310,7 +310,7 @@ StageGameOver  // 遊戲結束
 - 驗證規則：
   - 球號必須在1-75之間
   - 不能重複抽取同一顆幸運球
-- 儲存位置：`LuckyBalls`陣列
+- 儲存位置：`Jackpot.LuckyBalls`陣列
 - 特殊處理：服務初始化時自動生成
 
 ### 3. WebSocket通訊

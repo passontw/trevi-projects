@@ -110,17 +110,22 @@ func main() {
 
 	// 顯示遊戲狀態
 	fmt.Printf("是否有JP: %v\n", gameData.GetHasJackpot())
-	fmt.Printf("是否已取消: %v\n", gameData.GetIsCancelled())
-	if lastUpdateTime := gameData.GetLastUpdateTime(); lastUpdateTime != nil {
-		fmt.Printf("最後更新時間: %s\n", lastUpdateTime.AsTime().UTC().Format(time.RFC3339))
-	}
-	fmt.Println()
+	fmt.Printf("遊戲是否取消: %v\n", gameData.GetCancelTime() > 0)
+	fmt.Printf("最後更新時間: %v\n", time.Unix(gameData.GetLastUpdateTime(), 0))
+	displayBalls("正球", gameData.GetRegularBalls())
+	displayBalls("加球", gameData.GetExtraBalls())
 
-	// 顯示球信息
-	displayBalls("常規球", gameData.GetRegularBalls())
-	displayBalls("額外球", gameData.GetExtraBalls())
-	displayBalls("JP球", gameData.GetJackpotBalls())
-	displayBalls("幸運號碼球", gameData.GetLuckyBalls())
+	jackpotBalls := make([]int32, 0)
+	if gameData.GetJackpot() != nil {
+		jackpotBalls = gameData.GetJackpot().GetDrawnBalls()
+	}
+	displayBalls("JP球", jackpotBalls)
+
+	luckyBalls := make([]int32, 0)
+	if gameData.GetJackpot() != nil {
+		luckyBalls = gameData.GetJackpot().GetLuckyBalls()
+	}
+	displayBalls("幸運球", luckyBalls)
 
 	// 顯示完整的 JSON 格式
 	fmt.Println("完整回應 JSON 格式:")

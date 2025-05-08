@@ -8,6 +8,7 @@ import (
 
 	"g38_lottery_service/pkg/databaseManager"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -171,7 +172,7 @@ func (r *TiDBRepository) SaveGameHistory(ctx context.Context, game *GameData) er
 	}
 
 	// 3. 儲存最新的幸運號碼球 (如果有)
-	if len(game.LuckyBalls) == 7 {
+	if game.Jackpot != nil && len(game.Jackpot.LuckyBalls) == 7 {
 		if err := saveLuckyBalls(tx, game); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("保存幸運號碼球失敗: %w", err)
@@ -346,6 +347,8 @@ func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID strin
 		IsCancelled:    gameModel.Cancelled,
 		CancelReason:   gameModel.CancelReason,
 		LastUpdateTime: gameModel.UpdatedAt,
+		RegularBalls:   make([]Ball, 0),
+		ExtraBalls:     make([]Ball, 0),
 	}
 
 	// 設置結束時間
@@ -357,6 +360,9 @@ func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID strin
 	if gameModel.CancelTime != nil {
 		game.CancelTime = *gameModel.CancelTime
 	}
+
+	// 創建 Jackpot 結構體 (如果需要)
+	var luckyBalls []Ball
 
 	// 處理已抽出的球
 	for _, ball := range drawnBalls {
@@ -376,16 +382,42 @@ func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID strin
 			game.ExtraBalls = append(game.ExtraBalls, gameBall)
 		case "JACKPOT":
 			gameBall.Type = BallTypeJackpot
-			game.JackpotBalls = append(game.JackpotBalls, gameBall)
+			// 如果遊戲有JP，初始化Jackpot結構
+			if game.HasJackpot && game.Jackpot == nil {
+				game.Jackpot = &JackpotGame{
+					ID:         fmt.Sprintf("jackpot_%s", uuid.New().String()),
+					StartTime:  game.StartTime,
+					DrawnBalls: make([]Ball, 0),
+					LuckyBalls: make([]Ball, 0),
+				}
+			}
+			// 將JP球加入到Jackpot的DrawnBalls中
+			if game.Jackpot != nil {
+				game.Jackpot.DrawnBalls = append(game.Jackpot.DrawnBalls, gameBall)
+			}
 		case "LUCKY":
 			gameBall.Type = BallTypeLucky
-			game.LuckyBalls = append(game.LuckyBalls, gameBall)
+			// 收集幸運號碼球，稍後加入到 Jackpot
+			luckyBalls = append(luckyBalls, gameBall)
 		}
 
 		// 設置額外球選邊
 		if ball.BallType == "EXTRA" && ball.Side != "" {
 			game.SelectedSide = ExtraBallSide(ball.Side)
 		}
+	}
+
+	// 如果有幸運號碼球，確保 Jackpot 存在並添加幸運球
+	if len(luckyBalls) > 0 {
+		if game.Jackpot == nil {
+			game.Jackpot = &JackpotGame{
+				ID:         fmt.Sprintf("jackpot_%s", uuid.New().String()),
+				StartTime:  game.StartTime,
+				DrawnBalls: make([]Ball, 0),
+				LuckyBalls: make([]Ball, 0),
+			}
+		}
+		game.Jackpot.LuckyBalls = luckyBalls
 	}
 
 	return game, nil
@@ -461,34 +493,37 @@ func saveDrawnBalls(tx *gorm.DB, game *GameData) error {
 	}
 
 	// 保存JP球
-	for i, ball := range game.JackpotBalls {
-		model := DrawnBallModel{
-			GameID:     game.GameID,
-			Number:     ball.Number,
-			Sequence:   i + 1,
-			BallType:   "JACKPOT",
-			DrawnTime:  ball.Timestamp,
-			IsLastBall: ball.IsLast,
-			CreatedAt:  time.Now(),
+	if game.Jackpot != nil {
+		// 保存已抽出的 JP 球
+		for i, ball := range game.Jackpot.DrawnBalls {
+			model := DrawnBallModel{
+				GameID:     game.GameID,
+				Number:     ball.Number,
+				Sequence:   i + 1,
+				BallType:   "JACKPOT",
+				DrawnTime:  ball.Timestamp,
+				IsLastBall: ball.IsLast,
+				CreatedAt:  time.Now(),
+			}
+			if err := tx.Create(&model).Error; err != nil {
+				return err
+			}
 		}
-		if err := tx.Create(&model).Error; err != nil {
-			return err
-		}
-	}
 
-	// 保存幸運球
-	for i, ball := range game.LuckyBalls {
-		model := DrawnBallModel{
-			GameID:     game.GameID,
-			Number:     ball.Number,
-			Sequence:   i + 1,
-			BallType:   "LUCKY",
-			DrawnTime:  ball.Timestamp,
-			IsLastBall: ball.IsLast,
-			CreatedAt:  time.Now(),
-		}
-		if err := tx.Create(&model).Error; err != nil {
-			return err
+		// 保存幸運號碼球
+		for i, ball := range game.Jackpot.LuckyBalls {
+			model := DrawnBallModel{
+				GameID:     game.GameID,
+				Number:     ball.Number,
+				Sequence:   i + 1,
+				BallType:   "LUCKY",
+				DrawnTime:  ball.Timestamp,
+				IsLastBall: ball.IsLast,
+				CreatedAt:  time.Now(),
+			}
+			if err := tx.Create(&model).Error; err != nil {
+				return err
+			}
 		}
 	}
 
@@ -497,8 +532,9 @@ func saveDrawnBalls(tx *gorm.DB, game *GameData) error {
 
 // 輔助函數：保存幸運號碼球
 func saveLuckyBalls(tx *gorm.DB, game *GameData) error {
-	if len(game.LuckyBalls) < 7 {
-		return nil // 不足7顆球，不保存
+	// 檢查 Jackpot 是否存在
+	if game.Jackpot == nil || len(game.Jackpot.LuckyBalls) < 7 {
+		return nil // 不足7顆球或無 Jackpot，不保存
 	}
 
 	// 1. 將現有的活躍幸運號碼設為非活躍
@@ -510,13 +546,13 @@ func saveLuckyBalls(tx *gorm.DB, game *GameData) error {
 	model := LuckyBallsModel{
 		GameID:    game.GameID,
 		DrawDate:  time.Now(),
-		Number1:   game.LuckyBalls[0].Number,
-		Number2:   game.LuckyBalls[1].Number,
-		Number3:   game.LuckyBalls[2].Number,
-		Number4:   game.LuckyBalls[3].Number,
-		Number5:   game.LuckyBalls[4].Number,
-		Number6:   game.LuckyBalls[5].Number,
-		Number7:   game.LuckyBalls[6].Number,
+		Number1:   game.Jackpot.LuckyBalls[0].Number,
+		Number2:   game.Jackpot.LuckyBalls[1].Number,
+		Number3:   game.Jackpot.LuckyBalls[2].Number,
+		Number4:   game.Jackpot.LuckyBalls[3].Number,
+		Number5:   game.Jackpot.LuckyBalls[4].Number,
+		Number6:   game.Jackpot.LuckyBalls[5].Number,
+		Number7:   game.Jackpot.LuckyBalls[6].Number,
 		Active:    true,
 		CreatedAt: time.Now(),
 	}

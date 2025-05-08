@@ -69,8 +69,10 @@ type GameStatusTopPlayer struct {
 func BuildGameStatusResponse(game *GameData) *GameStatusResponse {
 	// 1. 轉換 luckyNumbers
 	var luckyNumbers []int
-	for _, b := range game.LuckyBalls {
-		luckyNumbers = append(luckyNumbers, b.Number)
+	if game.Jackpot != nil {
+		for _, b := range game.Jackpot.LuckyBalls {
+			luckyNumbers = append(luckyNumbers, b.Number)
+		}
 	}
 
 	// 2. 轉換 drawnBalls
@@ -96,38 +98,42 @@ func BuildGameStatusResponse(game *GameData) *GameStatusResponse {
 
 	// 4. 轉換 jackpot
 	var jackpotBalls []GameStatusDrawnBall
-	for i, b := range game.JackpotBalls {
-		jackpotBalls = append(jackpotBalls, GameStatusDrawnBall{
-			Number:    b.Number,
-			DrawnTime: b.Timestamp.Format(time.RFC3339),
-			Sequence:  i + 1,
-		})
-	}
 	var jackpotGameID *string
-	if game.HasJackpot {
-		jackpotGameID = &game.GameID
-	}
-	var jackpotWinner *string
-	if game.JackpotWinner != "" {
-		jackpotWinner = &game.JackpotWinner
-	}
 	var jackpotStartTime, jackpotEndTime *string
-	if !game.StartTime.IsZero() {
-		s := game.StartTime.Format(time.RFC3339)
-		jackpotStartTime = &s
-	}
-	if !game.EndTime.IsZero() {
-		s := game.EndTime.Format(time.RFC3339)
-		jackpotEndTime = &s
-	}
+
 	jackpot := GameStatusJackpot{
-		Active:     game.HasJackpot,
-		GameID:     jackpotGameID,
-		Amount:     500000, // TODO: 從資料庫或配置取得
-		StartTime:  jackpotStartTime,
-		EndTime:    jackpotEndTime,
-		DrawnBalls: jackpotBalls,
-		Winner:     jackpotWinner,
+		Active: game.HasJackpot,
+		Amount: 500000, // TODO: 從資料庫或配置取得
+	}
+
+	// 如果有Jackpot實例，填充其他欄位
+	if game.HasJackpot && game.Jackpot != nil {
+		// JP遊戲ID
+		jackpotGameID = &game.Jackpot.ID
+		jackpot.GameID = jackpotGameID
+
+		// JP開始/結束時間
+		if !game.Jackpot.StartTime.IsZero() {
+			s := game.Jackpot.StartTime.Format(time.RFC3339)
+			jackpotStartTime = &s
+			jackpot.StartTime = jackpotStartTime
+		}
+
+		if !game.Jackpot.EndTime.IsZero() {
+			s := game.Jackpot.EndTime.Format(time.RFC3339)
+			jackpotEndTime = &s
+			jackpot.EndTime = jackpotEndTime
+		}
+
+		// JP抽出的球
+		for i, b := range game.Jackpot.DrawnBalls {
+			jackpotBalls = append(jackpotBalls, GameStatusDrawnBall{
+				Number:    b.Number,
+				DrawnTime: b.Timestamp.Format(time.RFC3339),
+				Sequence:  i + 1,
+			})
+		}
+		jackpot.DrawnBalls = jackpotBalls
 	}
 
 	// 5. 轉換 topPlayers, totalWinAmount (如有排行榜資料，否則可留空)
@@ -154,7 +160,7 @@ func BuildGameStatusResponse(game *GameData) *GameStatusResponse {
 		StartTime:      game.StartTime.Format(time.RFC3339),
 		EndTime:        endTime,
 		HasJackpot:     game.HasJackpot,
-		ExtraBallCount: len(game.ExtraBalls),
+		ExtraBallCount: game.ExtraBallCount,
 		Timeline:       timeline,
 	}
 
