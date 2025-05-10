@@ -68,25 +68,51 @@ func (s *DealerService) OnStageChanged(gameID string, oldStage, newStage gameflo
 
 // StartNewRound 實現 DealerService.StartNewRound RPC 方法
 func (s *DealerService) StartNewRound(ctx context.Context, req *pb.StartNewRoundRequest) (*pb.StartNewRoundResponse, error) {
-	s.logger.Info("收到開始新局請求")
+	// 獲取房間ID
+	roomID := req.RoomId
+	s.logger.Info("收到開始新局請求", zap.String("roomID", roomID))
 
-	// 檢查當前階段是否為準備階段
-	currentStage := s.gameManager.GetCurrentStage()
-	if currentStage != gameflow.StagePreparation {
-		s.logger.Warn("無法開始新局，當前階段不是準備階段",
-			zap.String("currentStage", string(currentStage)))
+	// 檢查房間ID是否為空
+	if roomID == "" {
+		s.logger.Warn("無法開始新局，缺少房間ID參數")
+		return nil, status.Errorf(codes.InvalidArgument, "房間ID不能為空")
+	}
+
+	// 檢查房間是否支持
+	supportedRooms := s.gameManager.GetSupportedRooms()
+	isSupportedRoom := false
+	for _, supported := range supportedRooms {
+		if supported == roomID {
+			isSupportedRoom = true
+			break
+		}
+	}
+
+	if !isSupportedRoom {
+		s.logger.Warn("無法開始新局，不支持的房間ID", zap.String("roomID", roomID))
+		return nil, status.Errorf(codes.InvalidArgument, "不支持的房間ID: %s", roomID)
+	}
+
+	// 檢查該房間的遊戲是否處於準備階段
+	currentGame := s.gameManager.GetCurrentGameByRoom(roomID)
+	if currentGame != nil && currentGame.CurrentStage != gameflow.StagePreparation {
+		s.logger.Warn("無法開始新局，當前房間的遊戲不在準備階段",
+			zap.String("roomID", roomID),
+			zap.String("currentStage", string(currentGame.CurrentStage)))
 		return nil, gameflow.ErrInvalidStage
 	}
-	// 創建新遊戲
-	gameID, err := s.gameManager.CreateNewGame(ctx)
+
+	// 為指定房間創建新遊戲
+	gameID, err := s.gameManager.CreateNewGameForRoom(ctx, roomID)
 	if err != nil {
-		s.logger.Error("創建新遊戲失敗", zap.Error(err))
+		s.logger.Error("創建新遊戲失敗", zap.String("roomID", roomID), zap.Error(err))
 		return nil, err
 	}
+
 	// 獲取當前遊戲數據
-	game := s.gameManager.GetCurrentGame()
+	game := s.gameManager.GetCurrentGameByRoom(roomID)
 	if game == nil {
-		s.logger.Error("獲取新創建的遊戲失敗")
+		s.logger.Error("獲取新創建的遊戲失敗", zap.String("roomID", roomID))
 		return nil, gameflow.ErrGameNotFound
 	}
 
@@ -106,22 +132,23 @@ func (s *DealerService) StartNewRound(ctx context.Context, req *pb.StartNewRound
 		newCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// 推進到新局階段
-		if err := s.gameManager.AdvanceStage(newCtx, true); err != nil {
-			s.logger.Error("推進到新局階段失敗", zap.Error(err))
+		// 為指定房間推進到新局階段
+		if err := s.gameManager.AdvanceStageForRoom(newCtx, roomID, true); err != nil {
+			s.logger.Error("推進到新局階段失敗", zap.String("roomID", roomID), zap.Error(err))
 			// 無法返回錯誤，只能記錄
 		} else {
 			s.logger.Info("成功開始新局並推進階段",
+				zap.String("roomID", roomID),
 				zap.String("gameID", gameID),
 				zap.String("stage", string(s.gameManager.GetCurrentStage())))
 
 			// 通過 WebSocket 廣播新遊戲開始事件
 			// 已經移至 goroutine 中，不會阻塞
-			s.broadcastNewGameEvent(gameID, s.gameManager.GetCurrentGame())
+			s.broadcastNewGameEvent(gameID, game)
 		}
 	}()
 
-	s.logger.Info("正在返回 StartNewRound 響應，後台繼續處理階段推進")
+	s.logger.Info("正在返回 StartNewRound 響應，後台繼續處理階段推進", zap.String("roomID", roomID))
 	return &responseCopy, nil
 }
 

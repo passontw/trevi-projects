@@ -105,7 +105,8 @@ message GameData {
 
 // 開始新局遊戲請求
 message StartNewRoundRequest {
-  // 空的請求，由後端自動生成遊戲ID
+  // 房間ID（必需），指定要開始新局的房間
+  string room_id = 1;
 }
 
 // 開始新局遊戲回應
