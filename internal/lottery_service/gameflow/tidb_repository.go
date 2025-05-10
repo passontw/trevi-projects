@@ -17,6 +17,7 @@ import (
 type GameModel struct {
 	ID                    uint       `gorm:"primaryKey;autoIncrement"`
 	GameID                string     `gorm:"column:game_id;type:varchar(50);uniqueIndex;not null"`
+	RoomID                string     `gorm:"column:room_id;type:varchar(20);not null"`
 	State                 string     `gorm:"column:state;type:varchar(30);not null"`
 	StartTime             time.Time  `gorm:"column:start_time;type:timestamp;not null"`
 	EndTime               *time.Time `gorm:"column:end_time;type:timestamp;null"`
@@ -408,6 +409,71 @@ func (r *TiDBRepository) GetCancelledGamesCount(ctx context.Context) (int64, err
 	return count, nil
 }
 
+// GetRecentGameHistoriesByRoom 從 TiDB 獲取特定房間最近的遊戲歷史記錄
+func (r *TiDBRepository) GetRecentGameHistoriesByRoom(ctx context.Context, roomID string, limit int) ([]*GameData, error) {
+	var gameModels []GameModel
+
+	// 查詢最近的遊戲記錄，按開始時間降序排序
+	// 從遊戲ID中提取房間ID，格式假設為 "room_{roomID}_game_{uuid}"
+	gameIDLike := fmt.Sprintf("room_%s_game_%%", roomID)
+
+	if err := r.db.WithContext(ctx).
+		Where("game_id LIKE ?", gameIDLike).
+		Order("start_time DESC").
+		Limit(limit).
+		Find(&gameModels).Error; err != nil {
+		return nil, fmt.Errorf("查詢房間最近遊戲記錄失敗: %w", err)
+	}
+
+	// 轉換為遊戲數據對象
+	var games []*GameData
+	for _, model := range gameModels {
+		// 如果有遊戲快照，直接反序列化
+		if model.GameSnapshot != "" {
+			var game GameData
+			if err := json.Unmarshal([]byte(model.GameSnapshot), &game); err != nil {
+				r.logger.Warn("反序列化遊戲快照失敗",
+					zap.String("gameID", model.GameID),
+					zap.Error(err))
+				continue
+			}
+			games = append(games, &game)
+		} else {
+			// 如果沒有快照，需要從數據庫重建遊戲數據
+			game, err := r.rebuildGameDataFromDB(ctx, model.GameID)
+			if err != nil {
+				r.logger.Warn("重建遊戲數據失敗",
+					zap.String("gameID", model.GameID),
+					zap.Error(err))
+				continue
+			}
+			games = append(games, game)
+		}
+	}
+
+	r.logger.Debug("已獲取房間最近遊戲歷史記錄",
+		zap.String("roomID", roomID),
+		zap.Int("請求數量", limit),
+		zap.Int("實際獲取", len(games)))
+
+	return games, nil
+}
+
+// GetTotalGamesCountByRoom 從 TiDB 獲取特定房間的總遊戲數量
+func (r *TiDBRepository) GetTotalGamesCountByRoom(ctx context.Context, roomID string) (int64, error) {
+	var count int64
+	gameIDLike := fmt.Sprintf("room_%s_game_%%", roomID)
+
+	if err := r.db.WithContext(ctx).
+		Model(&GameModel{}).
+		Where("game_id LIKE ?", gameIDLike).
+		Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("統計房間遊戲總數失敗: %w", err)
+	}
+
+	return count, nil
+}
+
 // 輔助函數：從數據庫重建遊戲數據
 func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID string) (*GameData, error) {
 	// 獲取遊戲基本信息
@@ -511,6 +577,7 @@ func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID strin
 func convertGameDataToGameModel(game *GameData) GameModel {
 	model := GameModel{
 		GameID:                game.GameID,
+		RoomID:                game.RoomID,
 		State:                 string(game.CurrentStage),
 		StartTime:             game.StartTime,
 		HasJackpot:            game.HasJackpot,

@@ -2,6 +2,7 @@
 CREATE TABLE games (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     game_id VARCHAR(50) NOT NULL UNIQUE,
+    room_id VARCHAR(20) NOT NULL,            -- 房間 ID，如 SG01, SG02 等
     state VARCHAR(30) NOT NULL,             -- 遊戲狀態如 PREPARATION, BETTING, DRAWING 等
     start_time TIMESTAMP NOT NULL,
     end_time TIMESTAMP NULL,
@@ -34,7 +35,8 @@ CREATE TABLE games (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     
     INDEX idx_state (state),
-    INDEX idx_start_time (start_time)
+    INDEX idx_start_time (start_time),
+    INDEX idx_room_id (room_id)
 );
 
 -- 已抽出的球數據表

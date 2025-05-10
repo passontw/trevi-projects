@@ -52,6 +52,7 @@ type JackpotGame struct {
 // GameData 代表遊戲數據
 type GameData struct {
 	GameID       string    `json:"game_id"`            // 遊戲ID
+	RoomID       string    `json:"room_id"`            // 房間ID
 	CurrentStage GameStage `json:"current_stage"`      // 當前階段
 	StartTime    time.Time `json:"start_time"`         // 開始時間
 	EndTime      time.Time `json:"end_time,omitempty"` // 結束時間
@@ -69,7 +70,7 @@ type GameData struct {
 }
 
 // 建立一個新的遊戲
-func NewGameData(gameID string) *GameData {
+func NewGameData(gameID string, roomID string) *GameData {
 	now := time.Now()
 
 	// 隨機生成額外球數量 (1-3)
@@ -79,8 +80,14 @@ func NewGameData(gameID string) *GameData {
 		extraBallCount = int(n.Int64()) + 1 // 加1確保範圍是1-3
 	}
 
+	// 如果沒有提供 roomID，則從 gameID 中提取
+	if roomID == "" {
+		roomID = GetRoomIDFromGameID(gameID)
+	}
+
 	return &GameData{
 		GameID:         gameID,
+		RoomID:         roomID,
 		CurrentStage:   StagePreparation,
 		StartTime:      now,
 		RegularBalls:   make([]Ball, 0),

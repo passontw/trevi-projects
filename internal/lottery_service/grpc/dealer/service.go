@@ -52,17 +52,18 @@ func NewDealerService(
 func (s *DealerService) registerEventHandlers() {
 	s.logger.Info("正在註冊事件處理函數")
 
-	// 註冊階段變更事件處理函數
-	s.gameManager.SetEventHandlers(
-		s.onStageChanged,          // 階段變更
-		s.onGameCreated,           // 遊戲創建
-		s.onGameCancelled,         // 遊戲取消
-		s.onGameCompleted,         // 遊戲完成
-		s.onBallDrawn,             // 球抽取
-		s.onExtraBallSideSelected, // 額外球選邊
-	)
+	// 註冊各種回調函數
+	s.gameManager.SetOnBallDrawnCallback(s.onBallDrawn) // 球抽取回調
+
+	// 註冊 WebSocket 通知器用於處理遊戲階段變更等事件
+	s.gameManager.RegisterWebSocketNotifier(s)
 
 	s.logger.Info("事件處理函數註冊完成")
+}
+
+// OnStageChanged 實現 WebSocketNotifier 接口的方法，處理階段變更事件
+func (s *DealerService) OnStageChanged(gameID string, oldStage, newStage gameflow.GameStage, game *gameflow.GameData) {
+	s.onStageChanged(gameID, oldStage, newStage)
 }
 
 // StartNewRound 實現 DealerService.StartNewRound RPC 方法
@@ -140,38 +141,31 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 
 	// 從請求中獲取球列表
 	reqBalls := req.GetBalls()
-
-	// 將 proto balls 轉換為 gameflow balls
-	gameBalls := make([]gameflow.Ball, 0, len(reqBalls))
+	if len(reqBalls) == 0 {
+		return nil, gameflow.NewGameFlowErrorWithFormat("INVALID_REQUEST",
+			"請求必須包含至少一顆球")
+	}
 
 	// 檢查最後一顆球是否標記為最後一顆
-	var isLastBall bool
+	isLastBall := false
 	if len(reqBalls) > 0 {
 		lastBall := reqBalls[len(reqBalls)-1]
 		isLastBall = lastBall.IsLast
 	}
 
-	// 轉換所有球
-	for i, ball := range reqBalls {
+	// 處理所有球
+	for _, ball := range reqBalls {
 		gameBall := gameflow.Ball{
 			Number:    int(ball.Number),
 			Type:      gameflow.BallTypeRegular,
 			IsLast:    ball.IsLast,
 			Timestamp: ball.Timestamp.AsTime(),
 		}
-		gameBalls = append(gameBalls, gameBall)
 
-		// 如果是新添加的球，觸發球抽取事件
-		if i >= len(game.RegularBalls) {
-			if s.gameManager.GetOnBallDrawnCallback() != nil {
-				s.gameManager.GetOnBallDrawnCallback()(game.GameID, gameBall)
-			}
+		// 使用單球 API 添加球
+		if err := s.gameManager.UpdateRegularBalls(ctx, gameBall); err != nil {
+			return nil, err
 		}
-	}
-
-	// 獲取管理器內部的遊戲，並直接覆蓋 RegularBalls 陣列
-	if err := s.gameManager.UpdateRegularBalls(ctx, gameBalls); err != nil {
-		return nil, err
 	}
 
 	// 如果最後一顆球標記為最後一顆，同步執行階段推進
@@ -214,24 +208,41 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 
 // DrawExtraBall 實現 DealerService.DrawExtraBall RPC 方法
 func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBallRequest) (*pb.DrawExtraBallResponse, error) {
-	// 檢查是否有已存在的球
-	existingBalls := req.GetBalls()
+	// 獲取當前遊戲
+	game := s.gameManager.GetCurrentGame()
+	if game == nil {
+		return nil, gameflow.ErrGameNotFound
+	}
 
-	// 將 proto 球轉換為 gameflow 球
-	gameBalls := make([]gameflow.Ball, 0, len(existingBalls))
-	for _, pbBall := range existingBalls {
-		gameBalls = append(gameBalls, gameflow.Ball{
+	// 確認當前階段允許抽取額外球
+	if game.CurrentStage != gameflow.StageExtraBallDrawingStart {
+		return nil, gameflow.NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_EXTRA_BALL",
+			"當前階段 %s 不允許抽取額外球", game.CurrentStage)
+	}
+
+	// 檢查是否有請求中的球
+	reqBalls := req.GetBalls()
+	if len(reqBalls) == 0 {
+		return nil, gameflow.NewGameFlowErrorWithFormat("INVALID_REQUEST",
+			"請求必須包含至少一顆額外球")
+	}
+
+	// 從遊戲ID中提取房間ID
+	roomID := gameflow.GetRoomIDFromGameID(game.GameID)
+
+	// 處理所有球
+	for _, pbBall := range reqBalls {
+		gameBall := gameflow.Ball{
 			Number:    int(pbBall.Number),
 			Type:      gameflow.BallTypeExtra,
 			IsLast:    pbBall.IsLast,
 			Timestamp: pbBall.Timestamp.AsTime(),
-		})
-	}
+		}
 
-	// 處理額外球請求 - 使用新的 HandleDrawExtraBall 函數，接受整個球陣列
-	err := s.gameManager.HandleDrawExtraBall(ctx, gameBalls)
-	if err != nil {
-		return nil, err
+		// 使用單球 API 添加額外球
+		if err := s.gameManager.UpdateExtraBalls(ctx, roomID, gameBall); err != nil {
+			return nil, err
+		}
 	}
 
 	// 獲取當前遊戲狀態以獲取更新後的球陣列
@@ -240,68 +251,129 @@ func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBall
 		return nil, gameflow.ErrGameNotFound
 	}
 
-	// 將更新後的額外球轉換為 proto 球
-	updatedBalls := make([]*pb.Ball, len(gameData.ExtraBalls))
-	for i, ball := range gameData.ExtraBalls {
-		updatedBalls[i] = convertBallToPb(ball)
+	// 將遊戲數據中的額外球轉換為 proto 格式
+	extraBalls := make([]*pb.Ball, 0, len(gameData.ExtraBalls))
+	for _, ball := range gameData.ExtraBalls {
+		extraBalls = append(extraBalls, convertBallToPb(ball))
 	}
 
-	return &pb.DrawExtraBallResponse{
-		Balls: updatedBalls,
-	}, nil
+	// 創建響應
+	response := &pb.DrawExtraBallResponse{
+		Balls: extraBalls,
+	}
+
+	return response, nil
 }
 
 // DrawJackpotBall 實現 DealerService.DrawJackpotBall RPC 方法
 func (s *DealerService) DrawJackpotBall(ctx context.Context, req *pb.DrawJackpotBallRequest) (*pb.DrawJackpotBallResponse, error) {
-	// 檢查是否有已存在的球
-	existingBalls := req.GetBalls()
-
-	// 獲取最後一個球的數字（如果存在）
-	var lastBallNumber int
-	var isLast bool
-
-	if len(existingBalls) > 0 {
-		lastBall := existingBalls[len(existingBalls)-1]
-		lastBallNumber = int(lastBall.Number)
-		isLast = lastBall.IsLast
+	// 獲取當前遊戲
+	game := s.gameManager.GetCurrentGame()
+	if game == nil {
+		return nil, gameflow.ErrGameNotFound
 	}
 
-	// 抽取JP球
-	ball, err := s.gameManager.HandleDrawJackpotBall(ctx, lastBallNumber, isLast)
-	if err != nil {
-		return nil, err
+	// 確認當前階段允許抽取JP球
+	if game.CurrentStage != gameflow.StageJackpotDrawingStart {
+		return nil, gameflow.NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_JACKPOT_BALL",
+			"當前階段 %s 不允許抽取JP球", game.CurrentStage)
 	}
 
-	// 創建新的球對象
-	pbBall := &pb.Ball{
-		Number:    int32(ball.Number),
-		Type:      pb.BallType_BALL_TYPE_JACKPOT,
-		IsLast:    ball.IsLast,
-		Timestamp: timestamppb.New(ball.Timestamp),
+	// 檢查是否有請求中的球
+	reqBalls := req.GetBalls()
+	if len(reqBalls) == 0 {
+		return nil, gameflow.NewGameFlowErrorWithFormat("INVALID_REQUEST",
+			"請求必須包含至少一顆JP球")
 	}
 
-	// 將新球添加到現有球列表
-	updatedBalls := append(existingBalls, pbBall)
+	// 從遊戲ID中提取房間ID
+	roomID := gameflow.GetRoomIDFromGameID(game.GameID)
 
-	return &pb.DrawJackpotBallResponse{
-		Balls: updatedBalls,
-	}, nil
+	// 處理所有球
+	for _, pbBall := range reqBalls {
+		gameBall := gameflow.Ball{
+			Number:    int(pbBall.Number),
+			Type:      gameflow.BallTypeJackpot,
+			IsLast:    pbBall.IsLast,
+			Timestamp: pbBall.Timestamp.AsTime(),
+		}
+
+		// 直接使用 gameflow.AddBall 方法添加JP球
+		_, err := gameflow.AddBall(game, gameBall.Number, gameBall.Type, gameBall.IsLast)
+		if err != nil {
+			return nil, err
+		}
+
+		// 如果是最後一個球並且標記為最後一球，自動推進遊戲階段
+		if gameBall.IsLast {
+			// 通過回調方法觸發球被抽取事件
+			if s.gameManager.GetOnBallDrawnCallback() != nil {
+				s.gameManager.GetOnBallDrawnCallback()(game.GameID, gameBall)
+			}
+
+			go func() {
+				// 使用無超時的 context
+				ctx := context.Background()
+				// 嘗試推進階段
+				err := s.gameManager.AdvanceStageForRoom(ctx, roomID, true)
+				if err != nil {
+					s.logger.Error("自動推進階段失敗",
+						zap.String("roomID", roomID),
+						zap.Error(err))
+				}
+			}()
+		}
+	}
+
+	// 獲取當前遊戲狀態以獲取更新後的球陣列
+	gameData := s.gameManager.GetCurrentGame()
+	if gameData == nil || gameData.Jackpot == nil {
+		return nil, gameflow.ErrGameNotFound
+	}
+
+	// 從遊戲中提取 JP 球數據
+	var jackpotBalls []*pb.Ball
+	if gameData.Jackpot != nil {
+		// 如果有 Jackpot 數據，從 Jackpot 結構中獲取
+		jackpotBalls = make([]*pb.Ball, len(gameData.Jackpot.DrawnBalls))
+		for i, ball := range gameData.Jackpot.DrawnBalls {
+			jackpotBalls[i] = convertBallToPb(ball)
+		}
+	}
+
+	// 創建響應
+	response := &pb.DrawJackpotBallResponse{
+		Balls: jackpotBalls,
+	}
+
+	return response, nil
 }
 
 // DrawLuckyBall 實現 DealerService.DrawLuckyBall RPC 方法
 func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBallRequest) (*pb.DrawLuckyBallResponse, error) {
+	// 獲取當前遊戲
+	game := s.gameManager.GetCurrentGame()
+	if game == nil {
+		return nil, gameflow.ErrGameNotFound
+	}
+
+	// 確認當前階段允許抽取幸運球
+	if game.CurrentStage != gameflow.StageDrawingLuckyBallsStart {
+		return nil, gameflow.NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_LUCKY_BALL",
+			"當前階段 %s 不允許抽取幸運號碼球", game.CurrentStage)
+	}
+
 	// 檢查是否有已存在的球
 	existingBalls := req.GetBalls()
 
 	// 獲取當前遊戲狀態來檢查實際幸運球數量
-	gameData := s.gameManager.GetCurrentGame()
-	if gameData == nil || gameData.Jackpot == nil {
+	if game.Jackpot == nil {
 		s.logger.Error("獲取遊戲狀態失敗或Jackpot為空")
 		return nil, fmt.Errorf("獲取遊戲狀態失敗")
 	}
 
 	// 檢查實際LuckyBalls數量，如果是6個但用戶沒有提供新球，自動添加第7個
-	currentLuckyBallsCount := len(gameData.Jackpot.LuckyBalls)
+	currentLuckyBallsCount := len(game.Jackpot.LuckyBalls)
 	s.logger.Info("當前幸運號碼球數量",
 		zap.Int("luckyBalls數量", currentLuckyBallsCount),
 		zap.Int("請求中的球數量", len(existingBalls)))
@@ -338,39 +410,56 @@ func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBall
 			zap.Int("當前球數", len(existingBalls)))
 	}
 
-	// 將 protobuf 的球轉換為內部類型的球
-	luckyBalls := make([]gameflow.Ball, len(existingBalls))
+	// 從遊戲ID中提取房間ID
+	roomID := gameflow.GetRoomIDFromGameID(game.GameID)
+
+	// 確保最後一個球被標記為最後一個
+	modifiedBalls := make([]gameflow.Ball, len(existingBalls))
 	for i, pbBall := range existingBalls {
-		luckyBalls[i] = gameflow.Ball{
+		isLast := i == len(existingBalls)-1
+		modifiedBalls[i] = gameflow.Ball{
 			Number:    int(pbBall.Number),
 			Type:      gameflow.BallTypeLucky,
-			IsLast:    pbBall.IsLast,
+			IsLast:    isLast,
 			Timestamp: pbBall.Timestamp.AsTime(),
 		}
 	}
 
-	// 確保最後一個球被標記為最後一個
-	if len(luckyBalls) > 0 {
-		// 先將所有球設為非最後一球
-		for i := range luckyBalls {
-			luckyBalls[i].IsLast = false
+	s.logger.Info("處理幸運號碼球",
+		zap.Int("球數量", len(modifiedBalls)))
+
+	// 逐個添加球
+	for _, ball := range modifiedBalls {
+		// 直接使用 gameflow.AddBall 方法添加幸運球
+		_, err := gameflow.AddBall(game, ball.Number, ball.Type, ball.IsLast)
+		if err != nil {
+			s.logger.Error("添加幸運號碼球失敗", zap.Error(err))
+			return nil, err
 		}
-		// 設置最後一個球為最後一個
-		luckyBalls[len(luckyBalls)-1].IsLast = true
-	}
 
-	s.logger.Info("調用 HandleDrawLuckyBall",
-		zap.Int("球數量", len(luckyBalls)))
+		// 如果是最後一個球，自動推進遊戲階段
+		if ball.IsLast {
+			// 通過回調方法觸發球被抽取事件
+			if s.gameManager.GetOnBallDrawnCallback() != nil {
+				s.gameManager.GetOnBallDrawnCallback()(game.GameID, ball)
+			}
 
-	// 調用新的處理方法，直接使用整個球陣列
-	err := s.gameManager.HandleDrawLuckyBall(ctx, luckyBalls)
-	if err != nil {
-		s.logger.Error("處理幸運號碼球失敗", zap.Error(err))
-		return nil, err
+			go func() {
+				// 使用無超時的 context
+				ctx := context.Background()
+				// 嘗試推進階段
+				err := s.gameManager.AdvanceStageForRoom(ctx, roomID, true)
+				if err != nil {
+					s.logger.Error("自動推進階段失敗",
+						zap.String("roomID", roomID),
+						zap.Error(err))
+				}
+			}()
+		}
 	}
 
 	// 獲取更新後的遊戲狀態
-	gameData = s.gameManager.GetCurrentGame()
+	gameData := s.gameManager.GetCurrentGame()
 	if gameData == nil || gameData.Jackpot == nil {
 		s.logger.Error("獲取更新後的遊戲狀態失敗或Jackpot為空")
 		return nil, fmt.Errorf("獲取更新後的遊戲狀態失敗")
@@ -400,14 +489,23 @@ func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBall
 
 // CancelGame 實現 DealerService.CancelGame RPC 方法
 func (s *DealerService) CancelGame(ctx context.Context, req *pb.CancelGameRequest) (*pb.GameData, error) {
-	// 取消遊戲
-	err := s.gameManager.CancelGame(ctx, req.Reason)
-	if err != nil {
-		return nil, err
+	// 獲取當前遊戲
+	game := s.gameManager.GetCurrentGame()
+	if game == nil {
+		return nil, gameflow.ErrGameNotFound
 	}
 
+	// 標記遊戲為已取消
+	game.IsCancelled = true
+	game.CancelReason = req.Reason
+	game.CancelTime = time.Now()
+	game.LastUpdateTime = time.Now()
+
+	// 觸發遊戲取消事件
+	s.onGameCancelled(game.GameID, req.Reason)
+
 	// 返回更新後的遊戲數據
-	return convertGameDataToPb(s.gameManager.GetCurrentGame()), nil
+	return convertGameDataToPb(game), nil
 }
 
 // AdvanceStage 實現 DealerService.AdvanceStage RPC 方法
