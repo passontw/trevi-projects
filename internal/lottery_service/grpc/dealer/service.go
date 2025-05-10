@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,25 +18,27 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// DealerService 實現 gRPC 中定義的 DealerService 接口
+// DealerService 實現 Dealer gRPC 服務
 type DealerService struct {
 	pb.UnimplementedDealerServiceServer
-	logger         *zap.Logger
-	gameManager    *gameflow.GameManager
-	subscribers    map[string]chan *pb.GameEvent // 訂閱者映射表
-	subscribersMux sync.RWMutex                  // 訂閱者鎖
+	logger          *zap.Logger
+	gameManager     *gameflow.GameManager
+	subscribers     map[string]chan *pb.GameEvent // 訂閱者映射表
+	subscribersMux  sync.RWMutex                  // 訂閱者鎖
+	roomSubscribers map[string]map[string]bool    // 房間到訂閱者的映射表，存儲房間下有哪些訂閱者
+	roomSubMux      sync.RWMutex                  // 房間訂閱者鎖
 }
 
-// NewDealerService 創建新的 DealerService 實例
+// NewDealerService 創建一個新的 DealerService 實例
 func NewDealerService(
 	logger *zap.Logger,
 	gameManager *gameflow.GameManager,
 ) *DealerService {
-	// 創建服務實例
 	service := &DealerService{
-		logger:      logger.With(zap.String("component", "dealer_service")),
-		gameManager: gameManager,
-		subscribers: make(map[string]chan *pb.GameEvent),
+		logger:          logger.Named("dealer_service"),
+		gameManager:     gameManager,
+		subscribers:     make(map[string]chan *pb.GameEvent),
+		roomSubscribers: make(map[string]map[string]bool),
 	}
 
 	// 註冊事件處理函數
@@ -715,47 +718,122 @@ func (s *DealerService) GetGameStatus(ctx context.Context, req *pb.GetGameStatus
 	}, nil
 }
 
-// sendNotificationToSubscribers 發送通知給所有訂閱者
+// sendNotificationToSubscribers 發送通知給相應房間的訂閱者
+// 根據事件類型和遊戲ID智能篩選訂閱者：
+// 1. 心跳消息會發送給所有訂閱者
+// 2. 其他消息只發送給對應房間的訂閱者
 func (s *DealerService) sendNotificationToSubscribers(notification *pb.GameEvent) {
+	// 確定事件類型和目標房間
+	isHeartbeat := notification.EventType == pb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT
+	var targetRoomID string
+
+	// 提取目標房間ID
+	if !isHeartbeat && notification.GameId != "" && notification.GameId != "system" {
+		targetRoomID = s.parseRoomIDFromGameID(notification.GameId)
+	}
+
+	// 獲取目標訂閱者列表
+	var targetSubscribers []string
+
+	if isHeartbeat {
+		// 心跳消息發送給所有訂閱者
+		s.subscribersMux.RLock()
+		targetSubscribers = make([]string, 0, len(s.subscribers))
+		for subID := range s.subscribers {
+			targetSubscribers = append(targetSubscribers, subID)
+		}
+		s.subscribersMux.RUnlock()
+
+		s.logger.Debug("心跳消息將發送給所有訂閱者",
+			zap.Int("subscriberCount", len(targetSubscribers)))
+	} else if targetRoomID != "" {
+		// 非心跳消息且有房間ID，只發送給特定房間的訂閱者
+		targetSubscribers = s.getRoomSubscribers(targetRoomID)
+
+		s.logger.Debug("房間事件將發送給指定房間的訂閱者",
+			zap.String("roomID", targetRoomID),
+			zap.Int("subscriberCount", len(targetSubscribers)))
+	}
+
+	// 如果沒有目標訂閱者，記錄並返回
+	if len(targetSubscribers) == 0 {
+		s.logger.Debug("沒有找到目標訂閱者",
+			zap.String("eventType", notification.EventType.String()),
+			zap.String("gameID", notification.GameId),
+			zap.String("targetRoomID", targetRoomID))
+		return
+	}
+
+	// 發送消息給目標訂閱者
 	s.subscribersMux.RLock()
 	defer s.subscribersMux.RUnlock()
 
-	// 遍歷所有訂閱者並發送通知
-	for subID, subChan := range s.subscribers {
-		// 使用非阻塞方式發送，避免一個訂閱者阻塞其他訂閱者
-		select {
-		case subChan <- notification:
-			s.logger.Debug("已發送通知事件到訂閱者",
-				zap.String("subscriberID", subID),
-				zap.String("gameID", notification.GameId),
-				zap.String("eventType", notification.EventType.String()))
-		default:
-			s.logger.Warn("訂閱者通道已滿，無法發送通知",
-				zap.String("subscriberID", subID),
-				zap.String("gameID", notification.GameId))
+	for _, subID := range targetSubscribers {
+		if subChan, exists := s.subscribers[subID]; exists {
+			// 非阻塞發送
+			select {
+			case subChan <- notification:
+				s.logger.Debug("已發送事件到訂閱者",
+					zap.String("subscriberID", subID),
+					zap.String("gameID", notification.GameId),
+					zap.String("eventType", notification.EventType.String()))
+			default:
+				s.logger.Warn("訂閱者通道已滿，無法發送通知",
+					zap.String("subscriberID", subID),
+					zap.String("gameID", notification.GameId))
+			}
 		}
 	}
 }
 
 // 添加和移除訂閱者
-func (s *DealerService) addSubscriber(subscriberID string, channel chan *pb.GameEvent) {
+func (s *DealerService) addSubscriber(subscriberID string, roomID string, channel chan *pb.GameEvent) {
+	// 添加到訂閱者通道映射
 	s.subscribersMux.Lock()
-	defer s.subscribersMux.Unlock()
 	s.subscribers[subscriberID] = channel
-	s.logger.Info("添加新訂閱者", zap.String("subscriberID", subscriberID))
+	s.subscribersMux.Unlock()
+
+	// 添加到房間訂閱者映射
+	s.roomSubMux.Lock()
+	if _, exists := s.roomSubscribers[roomID]; !exists {
+		s.roomSubscribers[roomID] = make(map[string]bool)
+	}
+	s.roomSubscribers[roomID][subscriberID] = true
+	s.roomSubMux.Unlock()
+
+	s.logger.Info("添加新訂閱者",
+		zap.String("subscriberID", subscriberID),
+		zap.String("roomID", roomID))
 }
 
-func (s *DealerService) removeSubscriber(subscriberID string) {
+func (s *DealerService) removeSubscriber(subscriberID string, roomID string) {
+	// 從訂閱者通道映射中移除
 	s.subscribersMux.Lock()
-	defer s.subscribersMux.Unlock()
 	if _, exists := s.subscribers[subscriberID]; exists {
 		delete(s.subscribers, subscriberID)
-		s.logger.Info("移除訂閱者", zap.String("subscriberID", subscriberID))
 	}
+	s.subscribersMux.Unlock()
+
+	// 從房間訂閱者映射中移除
+	s.roomSubMux.Lock()
+	if roomSubs, exists := s.roomSubscribers[roomID]; exists {
+		delete(roomSubs, subscriberID)
+		// 如果房間沒有訂閱者了，也清理房間映射
+		if len(roomSubs) == 0 {
+			delete(s.roomSubscribers, roomID)
+		}
+	}
+	s.roomSubMux.Unlock()
+
+	s.logger.Info("移除訂閱者",
+		zap.String("subscriberID", subscriberID),
+		zap.String("roomID", roomID))
 }
 
 // SubscribeGameEvents 實現 DealerService.SubscribeGameEvents RPC 方法 (流式 RPC)
+// 讓客戶端訂閱特定房間的遊戲事件
 func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, stream pb.DealerService_SubscribeGameEventsServer) error {
+	// 1. 參數驗證
 	// 檢查房間ID是否為空
 	if req.RoomId == "" {
 		return status.Errorf(codes.InvalidArgument, "房間ID為必須參數")
@@ -779,8 +857,9 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 		return status.Errorf(codes.NotFound, "房間ID '%s' 不存在", roomID)
 	}
 
-	// 創建一個唯一的訂閱 ID
-	subscriptionID := uuid.New().String()
+	// 2. 創建訂閱
+	// 創建一個唯一的訂閱 ID，包含房間信息
+	subscriptionID := s.generateSubscriberID(roomID)
 
 	s.logger.Info("收到新的事件訂閱請求",
 		zap.String("subscriptionID", subscriptionID),
@@ -793,97 +872,86 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
-	// 預設訂閱 UNSPECIFIED, HEARTBEAT 和 NOTIFICATION 事件
-	hasHeartbeatSubscription := true
-	hasNotificationSubscription := true
+	// 3. 註冊訂閱者
+	s.addSubscriber(subscriptionID, roomID, eventChan)
+	defer s.removeSubscriber(subscriptionID, roomID)
 
-	// 注意：由於我們不再使用 req.EventTypes，所以不需要檢查它
+	// 4. 發送初始狀態
+	// 立即發送當前遊戲狀態作為通知
+	s.logger.Info("發送房間當前遊戲狀態",
+		zap.String("subscriptionID", subscriptionID),
+		zap.String("roomID", roomID))
 
-	// 如果訂閱了通知事件，註冊為訂閱者
-	if hasNotificationSubscription {
-		s.addSubscriber(subscriptionID, eventChan)
-		// 確保在函數結束時移除訂閱者
-		defer s.removeSubscriber(subscriptionID)
-
-		// 立即發送當前遊戲狀態作為通知
-		s.logger.Info("客戶端訂閱了通知事件，立即發送當前遊戲狀態",
-			zap.String("subscriptionID", subscriptionID),
-			zap.String("roomID", roomID))
-
-		// 獲取當前遊戲狀態
-		currentGame := s.gameManager.GetCurrentGameByRoom(roomID)
-		if currentGame != nil {
-			// 建立通知事件
-			notificationEvent := &pb.GameEvent{
-				EventType: pb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
-				GameId:    currentGame.GameID,
-				Timestamp: timestamppb.Now(),
-				EventData: &pb.GameEvent_Notification{
-					Notification: &pb.NotificationEvent{
-						GameData: convertGameDataToPb(currentGame),
-						Message:  "訂閱時的遊戲狀態",
-					},
+	// 獲取當前遊戲狀態
+	currentGame := s.gameManager.GetCurrentGameByRoom(roomID)
+	if currentGame != nil {
+		// 建立通知事件
+		notificationEvent := &pb.GameEvent{
+			EventType: pb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
+			GameId:    currentGame.GameID,
+			Timestamp: timestamppb.Now(),
+			EventData: &pb.GameEvent_Notification{
+				Notification: &pb.NotificationEvent{
+					GameData: convertGameDataToPb(currentGame),
+					Message:  "訂閱時的遊戲狀態",
 				},
-			}
+			},
+		}
 
-			// 直接發送到事件通道
-			select {
-			case eventChan <- notificationEvent:
-				s.logger.Debug("已發送初始通知事件到通道",
-					zap.String("subscriptionID", subscriptionID),
-					zap.String("roomID", roomID))
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				s.logger.Warn("事件通道已滿，無法發送初始通知事件",
-					zap.String("subscriptionID", subscriptionID),
-					zap.String("roomID", roomID))
-			}
+		// 直接發送到事件通道
+		select {
+		case eventChan <- notificationEvent:
+			s.logger.Debug("已發送初始通知事件到通道",
+				zap.String("subscriptionID", subscriptionID),
+				zap.String("roomID", roomID))
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			s.logger.Warn("事件通道已滿，無法發送初始通知事件",
+				zap.String("subscriptionID", subscriptionID),
+				zap.String("roomID", roomID))
 		}
 	}
 
-	// 如果訂閱了心跳事件，啟動定時器每 10 秒發送一次心跳訊息
-	if hasHeartbeatSubscription {
-		s.logger.Info("客戶端訂閱了心跳事件，將每 10 秒發送一次心跳訊息",
-			zap.String("subscriptionID", subscriptionID))
+	// 5. 啟動心跳發送
+	// 啟動心跳發送器
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// 建立心跳事件
+				heartbeatEvent := &pb.GameEvent{
+					EventType: pb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT,
+					GameId:    "system",
+					Timestamp: timestamppb.Now(),
+					EventData: &pb.GameEvent_Heartbeat{
+						Heartbeat: &pb.HeartbeatEvent{
+							Message: "hello",
+						},
+					},
+				}
 
-		go func() {
-			for {
+				// 發送到事件通道
 				select {
+				case eventChan <- heartbeatEvent:
+					s.logger.Debug("已發送心跳事件到通道",
+						zap.String("subscriptionID", subscriptionID))
 				case <-ctx.Done():
 					return
-				case <-ticker.C:
-					// 建立心跳事件
-					heartbeatEvent := &pb.GameEvent{
-						EventType: pb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT,
-						GameId:    "system",
-						Timestamp: timestamppb.Now(),
-						EventData: &pb.GameEvent_Heartbeat{
-							Heartbeat: &pb.HeartbeatEvent{
-								Message: "hello",
-							},
-						},
-					}
-
-					// 發送到事件通道
-					select {
-					case eventChan <- heartbeatEvent:
-						s.logger.Debug("已發送心跳事件到通道",
-							zap.String("subscriptionID", subscriptionID))
-					case <-ctx.Done():
-						return
-					default:
-						s.logger.Warn("事件通道已滿，無法發送心跳事件",
-							zap.String("subscriptionID", subscriptionID))
-					}
+				default:
+					s.logger.Warn("事件通道已滿，無法發送心跳事件",
+						zap.String("subscriptionID", subscriptionID))
 				}
 			}
-		}()
-	}
+		}
+	}()
 
+	// 6. 處理事件
 	// 在 goroutine 中處理收到的事件
 	go func() {
 		defer close(eventChan)
@@ -898,17 +966,6 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 			case event := <-eventChan:
 				if event == nil {
 					s.logger.Warn("收到空事件")
-					continue
-				}
-
-				// 檢查事件類型，允許處理 UNSPECIFIED、HEARTBEAT 和 NOTIFICATION 事件
-				if event.EventType != pb.GameEventType_GAME_EVENT_TYPE_UNSPECIFIED &&
-					event.EventType != pb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT &&
-					event.EventType != pb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION {
-					// 跳過不需要的事件類型
-					s.logger.Debug("跳過不支持的事件類型",
-						zap.String("subscriptionID", subscriptionID),
-						zap.String("eventType", event.EventType.String()))
 					continue
 				}
 
@@ -929,6 +986,7 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 		}
 	}()
 
+	// 7. 等待結束
 	// 等待流關閉
 	<-ctx.Done()
 	s.logger.Info("事件訂閱結束", zap.String("subscriptionID", subscriptionID))
@@ -939,8 +997,12 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 
 // onStageChanged 處理階段變更事件
 func (s *DealerService) onStageChanged(gameID string, oldStage, newStage gameflow.GameStage) {
+	// 從遊戲ID提取房間ID
+	roomID := s.parseRoomIDFromGameID(gameID)
+
 	s.logger.Info("遊戲階段變更",
 		zap.String("gameID", gameID),
+		zap.String("roomID", roomID),
 		zap.String("oldStage", string(oldStage)),
 		zap.String("newStage", string(newStage)))
 
@@ -951,6 +1013,7 @@ func (s *DealerService) onStageChanged(gameID string, oldStage, newStage gameflo
 			"type": "stage_changed",
 			"data": map[string]interface{}{
 				"game_id":   gameID,
+				"room_id":   roomID,
 				"old_stage": string(oldStage),
 				"new_stage": string(newStage),
 				"timestamp": time.Now().Format(time.RFC3339),
@@ -961,6 +1024,7 @@ func (s *DealerService) onStageChanged(gameID string, oldStage, newStage gameflo
 		if err := s.broadcastEvent(event); err != nil {
 			s.logger.Error("廣播階段變更事件失敗",
 				zap.String("gameID", gameID),
+				zap.String("roomID", roomID),
 				zap.String("oldStage", string(oldStage)),
 				zap.String("newStage", string(newStage)),
 				zap.Error(err))
@@ -968,7 +1032,13 @@ func (s *DealerService) onStageChanged(gameID string, oldStage, newStage gameflo
 
 		// 發送通知事件給訂閱 NOTIFICATION 的客戶端
 		// 獲取當前遊戲狀態
-		currentGame := s.gameManager.GetCurrentGame()
+		var currentGame *gameflow.GameData
+		if roomID != "" {
+			currentGame = s.gameManager.GetCurrentGameByRoom(roomID)
+		} else {
+			currentGame = s.gameManager.GetCurrentGame()
+		}
+
 		if currentGame != nil {
 			notificationEvent := &pb.GameEvent{
 				EventType: pb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
@@ -982,8 +1052,7 @@ func (s *DealerService) onStageChanged(gameID string, oldStage, newStage gameflo
 				},
 			}
 
-			// 這裡應該將通知事件發送到通知發送系統
-			// 實際實現中，您可能需要添加一個通知管理器來處理訂閱和發布
+			// 發送通知事件
 			s.sendNotificationToSubscribers(notificationEvent)
 		}
 	}()
@@ -991,7 +1060,12 @@ func (s *DealerService) onStageChanged(gameID string, oldStage, newStage gameflo
 
 // onGameCreated 處理遊戲創建事件
 func (s *DealerService) onGameCreated(gameID string) {
-	s.logger.Info("遊戲創建", zap.String("gameID", gameID))
+	// 從遊戲ID提取房間ID
+	roomID := s.parseRoomIDFromGameID(gameID)
+
+	s.logger.Info("遊戲創建",
+		zap.String("gameID", gameID),
+		zap.String("roomID", roomID))
 
 	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
 	go func() {
@@ -1000,21 +1074,29 @@ func (s *DealerService) onGameCreated(gameID string) {
 			"type": "game_created",
 			"data": map[string]interface{}{
 				"game_id":   gameID,
+				"room_id":   roomID,
 				"timestamp": time.Now().Format(time.RFC3339),
 			},
 		}
 
 		// 使用 WebSocket 廣播事件
 		if err := s.broadcastEvent(event); err != nil {
-			s.logger.Error("廣播遊戲創建事件失敗", zap.String("gameID", gameID), zap.Error(err))
+			s.logger.Error("廣播遊戲創建事件失敗",
+				zap.String("gameID", gameID),
+				zap.String("roomID", roomID),
+				zap.Error(err))
 		}
 	}()
 }
 
 // onGameCancelled 處理遊戲取消事件
 func (s *DealerService) onGameCancelled(gameID string, reason string) {
+	// 從遊戲ID提取房間ID
+	roomID := s.parseRoomIDFromGameID(gameID)
+
 	s.logger.Info("遊戲取消",
 		zap.String("gameID", gameID),
+		zap.String("roomID", roomID),
 		zap.String("reason", reason))
 
 	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
@@ -1024,6 +1106,7 @@ func (s *DealerService) onGameCancelled(gameID string, reason string) {
 			"type": "game_cancelled",
 			"data": map[string]interface{}{
 				"game_id":   gameID,
+				"room_id":   roomID,
 				"reason":    reason,
 				"timestamp": time.Now().Format(time.RFC3339),
 			},
@@ -1031,14 +1114,23 @@ func (s *DealerService) onGameCancelled(gameID string, reason string) {
 
 		// 使用 WebSocket 廣播事件
 		if err := s.broadcastEvent(event); err != nil {
-			s.logger.Error("廣播遊戲取消事件失敗", zap.String("gameID", gameID), zap.String("reason", reason), zap.Error(err))
+			s.logger.Error("廣播遊戲取消事件失敗",
+				zap.String("gameID", gameID),
+				zap.String("roomID", roomID),
+				zap.String("reason", reason),
+				zap.Error(err))
 		}
 	}()
 }
 
 // onGameCompleted 處理遊戲完成事件
 func (s *DealerService) onGameCompleted(gameID string) {
-	s.logger.Info("遊戲完成", zap.String("gameID", gameID))
+	// 從遊戲ID提取房間ID
+	roomID := s.parseRoomIDFromGameID(gameID)
+
+	s.logger.Info("遊戲完成",
+		zap.String("gameID", gameID),
+		zap.String("roomID", roomID))
 
 	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
 	go func() {
@@ -1047,24 +1139,31 @@ func (s *DealerService) onGameCompleted(gameID string) {
 			"type": "game_completed",
 			"data": map[string]interface{}{
 				"game_id":   gameID,
+				"room_id":   roomID,
 				"timestamp": time.Now().Format(time.RFC3339),
 			},
 		}
 
 		// 使用 WebSocket 廣播事件
 		if err := s.broadcastEvent(event); err != nil {
-			s.logger.Error("廣播遊戲完成事件失敗", zap.String("gameID", gameID), zap.Error(err))
+			s.logger.Error("廣播遊戲完成事件失敗",
+				zap.String("gameID", gameID),
+				zap.String("roomID", roomID),
+				zap.Error(err))
 		}
 	}()
 }
 
 // onBallDrawn 處理球抽取事件
 func (s *DealerService) onBallDrawn(gameID string, ball gameflow.Ball) {
-	s.logger.Info("球抽取",
+	// 從遊戲ID提取房間ID
+	roomID := s.parseRoomIDFromGameID(gameID)
+
+	s.logger.Info("球被抽取",
 		zap.String("gameID", gameID),
+		zap.String("roomID", roomID),
 		zap.Int("number", ball.Number),
-		zap.String("type", string(ball.Type)),
-		zap.Bool("isLast", ball.IsLast))
+		zap.String("type", string(ball.Type)))
 
 	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
 	go func() {
@@ -1073,9 +1172,9 @@ func (s *DealerService) onBallDrawn(gameID string, ball gameflow.Ball) {
 			"type": "ball_drawn",
 			"data": map[string]interface{}{
 				"game_id":   gameID,
+				"room_id":   roomID,
 				"number":    ball.Number,
 				"ball_type": string(ball.Type),
-				"is_last":   ball.IsLast,
 				"timestamp": ball.Timestamp.Format(time.RFC3339),
 			},
 		}
@@ -1084,6 +1183,7 @@ func (s *DealerService) onBallDrawn(gameID string, ball gameflow.Ball) {
 		if err := s.broadcastEvent(event); err != nil {
 			s.logger.Error("廣播球抽取事件失敗",
 				zap.String("gameID", gameID),
+				zap.String("roomID", roomID),
 				zap.Int("number", ball.Number),
 				zap.String("type", string(ball.Type)),
 				zap.Error(err))
@@ -1093,8 +1193,12 @@ func (s *DealerService) onBallDrawn(gameID string, ball gameflow.Ball) {
 
 // onExtraBallSideSelected 處理額外球選邊事件
 func (s *DealerService) onExtraBallSideSelected(gameID string, side gameflow.ExtraBallSide) {
+	// 從遊戲ID提取房間ID
+	roomID := s.parseRoomIDFromGameID(gameID)
+
 	s.logger.Info("額外球選邊",
 		zap.String("gameID", gameID),
+		zap.String("roomID", roomID),
 		zap.String("side", string(side)))
 
 	// 將廣播事件放入 goroutine 中執行，避免阻塞回調函數
@@ -1104,6 +1208,7 @@ func (s *DealerService) onExtraBallSideSelected(gameID string, side gameflow.Ext
 			"type": "extra_ball_side_selected",
 			"data": map[string]interface{}{
 				"game_id":   gameID,
+				"room_id":   roomID,
 				"side":      string(side),
 				"timestamp": time.Now().Format(time.RFC3339),
 			},
@@ -1111,29 +1216,44 @@ func (s *DealerService) onExtraBallSideSelected(gameID string, side gameflow.Ext
 
 		// 使用 WebSocket 廣播事件
 		if err := s.broadcastEvent(event); err != nil {
-			s.logger.Error("廣播額外球選邊事件失敗", zap.String("gameID", gameID), zap.String("side", string(side)), zap.Error(err))
+			s.logger.Error("廣播額外球選邊事件失敗",
+				zap.String("gameID", gameID),
+				zap.String("roomID", roomID),
+				zap.String("side", string(side)),
+				zap.Error(err))
 		}
 	}()
 }
 
-// broadcastEvent 利用訂閱者通道廣播事件
+// broadcastEvent 將事件通過訂閱者通道廣播
 func (s *DealerService) broadcastEvent(event map[string]interface{}) error {
-	// 創建游戲事件
+	// 獲取事件類型
 	eventType, ok := event["type"].(string)
 	if !ok {
 		return fmt.Errorf("invalid event type")
 	}
 
-	// 默認使用通知事件類型
+	// 初始化遊戲事件
 	gameEvent := &pb.GameEvent{
 		EventType: pb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
 		Timestamp: timestamppb.New(time.Now()),
+		GameId:    "system", // 默認為系統消息
 	}
 
-	// 檢查是否提供了遊戲ID
+	// 從事件數據中提取房間和遊戲ID信息
+	var roomID string
 	if data, ok := event["data"].(map[string]interface{}); ok {
-		if gameID, ok := data["game_id"].(string); ok {
+		// 檢查是否提供了遊戲ID
+		if gameID, ok := data["game_id"].(string); ok && gameID != "" {
 			gameEvent.GameId = gameID
+
+			// 嘗試從遊戲ID解析房間ID
+			roomID = s.parseRoomIDFromGameID(gameID)
+		}
+
+		// 直接使用提供的房間ID（如果有）
+		if room, ok := data["room_id"].(string); ok && room != "" {
+			roomID = room
 		}
 	}
 
@@ -1144,14 +1264,26 @@ func (s *DealerService) broadcastEvent(event map[string]interface{}) error {
 			// 創建通知事件，包含更多事件數據
 			message := fmt.Sprintf("新局開始 (GameID: %s)", gameEvent.GameId)
 
-			// 添加階段信息
+			// 添加階段和房間信息
 			if stage, ok := data["stage"].(string); ok {
 				message += fmt.Sprintf(", 階段: %s", stage)
+			}
+
+			if roomID != "" {
+				message += fmt.Sprintf(", 房間: %s", roomID)
 			}
 
 			notification := &pb.NotificationEvent{
 				Message: message,
 			}
+
+			// 如果可能，獲取完整遊戲數據
+			if roomID != "" {
+				if gameData := s.gameManager.GetCurrentGameByRoom(roomID); gameData != nil {
+					notification.GameData = convertGameDataToPb(gameData)
+				}
+			}
+
 			gameEvent.EventData = &pb.GameEvent_Notification{
 				Notification: notification,
 			}
@@ -1165,6 +1297,12 @@ func (s *DealerService) broadcastEvent(event map[string]interface{}) error {
 			Notification: notification,
 		}
 	}
+
+	// 記錄廣播事件
+	s.logger.Debug("廣播事件",
+		zap.String("eventType", eventType),
+		zap.String("gameID", gameEvent.GameId),
+		zap.String("roomID", roomID))
 
 	// 發送通知給訂閱者
 	s.sendNotificationToSubscribers(gameEvent)
@@ -1379,4 +1517,45 @@ func (s *DealerService) StartJackpotRound(ctx context.Context, req *pb.StartJack
 		OldStage: convertGameStageToPb(oldStage),
 		NewStage: convertGameStageToPb(game.CurrentStage),
 	}, nil
+}
+
+// parseRoomIDFromGameID 從遊戲ID提取房間ID
+// 假設格式為 "房間ID_遊戲編號"，例如 "SG01_12345"
+func (s *DealerService) parseRoomIDFromGameID(gameID string) string {
+	if gameID == "" || gameID == "system" {
+		return ""
+	}
+
+	parts := strings.Split(gameID, "_")
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
+}
+
+// generateSubscriberID 根據房間ID生成唯一的訂閱者ID
+func (s *DealerService) generateSubscriberID(roomID string) string {
+	if roomID == "" {
+		roomID = "system"
+	}
+	return fmt.Sprintf("%s_%s", roomID, uuid.New().String())
+}
+
+// getRoomSubscribers 獲取指定房間的所有訂閱者ID
+func (s *DealerService) getRoomSubscribers(roomID string) []string {
+	if roomID == "" {
+		return []string{}
+	}
+
+	s.roomSubMux.RLock()
+	defer s.roomSubMux.RUnlock()
+
+	if subs, exists := s.roomSubscribers[roomID]; exists {
+		subscribers := make([]string, 0, len(subs))
+		for subID := range subs {
+			subscribers = append(subscribers, subID)
+		}
+		return subscribers
+	}
+	return []string{}
 }

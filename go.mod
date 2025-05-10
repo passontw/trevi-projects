@@ -6,7 +6,6 @@ require (
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
 	github.com/envoyproxy/protoc-gen-validate v1.2.1
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/nacos-group/nacos-sdk-go v1.1.5
 	github.com/redis/go-redis/v9 v9.7.3
