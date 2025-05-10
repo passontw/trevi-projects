@@ -266,11 +266,6 @@ func (m *GameManager) GetCurrentGameByRoom(roomID string) *GameData {
 	return nil
 }
 
-// AdvanceStage 將遊戲推進到下一階段（使用默認房間）
-func (m *GameManager) AdvanceStage(ctx context.Context, autoAdvance bool) error {
-	return m.AdvanceStageForRoom(ctx, m.defaultRoom, autoAdvance)
-}
-
 // AdvanceStageForRoom 將特定房間的遊戲推進到下一階段
 func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, autoAdvance bool) error {
 	m.stageMutex.Lock()
@@ -471,11 +466,6 @@ func (m *GameManager) setupTimerForGame(ctx context.Context, game *GameData, roo
 	m.gameTimers[timerID] = timer
 }
 
-// prepareForNextGame 準備下一局遊戲（使用默認房間）
-func (m *GameManager) prepareForNextGame(ctx context.Context, autoStart bool) error {
-	return m.prepareForNextGameInRoom(ctx, m.defaultRoom, autoStart)
-}
-
 // prepareForNextGameInRoom 為特定房間準備下一局遊戲
 func (m *GameManager) prepareForNextGameInRoom(ctx context.Context, roomID string, autoStart bool) error {
 	// 刪除當前遊戲
@@ -628,19 +618,21 @@ func (m *GameManager) SetOnBallDrawnCallback(callback func(string, Ball)) {
 	m.onBallDrawn = callback
 }
 
-// UpdateRegularBalls 直接更新遊戲的常規球陣列
-func (m *GameManager) UpdateRegularBalls(ctx context.Context, ball Ball) error {
+// UpdateRegularBalls 直接更新指定房間遊戲的常規球陣列
+func (m *GameManager) UpdateRegularBalls(ctx context.Context, roomID string, ball Ball) error {
 	m.stageMutex.Lock()
 	defer m.stageMutex.Unlock()
 
-	if m.currentGame == nil {
+	// 獲取指定房間的遊戲
+	game, exists := m.currentGames[roomID]
+	if !exists || game == nil {
 		return ErrGameNotFound
 	}
 
 	// 確認當前階段允許抽取常規球
-	if m.currentGame.CurrentStage != StageDrawingStart {
+	if game.CurrentStage != StageDrawingStart {
 		return NewGameFlowErrorWithFormat("INVALID_STAGE_FOR_REGULAR_BALL",
-			"當前階段 %s 不允許更新常規球", m.currentGame.CurrentStage)
+			"當前階段 %s 不允許更新常規球", game.CurrentStage)
 	}
 
 	// 驗證球號
@@ -649,7 +641,7 @@ func (m *GameManager) UpdateRegularBalls(ctx context.Context, ball Ball) error {
 	}
 
 	// 檢查是否重複
-	if IsBallDuplicate(ball.Number, m.currentGame.RegularBalls) {
+	if IsBallDuplicate(ball.Number, game.RegularBalls) {
 		return fmt.Errorf("重複的球號: %d", ball.Number)
 	}
 
@@ -657,20 +649,21 @@ func (m *GameManager) UpdateRegularBalls(ctx context.Context, ball Ball) error {
 	ball.Type = BallTypeRegular
 
 	// 添加球到遊戲數據
-	m.currentGame.RegularBalls = append(m.currentGame.RegularBalls, ball)
-	m.currentGame.LastUpdateTime = time.Now()
+	game.RegularBalls = append(game.RegularBalls, ball)
+	game.LastUpdateTime = time.Now()
 
 	// 保存遊戲狀態
-	if err := m.repo.SaveGame(ctx, m.currentGame); err != nil {
+	if err := m.repo.SaveGame(ctx, game); err != nil {
 		return fmt.Errorf("保存遊戲狀態失敗: %w", err)
 	}
 
 	m.logger.Info("已添加常規球",
-		zap.String("gameID", m.currentGame.GameID),
+		zap.String("roomID", roomID),
+		zap.String("gameID", game.GameID),
 		zap.Int("ballNumber", ball.Number))
 
 	// 調用 onBallDrawn 回調（如果有的話）
-	gameID := m.currentGame.GameID
+	gameID := game.GameID
 	if m.onBallDrawn != nil {
 		go m.onBallDrawn(gameID, ball)
 	}
@@ -792,4 +785,64 @@ func (m *GameManager) GetAllOpenRooms(ctx context.Context) []string {
 
 	// 返回所有支持的房間
 	return m.supportedRooms
+}
+
+// ResetGameForRoom 將特定房間的遊戲重置到初始狀態
+// 這會保存當前遊戲到 TiDB，刪除舊遊戲並創建一個新的遊戲在 StagePreparation 階段
+func (m *GameManager) ResetGameForRoom(ctx context.Context, roomID string) (*GameData, error) {
+	m.stageMutex.Lock()
+
+	// 獲取指定房間的當前遊戲
+	game, exists := m.currentGames[roomID]
+	if !exists || game == nil {
+		m.stageMutex.Unlock()
+		return nil, ErrGameNotFound
+	}
+
+	// 儲存當前遊戲到歷史記錄
+	if err := m.repo.SaveGameHistory(ctx, game); err != nil {
+		m.logger.Error("保存遊戲歷史記錄失敗",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.Error(err))
+		// 繼續執行，不要因為歷史記錄保存失敗而中斷操作
+	}
+
+	// 刪除當前遊戲
+	if err := m.repo.DeleteCurrentGameByRoom(ctx, roomID); err != nil {
+		m.logger.Error("刪除當前遊戲失敗",
+			zap.String("roomID", roomID),
+			zap.Error(err))
+		// 繼續執行，不要因為刪除失敗而中斷操作
+	}
+
+	// 清除當前遊戲記錄
+	delete(m.currentGames, roomID)
+
+	// 如果是默認房間，同時更新 currentGame 以保持向後兼容
+	if roomID == m.defaultRoom {
+		m.currentGame = nil
+	}
+
+	// 釋放锁，以便創建新遊戲
+	m.stageMutex.Unlock()
+
+	// 創建新遊戲
+	gameID, err := m.CreateNewGameForRoom(ctx, roomID)
+	if err != nil {
+		return nil, fmt.Errorf("重置遊戲時創建新遊戲失敗: %w", err)
+	}
+
+	// 再次獲取锁，以便讀取新創建的遊戲
+	m.stageMutex.Lock()
+	newGame := m.currentGames[roomID]
+	m.stageMutex.Unlock()
+
+	// 記錄重置操作
+	m.logger.Info("已重置房間遊戲狀態",
+		zap.String("roomID", roomID),
+		zap.String("oldGameID", game.GameID),
+		zap.String("newGameID", gameID))
+
+	return newGame, nil
 }

@@ -192,16 +192,16 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 	}
 
 	// 處理所有球
-	for _, ball := range reqBalls {
+	for _, pbBall := range reqBalls {
 		gameBall := gameflow.Ball{
-			Number:    int(ball.Number),
+			Number:    int(pbBall.Number),
 			Type:      gameflow.BallTypeRegular,
-			IsLast:    ball.IsLast,
-			Timestamp: ball.Timestamp.AsTime(),
+			IsLast:    pbBall.IsLast,
+			Timestamp: pbBall.Timestamp.AsTime(),
 		}
 
 		// 使用單球 API 添加球
-		if err := s.gameManager.UpdateRegularBalls(ctx, gameBall); err != nil {
+		if err := s.gameManager.UpdateRegularBalls(ctx, roomID, gameBall); err != nil {
 			return nil, err
 		}
 	}
@@ -616,6 +616,16 @@ func (s *DealerService) CancelGame(ctx context.Context, req *pb.CancelGameReques
 		return nil, gameflow.ErrGameNotFound
 	}
 
+	// 檢查當前階段是否允許取消遊戲
+	stageConfig := gameflow.GetStageConfig(game.CurrentStage)
+	if !stageConfig.AllowCanceling {
+		s.logger.Warn("當前階段不允許取消遊戲",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.String("stage", string(game.CurrentStage)))
+		return nil, gameflow.ErrCannotCancelGame
+	}
+
 	// 標記遊戲為已取消
 	game.IsCancelled = true
 	game.CancelReason = req.Reason
@@ -625,8 +635,19 @@ func (s *DealerService) CancelGame(ctx context.Context, req *pb.CancelGameReques
 	// 觸發遊戲取消事件
 	s.onGameCancelled(game.GameID, req.Reason)
 
-	// 返回更新後的遊戲數據
-	return convertGameDataToPb(game), nil
+	// 重置遊戲到 StagePreparation（這將保存當前遊戲到 TiDB，並創建一個新的遊戲）
+	newGame, err := s.gameManager.ResetGameForRoom(ctx, roomID)
+	if err != nil {
+		s.logger.Error("重置遊戲失敗",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.Error(err))
+		// 返回原始遊戲資料，因為取消操作已經完成
+		return convertGameDataToPb(game), nil
+	}
+
+	// 返回新遊戲的數據
+	return convertGameDataToPb(newGame), nil
 }
 
 // AdvanceStage 實現 DealerService.AdvanceStage RPC 方法
@@ -1339,14 +1360,14 @@ func (s *DealerService) StartJackpotRound(ctx context.Context, req *pb.StartJack
 	oldStage := game.CurrentStage
 
 	// 手動推進遊戲階段
-	err := s.gameManager.AdvanceStage(ctx, false)
+	err := s.gameManager.AdvanceStageForRoom(ctx, "SG01", false)
 	if err != nil {
 		s.logger.Error("推進遊戲階段失敗", zap.Error(err))
 		return nil, status.Errorf(codes.Internal, "推進遊戲階段失敗: %v", err)
 	}
 
 	// 重新獲取最新的遊戲狀態
-	game = s.gameManager.GetCurrentGame()
+	game = s.gameManager.GetCurrentGameByRoom("SG01")
 
 	// 傳送通知
 	s.broadcastNewGameEvent(game.GameID, game)
