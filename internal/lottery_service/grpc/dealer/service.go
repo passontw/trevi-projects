@@ -142,8 +142,28 @@ func (s *DealerService) StartNewRound(ctx context.Context, req *pb.StartNewRound
 
 // DrawBall 實現 DealerService.DrawBall RPC 方法
 func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (*pb.DrawBallResponse, error) {
-	// 獲取房間ID (默認使用 SG01)
-	roomID := "SG01"
+	// 檢查房間ID是否為空
+	if req.RoomId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "房間ID為必須參數")
+	}
+
+	// 獲取房間ID
+	roomID := req.RoomId
+
+	// 檢查房間ID是否有效
+	supportedRooms := s.gameManager.GetSupportedRooms()
+	isValidRoom := false
+	for _, supported := range supportedRooms {
+		if supported == roomID {
+			isValidRoom = true
+			break
+		}
+	}
+
+	if !isValidRoom {
+		s.logger.Warn("抽球操作失敗，無效的房間ID", zap.String("roomID", roomID))
+		return nil, status.Errorf(codes.NotFound, "房間ID '%s' 不存在", roomID)
+	}
 
 	// 獲取指定房間的當前遊戲
 	game := s.gameManager.GetCurrentGameByRoom(roomID)
@@ -226,8 +246,28 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 
 // DrawExtraBall 實現 DealerService.DrawExtraBall RPC 方法
 func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBallRequest) (*pb.DrawExtraBallResponse, error) {
-	// 獲取房間ID (默認使用 SG01)
-	roomID := "SG01"
+	// 檢查房間ID是否為空
+	if req.RoomId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "房間ID為必須參數")
+	}
+
+	// 獲取房間ID
+	roomID := req.RoomId
+
+	// 檢查房間ID是否有效
+	supportedRooms := s.gameManager.GetSupportedRooms()
+	isValidRoom := false
+	for _, supported := range supportedRooms {
+		if supported == roomID {
+			isValidRoom = true
+			break
+		}
+	}
+
+	if !isValidRoom {
+		s.logger.Warn("抽額外球操作失敗，無效的房間ID", zap.String("roomID", roomID))
+		return nil, status.Errorf(codes.NotFound, "房間ID '%s' 不存在", roomID)
+	}
 
 	// 獲取指定房間的當前遊戲
 	game := s.gameManager.GetCurrentGameByRoom(roomID)
@@ -285,8 +325,28 @@ func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBall
 
 // DrawJackpotBall 實現 DealerService.DrawJackpotBall RPC 方法
 func (s *DealerService) DrawJackpotBall(ctx context.Context, req *pb.DrawJackpotBallRequest) (*pb.DrawJackpotBallResponse, error) {
-	// 獲取房間ID (默認使用 SG01)
-	roomID := "SG01"
+	// 檢查房間ID是否為空
+	if req.RoomId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "房間ID為必須參數")
+	}
+
+	// 獲取房間ID
+	roomID := req.RoomId
+
+	// 檢查房間ID是否有效
+	supportedRooms := s.gameManager.GetSupportedRooms()
+	isValidRoom := false
+	for _, supported := range supportedRooms {
+		if supported == roomID {
+			isValidRoom = true
+			break
+		}
+	}
+
+	if !isValidRoom {
+		s.logger.Warn("抽JP球操作失敗，無效的房間ID", zap.String("roomID", roomID))
+		return nil, status.Errorf(codes.NotFound, "房間ID '%s' 不存在", roomID)
+	}
 
 	// 獲取指定房間的當前遊戲
 	game := s.gameManager.GetCurrentGameByRoom(roomID)
@@ -369,8 +429,28 @@ func (s *DealerService) DrawJackpotBall(ctx context.Context, req *pb.DrawJackpot
 
 // DrawLuckyBall 實現 DealerService.DrawLuckyBall RPC 方法
 func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBallRequest) (*pb.DrawLuckyBallResponse, error) {
-	// 獲取房間ID (默認使用 SG01)
-	roomID := "SG01"
+	// 檢查房間ID是否為空
+	if req.RoomId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "房間ID為必須參數")
+	}
+
+	// 獲取房間ID
+	roomID := req.RoomId
+
+	// 檢查房間ID是否有效
+	supportedRooms := s.gameManager.GetSupportedRooms()
+	isValidRoom := false
+	for _, supported := range supportedRooms {
+		if supported == roomID {
+			isValidRoom = true
+			break
+		}
+	}
+
+	if !isValidRoom {
+		s.logger.Warn("抽幸運球操作失敗，無效的房間ID", zap.String("roomID", roomID))
+		return nil, status.Errorf(codes.NotFound, "房間ID '%s' 不存在", roomID)
+	}
 
 	// 獲取指定房間的當前遊戲
 	game := s.gameManager.GetCurrentGameByRoom(roomID)
@@ -507,8 +587,28 @@ func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBall
 
 // CancelGame 實現 DealerService.CancelGame RPC 方法
 func (s *DealerService) CancelGame(ctx context.Context, req *pb.CancelGameRequest) (*pb.GameData, error) {
-	// 獲取房間ID (默認使用 SG01)
-	roomID := "SG01"
+	// 檢查房間ID是否為空
+	if req.RoomId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "房間ID為必須參數")
+	}
+
+	// 獲取房間ID
+	roomID := req.RoomId
+
+	// 檢查房間ID是否有效
+	supportedRooms := s.gameManager.GetSupportedRooms()
+	isValidRoom := false
+	for _, supported := range supportedRooms {
+		if supported == roomID {
+			isValidRoom = true
+			break
+		}
+	}
+
+	if !isValidRoom {
+		s.logger.Warn("取消遊戲操作失敗，無效的房間ID", zap.String("roomID", roomID))
+		return nil, status.Errorf(codes.NotFound, "房間ID '%s' 不存在", roomID)
+	}
 
 	// 獲取指定房間的當前遊戲
 	game := s.gameManager.GetCurrentGameByRoom(roomID)
@@ -556,8 +656,28 @@ func (s *DealerService) AdvanceStage(ctx context.Context, req *pb.AdvanceStageRe
 func (s *DealerService) GetGameStatus(ctx context.Context, req *pb.GetGameStatusRequest) (*pb.GetGameStatusResponse, error) {
 	s.logger.Info("收到 GetGameStatus 請求")
 
-	// 獲取房間ID (默認使用 SG01)
-	roomID := "SG01"
+	// 檢查房間ID是否為空
+	if req.RoomId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "房間ID為必須參數")
+	}
+
+	// 獲取房間ID
+	roomID := req.RoomId
+
+	// 檢查房間ID是否有效
+	supportedRooms := s.gameManager.GetSupportedRooms()
+	isValidRoom := false
+	for _, supported := range supportedRooms {
+		if supported == roomID {
+			isValidRoom = true
+			break
+		}
+	}
+
+	if !isValidRoom {
+		s.logger.Warn("獲取遊戲狀態失敗，無效的房間ID", zap.String("roomID", roomID))
+		return nil, status.Errorf(codes.NotFound, "房間ID '%s' 不存在", roomID)
+	}
 
 	// 獲取指定房間的當前遊戲狀態
 	gameData := s.gameManager.GetCurrentGameByRoom(roomID)
@@ -615,11 +735,31 @@ func (s *DealerService) removeSubscriber(subscriberID string) {
 
 // SubscribeGameEvents 實現 DealerService.SubscribeGameEvents RPC 方法 (流式 RPC)
 func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, stream pb.DealerService_SubscribeGameEventsServer) error {
+	// 檢查房間ID是否為空
+	if req.RoomId == "" {
+		return status.Errorf(codes.InvalidArgument, "房間ID為必須參數")
+	}
+
+	// 獲取房間ID
+	roomID := req.RoomId
+
+	// 檢查房間ID是否有效
+	supportedRooms := s.gameManager.GetSupportedRooms()
+	isValidRoom := false
+	for _, supported := range supportedRooms {
+		if supported == roomID {
+			isValidRoom = true
+			break
+		}
+	}
+
+	if !isValidRoom {
+		s.logger.Warn("訂閱事件失敗，無效的房間ID", zap.String("roomID", roomID))
+		return status.Errorf(codes.NotFound, "房間ID '%s' 不存在", roomID)
+	}
+
 	// 創建一個唯一的訂閱 ID
 	subscriptionID := uuid.New().String()
-
-	// 獲取房間ID (默認使用 SG01)
-	roomID := "SG01"
 
 	s.logger.Info("收到新的事件訂閱請求",
 		zap.String("subscriptionID", subscriptionID),
