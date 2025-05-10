@@ -142,8 +142,11 @@ func (s *DealerService) StartNewRound(ctx context.Context, req *pb.StartNewRound
 
 // DrawBall 實現 DealerService.DrawBall RPC 方法
 func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (*pb.DrawBallResponse, error) {
-	// 獲取當前遊戲
-	game := s.gameManager.GetCurrentGame()
+	// 獲取房間ID (默認使用 SG01)
+	roomID := "SG01"
+
+	// 獲取指定房間的當前遊戲
+	game := s.gameManager.GetCurrentGameByRoom(roomID)
 	if game == nil {
 		return nil, gameflow.ErrGameNotFound
 	}
@@ -187,7 +190,7 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 	var gameStatus *pb.GameStatus
 	if isLastBall {
 		// 同步執行階段推進，確保 Redis 中的狀態立即更新
-		if err := s.gameManager.AdvanceStage(ctx, true); err != nil {
+		if err := s.gameManager.AdvanceStageForRoom(ctx, roomID, true); err != nil {
 			s.logger.Error("最後一顆常規球處理後推進階段失敗", zap.Error(err))
 		} else {
 			// 階段推進成功，更新遊戲狀態
@@ -199,7 +202,7 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 	}
 
 	// 獲取更新後的遊戲數據
-	updatedGame := s.gameManager.GetCurrentGame()
+	updatedGame := s.gameManager.GetCurrentGameByRoom(roomID)
 
 	// 將 gameflow balls 轉換回 proto balls
 	updatedBalls := make([]*pb.Ball, 0, len(updatedGame.RegularBalls))
@@ -223,8 +226,11 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 
 // DrawExtraBall 實現 DealerService.DrawExtraBall RPC 方法
 func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBallRequest) (*pb.DrawExtraBallResponse, error) {
-	// 獲取當前遊戲
-	game := s.gameManager.GetCurrentGame()
+	// 獲取房間ID (默認使用 SG01)
+	roomID := "SG01"
+
+	// 獲取指定房間的當前遊戲
+	game := s.gameManager.GetCurrentGameByRoom(roomID)
 	if game == nil {
 		return nil, gameflow.ErrGameNotFound
 	}
@@ -242,9 +248,6 @@ func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBall
 			"請求必須包含至少一顆額外球")
 	}
 
-	// 從遊戲ID中提取房間ID
-	roomID := gameflow.GetRoomIDFromGameID(game.GameID)
-
 	// 處理所有球
 	for _, pbBall := range reqBalls {
 		gameBall := gameflow.Ball{
@@ -261,7 +264,7 @@ func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBall
 	}
 
 	// 獲取當前遊戲狀態以獲取更新後的球陣列
-	gameData := s.gameManager.GetCurrentGame()
+	gameData := s.gameManager.GetCurrentGameByRoom(roomID)
 	if gameData == nil {
 		return nil, gameflow.ErrGameNotFound
 	}
@@ -282,8 +285,11 @@ func (s *DealerService) DrawExtraBall(ctx context.Context, req *pb.DrawExtraBall
 
 // DrawJackpotBall 實現 DealerService.DrawJackpotBall RPC 方法
 func (s *DealerService) DrawJackpotBall(ctx context.Context, req *pb.DrawJackpotBallRequest) (*pb.DrawJackpotBallResponse, error) {
-	// 獲取當前遊戲
-	game := s.gameManager.GetCurrentGame()
+	// 獲取房間ID (默認使用 SG01)
+	roomID := "SG01"
+
+	// 獲取指定房間的當前遊戲
+	game := s.gameManager.GetCurrentGameByRoom(roomID)
 	if game == nil {
 		return nil, gameflow.ErrGameNotFound
 	}
@@ -300,9 +306,6 @@ func (s *DealerService) DrawJackpotBall(ctx context.Context, req *pb.DrawJackpot
 		return nil, gameflow.NewGameFlowErrorWithFormat("INVALID_REQUEST",
 			"請求必須包含至少一顆JP球")
 	}
-
-	// 從遊戲ID中提取房間ID
-	roomID := gameflow.GetRoomIDFromGameID(game.GameID)
 
 	// 處理所有球
 	for _, pbBall := range reqBalls {
@@ -341,7 +344,7 @@ func (s *DealerService) DrawJackpotBall(ctx context.Context, req *pb.DrawJackpot
 	}
 
 	// 獲取當前遊戲狀態以獲取更新後的球陣列
-	gameData := s.gameManager.GetCurrentGame()
+	gameData := s.gameManager.GetCurrentGameByRoom(roomID)
 	if gameData == nil || gameData.Jackpot == nil {
 		return nil, gameflow.ErrGameNotFound
 	}
@@ -366,8 +369,11 @@ func (s *DealerService) DrawJackpotBall(ctx context.Context, req *pb.DrawJackpot
 
 // DrawLuckyBall 實現 DealerService.DrawLuckyBall RPC 方法
 func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBallRequest) (*pb.DrawLuckyBallResponse, error) {
-	// 獲取當前遊戲
-	game := s.gameManager.GetCurrentGame()
+	// 獲取房間ID (默認使用 SG01)
+	roomID := "SG01"
+
+	// 獲取指定房間的當前遊戲
+	game := s.gameManager.GetCurrentGameByRoom(roomID)
 	if game == nil {
 		return nil, gameflow.ErrGameNotFound
 	}
@@ -425,9 +431,6 @@ func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBall
 			zap.Int("當前球數", len(existingBalls)))
 	}
 
-	// 從遊戲ID中提取房間ID
-	roomID := gameflow.GetRoomIDFromGameID(game.GameID)
-
 	// 確保最後一個球被標記為最後一個
 	modifiedBalls := make([]gameflow.Ball, len(existingBalls))
 	for i, pbBall := range existingBalls {
@@ -474,7 +477,7 @@ func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBall
 	}
 
 	// 獲取更新後的遊戲狀態
-	gameData := s.gameManager.GetCurrentGame()
+	gameData := s.gameManager.GetCurrentGameByRoom(roomID)
 	if gameData == nil || gameData.Jackpot == nil {
 		s.logger.Error("獲取更新後的遊戲狀態失敗或Jackpot為空")
 		return nil, fmt.Errorf("獲取更新後的遊戲狀態失敗")
@@ -504,8 +507,11 @@ func (s *DealerService) DrawLuckyBall(ctx context.Context, req *pb.DrawLuckyBall
 
 // CancelGame 實現 DealerService.CancelGame RPC 方法
 func (s *DealerService) CancelGame(ctx context.Context, req *pb.CancelGameRequest) (*pb.GameData, error) {
-	// 獲取當前遊戲
-	game := s.gameManager.GetCurrentGame()
+	// 獲取房間ID (默認使用 SG01)
+	roomID := "SG01"
+
+	// 獲取指定房間的當前遊戲
+	game := s.gameManager.GetCurrentGameByRoom(roomID)
 	if game == nil {
 		return nil, gameflow.ErrGameNotFound
 	}
@@ -550,8 +556,11 @@ func (s *DealerService) AdvanceStage(ctx context.Context, req *pb.AdvanceStageRe
 func (s *DealerService) GetGameStatus(ctx context.Context, req *pb.GetGameStatusRequest) (*pb.GetGameStatusResponse, error) {
 	s.logger.Info("收到 GetGameStatus 請求")
 
-	// 獲取當前遊戲狀態
-	gameData := s.gameManager.GetCurrentGame()
+	// 獲取房間ID (默認使用 SG01)
+	roomID := "SG01"
+
+	// 獲取指定房間的當前遊戲狀態
+	gameData := s.gameManager.GetCurrentGameByRoom(roomID)
 	if gameData == nil {
 		return nil, gameflow.ErrGameNotFound
 	}
@@ -608,8 +617,13 @@ func (s *DealerService) removeSubscriber(subscriberID string) {
 func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, stream pb.DealerService_SubscribeGameEventsServer) error {
 	// 創建一個唯一的訂閱 ID
 	subscriptionID := uuid.New().String()
+
+	// 獲取房間ID (默認使用 SG01)
+	roomID := "SG01"
+
 	s.logger.Info("收到新的事件訂閱請求",
-		zap.String("subscriptionID", subscriptionID))
+		zap.String("subscriptionID", subscriptionID),
+		zap.String("roomID", roomID))
 
 	// 創建通道以接收事件
 	eventChan := make(chan *pb.GameEvent, 100)
@@ -632,10 +646,11 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 
 		// 立即發送當前遊戲狀態作為通知
 		s.logger.Info("客戶端訂閱了通知事件，立即發送當前遊戲狀態",
-			zap.String("subscriptionID", subscriptionID))
+			zap.String("subscriptionID", subscriptionID),
+			zap.String("roomID", roomID))
 
 		// 獲取當前遊戲狀態
-		currentGame := s.gameManager.GetCurrentGame()
+		currentGame := s.gameManager.GetCurrentGameByRoom(roomID)
 		if currentGame != nil {
 			// 建立通知事件
 			notificationEvent := &pb.GameEvent{
@@ -654,12 +669,14 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 			select {
 			case eventChan <- notificationEvent:
 				s.logger.Debug("已發送初始通知事件到通道",
-					zap.String("subscriptionID", subscriptionID))
+					zap.String("subscriptionID", subscriptionID),
+					zap.String("roomID", roomID))
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
 				s.logger.Warn("事件通道已滿，無法發送初始通知事件",
-					zap.String("subscriptionID", subscriptionID))
+					zap.String("subscriptionID", subscriptionID),
+					zap.String("roomID", roomID))
 			}
 		}
 	}

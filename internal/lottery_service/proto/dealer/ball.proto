@@ -30,8 +30,10 @@ message Ball {
 
 // 抽常規球請求
 message DrawBallRequest {
+  // 房間ID
+  string room_id = 1;
   // 已抽出的球陣列,最後一顆為最新抽出的球
-  repeated Ball balls = 1;
+  repeated Ball balls = 2;
 }
 
 // 抽常規球回應
@@ -44,8 +46,10 @@ message DrawBallResponse {
 
 // 抽額外球請求
 message DrawExtraBallRequest {
+  // 房間ID
+  string room_id = 1;
   // 已抽出的球陣列,最後一顆為最新抽出的球
-  repeated Ball balls = 1;
+  repeated Ball balls = 2;
 }
 
 // 抽額外球回應
@@ -56,7 +60,9 @@ message DrawExtraBallResponse {
 
 // 抽JP球請求
 message DrawJackpotBallRequest {
-  repeated Ball balls = 1;
+  // 房間ID
+  string room_id = 1;
+  repeated Ball balls = 2;
 }
 
 // 抽JP球回應
@@ -67,7 +73,9 @@ message DrawJackpotBallResponse {
 
 // 抽幸運號碼球請求
 message DrawLuckyBallRequest {
-  repeated Ball balls = 1;
+  // 房間ID
+  string room_id = 1;
+  repeated Ball balls = 2;
 }
 
 // 抽幸運號碼球回應

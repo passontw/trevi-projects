@@ -130,7 +130,8 @@ message AdvanceStageResponse {
 
 // 獲取遊戲狀態請求
 message GetGameStatusRequest {
-  // 空的請求，獲取當前遊戲狀態
+  // 房間ID
+  string room_id = 1;
 }
 
 // 獲取遊戲狀態回應
@@ -142,8 +143,10 @@ message GetGameStatusResponse {
 
 // 取消遊戲請求
 message CancelGameRequest {
+  // 房間ID
+  string room_id = 1;
   // 取消原因
-  string reason = 1;
+  string reason = 2;
 }
 
 // 取消遊戲回應
