@@ -313,11 +313,11 @@ StageGameOver  // 遊戲結束
 - 儲存位置：`Jackpot.LuckyBalls`陣列
 - 特殊處理：服務初始化時自動生成
 
-### 3. WebSocket通訊
+### 3. 通訊機制
 
-系統使用WebSocket作為荷官端實時通訊方式，使用Rocket MQ作為遊戲端通訊方式：
+系統採用雙重通訊機制，確保低延遲和高可靠性：
 
-#### 3.1 荷官端WebSocket (`dealerWebsocket`)
+#### 3.1 荷官端gRPC服務
 - 端口：由配置設定
 - 主要功能：
   - 接收荷官命令

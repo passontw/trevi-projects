@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"g38_lottery_service/internal/lottery_service/dealerWebsocket"
 	"g38_lottery_service/internal/lottery_service/gameflow"
 	pb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
 
@@ -23,7 +22,6 @@ type DealerService struct {
 	pb.UnimplementedDealerServiceServer
 	logger         *zap.Logger
 	gameManager    *gameflow.GameManager
-	dealerServer   *dealerWebsocket.DealerServer
 	subscribers    map[string]chan *pb.GameEvent // 訂閱者映射表
 	subscribersMux sync.RWMutex                  // 訂閱者鎖
 }
@@ -32,14 +30,12 @@ type DealerService struct {
 func NewDealerService(
 	logger *zap.Logger,
 	gameManager *gameflow.GameManager,
-	dealerServer *dealerWebsocket.DealerServer,
 ) *DealerService {
 	// 創建服務實例
 	service := &DealerService{
-		logger:       logger.With(zap.String("component", "dealer_service")),
-		gameManager:  gameManager,
-		dealerServer: dealerServer,
-		subscribers:  make(map[string]chan *pb.GameEvent),
+		logger:      logger.With(zap.String("component", "dealer_service")),
+		gameManager: gameManager,
+		subscribers: make(map[string]chan *pb.GameEvent),
 	}
 
 	// 註冊事件處理函數
@@ -55,15 +51,7 @@ func (s *DealerService) registerEventHandlers() {
 	// 註冊各種回調函數
 	s.gameManager.SetOnBallDrawnCallback(s.onBallDrawn) // 球抽取回調
 
-	// 註冊 WebSocket 通知器用於處理遊戲階段變更等事件
-	s.gameManager.RegisterWebSocketNotifier(s)
-
 	s.logger.Info("事件處理函數註冊完成")
-}
-
-// OnStageChanged 實現 WebSocketNotifier 接口的方法，處理階段變更事件
-func (s *DealerService) OnStageChanged(gameID string, oldStage, newStage gameflow.GameStage, game *gameflow.GameData) {
-	s.onStageChanged(gameID, oldStage, newStage)
 }
 
 // StartNewRound 實現 DealerService.StartNewRound RPC 方法
@@ -950,10 +938,60 @@ func (s *DealerService) onExtraBallSideSelected(gameID string, side gameflow.Ext
 	}()
 }
 
-// broadcastEvent 廣播事件到所有連接的荷官端
+// broadcastEvent 利用訂閱者通道廣播事件
 func (s *DealerService) broadcastEvent(event map[string]interface{}) error {
-	// 通過 dealerServer 廣播事件
-	return s.dealerServer.BroadcastMessage(event)
+	// 創建游戲事件
+	eventType, ok := event["type"].(string)
+	if !ok {
+		return fmt.Errorf("invalid event type")
+	}
+
+	// 默認使用通知事件類型
+	gameEvent := &pb.GameEvent{
+		EventType: pb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
+		Timestamp: timestamppb.New(time.Now()),
+	}
+
+	// 檢查是否提供了遊戲ID
+	if data, ok := event["data"].(map[string]interface{}); ok {
+		if gameID, ok := data["game_id"].(string); ok {
+			gameEvent.GameId = gameID
+		}
+	}
+
+	// 根據事件類型設置 EventData
+	switch eventType {
+	case "new_round_started":
+		if data, ok := event["data"].(map[string]interface{}); ok {
+			// 創建通知事件，包含更多事件數據
+			message := fmt.Sprintf("新局開始 (GameID: %s)", gameEvent.GameId)
+
+			// 添加階段信息
+			if stage, ok := data["stage"].(string); ok {
+				message += fmt.Sprintf(", 階段: %s", stage)
+			}
+
+			notification := &pb.NotificationEvent{
+				Message: message,
+			}
+			gameEvent.EventData = &pb.GameEvent_Notification{
+				Notification: notification,
+			}
+		}
+	default:
+		// 默認創建通知事件
+		notification := &pb.NotificationEvent{
+			Message: eventType,
+		}
+		gameEvent.EventData = &pb.GameEvent_Notification{
+			Notification: notification,
+		}
+	}
+
+	// 發送通知給訂閱者
+	s.sendNotificationToSubscribers(gameEvent)
+
+	return nil
 }
 
 // broadcastNewGameEvent 廣播新遊戲事件
@@ -969,7 +1007,7 @@ func (s *DealerService) broadcastNewGameEvent(gameID string, game *gameflow.Game
 			},
 		}
 
-		// 使用 WebSocket 廣播事件
+		// 廣播事件
 		if err := s.broadcastEvent(event); err != nil {
 			s.logger.Error("廣播新遊戲事件失敗", zap.String("gameID", gameID), zap.Error(err))
 		}

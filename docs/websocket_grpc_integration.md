@@ -133,10 +133,7 @@ gRPC 和 WebSocket 服務部署在同一應用中，共享以下配置：
 
 ```go
 // 初始化
-dealerServer := dealerWebsocket.NewDealerServer(config, logger, gameManager)
-grpcBroadcaster := dealerWebsocket.NewGrpcBroadcaster(dealerServer, logger)
-dealerService := dealer.NewDealerService(logger, gameManager, dealerServer)
+dealerService := dealer.NewDealerService(logger, gameManager)
 
-// 啟動服務
-dealerServer.Start()
+// 啟動服務在 Server.go 中配置
 ``` 

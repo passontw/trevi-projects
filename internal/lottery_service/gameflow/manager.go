@@ -19,17 +19,11 @@ type JackpotInfo struct {
 	CreatedAt        time.Time // 創建時間
 }
 
-// WebSocketNotifier 接口
-type WebSocketNotifier interface {
-	OnStageChanged(gameID string, oldStage, newStage GameStage, game *GameData)
-}
-
 // GameManager 遊戲流程管理器
 type GameManager struct {
 	repo              GameRepository
 	logger            *zap.Logger
 	sidePicker        *SidePicker
-	wsNotifier        WebSocketNotifier
 	stageMutex        sync.RWMutex                // 使用 RWMutex 代替 Mutex
 	currentGames      map[string]*GameData        // 以房間ID為鍵的遊戲映射
 	gameTimers        map[string]*time.Timer      // 以遊戲ID為鍵的計時器映射
@@ -399,10 +393,11 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 	// 釋放鎖，因為我們已經完成了關鍵部分
 	m.stageMutex.Unlock()
 
-	// 發送 WebSocket 通知
-	if m.wsNotifier != nil {
-		m.wsNotifier.OnStageChanged(game.GameID, previousStage, nextStage, game)
-	}
+	m.logger.Info("階段已變更，完成推進",
+		zap.String("roomID", roomID),
+		zap.String("gameID", game.GameID),
+		zap.String("from", string(previousStage)),
+		zap.String("to", string(nextStage)))
 
 	// 如果是 GameOver 階段，觸發事件並準備下一局
 	if nextStage == StageGameOver {
@@ -565,12 +560,6 @@ func (m *GameManager) GetCurrentStage() GameStage {
 	}
 
 	return m.currentGame.CurrentStage
-}
-
-// RegisterWebSocketNotifier 註冊 WebSocket 通知器
-func (m *GameManager) RegisterWebSocketNotifier(notifier WebSocketNotifier) {
-	m.wsNotifier = notifier
-	m.logger.Info("已註冊 WebSocket 通知器")
 }
 
 // GetExtraBallSide 獲取當前選擇的額外球邊
@@ -770,20 +759,30 @@ func (m *GameManager) calculateStageDuration(stage GameStage) time.Duration {
 	return 30 * time.Second
 }
 
-// NotifyGameStageChanged 通知遊戲階段變更
+// NotifyGameStageChanged 通知遊戲階段已變更
 func (m *GameManager) NotifyGameStageChanged(roomID, gameID, newStage string) {
-	// 檢查是否有 WebSocket 通知器
-	if m.wsNotifier != nil {
-		// 獲取遊戲
-		m.stageMutex.RLock()
-		game, exists := m.currentGames[roomID]
-		m.stageMutex.RUnlock()
+	m.stageMutex.RLock()
+	defer m.stageMutex.RUnlock()
 
-		if exists && game != nil {
-			// 呼叫原始接口方法
-			m.wsNotifier.OnStageChanged(gameID, GameStage(""), GameStage(newStage), game)
-		}
+	m.logger.Info("收到遊戲階段變更通知",
+		zap.String("roomID", roomID),
+		zap.String("gameID", gameID),
+		zap.String("newStage", newStage))
+
+	// 查找對應的遊戲
+	game, exists := m.currentGames[roomID]
+	if !exists || game == nil {
+		m.logger.Warn("找不到指定的遊戲",
+			zap.String("roomID", roomID),
+			zap.String("gameID", gameID))
+		return
 	}
+
+	m.logger.Info("遊戲階段已設置為",
+		zap.String("roomID", roomID),
+		zap.String("gameID", gameID),
+		zap.String("oldStage", string(game.CurrentStage)),
+		zap.String("newStage", newStage))
 }
 
 // GetAllOpenRooms 獲取所有開放的房間

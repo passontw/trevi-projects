@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"g38_lottery_service/internal/lottery_service/config"
-	"g38_lottery_service/internal/lottery_service/dealerWebsocket"
 	"g38_lottery_service/internal/lottery_service/gameflow"
 	"g38_lottery_service/internal/lottery_service/grpc/dealer"
 	pb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
@@ -34,7 +33,6 @@ func NewGrpcServer(
 	config *config.AppConfig,
 	logger *zap.Logger,
 	gameManager *gameflow.GameManager,
-	dealerServer *dealerWebsocket.DealerServer,
 ) *GrpcServer {
 	// 設定 gRPC keepalive 參數，確保連接活躍
 	keepAliveParams := grpc.KeepaliveParams(keepalive.ServerParameters{
@@ -69,7 +67,7 @@ func NewGrpcServer(
 
 	// 創建並註冊 DealerService
 	logger.Info("註冊 DealerService 到 gRPC 服務器")
-	dealerSvc := dealer.NewDealerService(logger, gameManager, dealerServer)
+	dealerSvc := dealer.NewDealerService(logger, gameManager)
 	pb.RegisterDealerServiceServer(server, dealerSvc)
 	grpcServer.dealerSvc = dealerSvc
 
