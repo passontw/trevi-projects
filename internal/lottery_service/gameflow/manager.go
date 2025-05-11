@@ -45,22 +45,22 @@ func NewGameManager(repo GameRepository, logger *zap.Logger) *GameManager {
 	stageTimeDefaults := map[GameStage]time.Duration{
 		StagePreparation:                      24 * time.Hour,   // 準備階段默認24小時
 		StageNewRound:                         10 * time.Second, // 新局階段默認10秒
-		StageCardPurchaseOpen:                 10 * time.Minute, // 購買卡片開放階段默認10分鐘
+		StageCardPurchaseOpen:                 12 * time.Second, // 購買卡片開放階段默認12秒，與GetStageConfig保持一致
 		StageCardPurchaseClose:                10 * time.Second, // 購買卡片結束階段默認10秒
-		StageDrawingStart:                     5 * time.Minute,  // 開始抽球階段默認5分鐘
+		StageDrawingStart:                     5 * time.Minute,  // 開始抽球階段默認5分鐘，注意：此階段不會自動切換，需要荷官確認後才能進入下一階段
 		StageDrawingClose:                     10 * time.Second, // 結束抽球階段默認10秒
 		StageExtraBallPrepare:                 10 * time.Second, // 額外球準備階段默認10秒
 		StageExtraBallSideSelectBettingStart:  2 * time.Minute,  // 額外球選邊開始階段默認2分鐘
 		StageExtraBallSideSelectBettingClosed: 10 * time.Second, // 額外球選邊結束階段默認10秒
 		StageExtraBallWaitClaim:               30 * time.Second, // 額外球等待認領階段默認30秒
-		StageExtraBallDrawingStart:            2 * time.Minute,  // 額外球開始抽取階段默認2分鐘
+		StageExtraBallDrawingStart:            2 * time.Minute,  // 額外球開始抽取階段默認2分鐘，注意：此階段不會自動切換，需要荷官確認後才能進入下一階段
 		StageExtraBallDrawingClose:            10 * time.Second, // 額外球結束抽取階段默認10秒
 		StagePayoutSettlement:                 30 * time.Second, // 派彩結算階段默認30秒
 		StageJackpotPreparation:               30 * time.Second, // JP準備階段默認30秒
-		StageJackpotDrawingStart:              3 * time.Minute,  // JP開始抽球階段默認3分鐘
+		StageJackpotDrawingStart:              3 * time.Minute,  // JP開始抽球階段默認3分鐘，注意：此階段不會自動切換，需要荷官或遊戲端確認（有人中獎）後才能進入下一階段
 		StageJackpotDrawingClosed:             10 * time.Second, // JP結束抽球階段默認10秒
 		StageJackpotSettlement:                30 * time.Second, // JP結算階段默認30秒
-		StageDrawingLuckyBallsStart:           3 * time.Minute,  // 幸運號碼球開始抽取階段默認3分鐘
+		StageDrawingLuckyBallsStart:           3 * time.Minute,  // 幸運號碼球開始抽取階段默認3分鐘，注意：此階段不會自動切換，需要荷官確認後才能進入下一階段
 		StageDrawingLuckyBallsClosed:          10 * time.Second, // 幸運號碼球結束抽取階段默認10秒
 		StageGameOver:                         1 * time.Hour,    // 遊戲結束階段默認1小時
 	}
@@ -279,6 +279,10 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 
 	// 記錄當前階段
 	previousStage := game.CurrentStage
+	m.logger.Info("準備階段轉換",
+		zap.String("roomID", roomID),
+		zap.String("gameID", game.GameID),
+		zap.String("currentStage", string(previousStage)))
 
 	// 如果是 StagePayoutSettlement 階段，進行幸運球檢查並決定下一階段
 	var nextStage GameStage
@@ -382,7 +386,18 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 	if autoAdvance && nextStage != StageGameOver {
 		// 計算此階段的時間
 		stageDuration := m.calculateStageDuration(nextStage)
+		m.logger.Info("設置階段計時器",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.String("stage", string(nextStage)),
+			zap.Duration("duration", stageDuration),
+			zap.String("expectedExpiry", time.Now().Add(stageDuration).Format(time.RFC3339)))
 		m.setupTimerForGame(ctx, game, roomID, stageDuration)
+	} else if !autoAdvance {
+		m.logger.Info("不自動推進階段，需手動觸發",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.String("stage", string(nextStage)))
 	}
 
 	// 釋放鎖，因為我們已經完成了關鍵部分
@@ -438,14 +453,19 @@ func (m *GameManager) setupTimerForGame(ctx context.Context, game *GameData, roo
 	if existingTimer, exists := m.gameTimers[timerID]; exists {
 		existingTimer.Stop()
 		delete(m.gameTimers, timerID)
+		m.logger.Debug("已取消現有計時器",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.String("timerID", timerID))
 	}
 
 	// 創建新的計時器
-	m.logger.Debug("為遊戲設置計時器",
+	m.logger.Info("為遊戲設置階段計時器",
 		zap.String("roomID", roomID),
 		zap.String("gameID", game.GameID),
 		zap.String("stage", string(game.CurrentStage)),
-		zap.Duration("duration", duration))
+		zap.Duration("duration", duration),
+		zap.String("expectedExpiry", time.Now().Add(duration).Format(time.RFC3339)))
 
 	timer := time.AfterFunc(duration, func() {
 		// 創建獨立的上下文，不受原始請求上下文的影響
@@ -455,7 +475,8 @@ func (m *GameManager) setupTimerForGame(ctx context.Context, game *GameData, roo
 		m.logger.Info("階段計時器觸發，自動推進到下一階段",
 			zap.String("roomID", roomID),
 			zap.String("gameID", game.GameID),
-			zap.String("stage", string(game.CurrentStage)))
+			zap.String("stage", string(game.CurrentStage)),
+			zap.String("triggerTime", time.Now().Format(time.RFC3339)))
 
 		// 定義重試邏輯的函數
 		retryAdvanceStage := func() error {
@@ -502,6 +523,10 @@ func (m *GameManager) setupTimerForGame(ctx context.Context, game *GameData, roo
 
 	// 存儲計時器
 	m.gameTimers[timerID] = timer
+	m.logger.Debug("計時器已存儲",
+		zap.String("roomID", roomID),
+		zap.String("gameID", game.GameID),
+		zap.String("timerID", timerID))
 }
 
 // prepareForNextGameInRoom 為特定房間準備下一局遊戲
@@ -777,17 +802,27 @@ func (m *GameManager) UpdateExtraBalls(ctx context.Context, roomID string, ball 
 func (m *GameManager) calculateStageDuration(stage GameStage) time.Duration {
 	// 先嘗試從 stageTimeDefaults 獲取配置的時間
 	if duration, exists := m.stageTimeDefaults[stage]; exists {
+		m.logger.Debug("使用 stageTimeDefaults 中的階段時間配置",
+			zap.String("stage", string(stage)),
+			zap.Duration("duration", duration))
 		return duration
 	}
 
 	// 如果沒有配置，從 GetStageConfig 獲取默認配置
 	config := GetStageConfig(stage)
 	if config.Timeout > 0 {
+		m.logger.Debug("使用 StageConfig 中的階段時間配置",
+			zap.String("stage", string(stage)),
+			zap.Duration("duration", config.Timeout))
 		return config.Timeout
 	}
 
 	// 如果 timeout 為 -1 或不存在配置，返回默認時間
-	return 30 * time.Second
+	defaultDuration := 30 * time.Second
+	m.logger.Debug("使用默認階段時間配置",
+		zap.String("stage", string(stage)),
+		zap.Duration("duration", defaultDuration))
+	return defaultDuration
 }
 
 // NotifyGameStageChanged 通知遊戲階段已變更
