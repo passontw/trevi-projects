@@ -1,7 +1,7 @@
 -- 遊戲基本信息表
 CREATE TABLE games (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    game_id VARCHAR(50) NOT NULL UNIQUE,
+    game_id VARCHAR(100) NOT NULL UNIQUE,
     room_id VARCHAR(20) NOT NULL,            -- 房間 ID，如 SG01, SG02 等
     state VARCHAR(30) NOT NULL,             -- 遊戲狀態如 PREPARATION, BETTING, DRAWING 等
     start_time TIMESTAMP NOT NULL,
@@ -42,7 +42,7 @@ CREATE TABLE games (
 -- 已抽出的球數據表
 CREATE TABLE drawn_balls (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    game_id VARCHAR(50) NOT NULL,
+    game_id VARCHAR(100) NOT NULL,
     number INT NOT NULL,                     -- 球號
     sequence INT NOT NULL,                   -- 序號，第幾顆球
     ball_type ENUM('REGULAR', 'EXTRA', 'JACKPOT', 'LUCKY') NOT NULL,  -- 球類型
@@ -60,7 +60,7 @@ CREATE TABLE drawn_balls (
 -- 幸運號碼表
 CREATE TABLE lucky_balls (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    game_id VARCHAR(50) NULL,                -- 關聯的遊戲 ID (可能為空)
+    game_id VARCHAR(100) NULL,                -- 關聯的遊戲 ID (可能為空)
     draw_date TIMESTAMP NOT NULL,            -- 抽出日期
     number1 INT NOT NULL,
     number2 INT NOT NULL,
@@ -80,7 +80,7 @@ CREATE TABLE lucky_balls (
 -- Jackpot 遊戲表
 CREATE TABLE jackpot_games (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    game_id VARCHAR(50) NOT NULL,            -- 對應的主遊戲 ID
+    game_id VARCHAR(100) NOT NULL,            -- 對應的主遊戲 ID
     jackpot_id VARCHAR(50) NOT NULL UNIQUE,  -- Jackpot 遊戲 ID
     start_time TIMESTAMP NULL,               -- 開始時間
     end_time TIMESTAMP NULL,                 -- 結束時間
@@ -95,7 +95,7 @@ CREATE TABLE jackpot_games (
 -- 遊戲階段記錄表
 CREATE TABLE game_state_logs (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    game_id VARCHAR(50) NOT NULL,
+    game_id VARCHAR(100) NOT NULL,
     state VARCHAR(30) NOT NULL,              -- 狀態名稱
     start_time TIMESTAMP NOT NULL,           -- 開始時間
     end_time TIMESTAMP NULL,                 -- 結束時間

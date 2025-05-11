@@ -61,10 +61,13 @@ func (r *RedisRepository) getHistoryListKey(roomID string) string {
 	return fmt.Sprintf(redisHistoryListKeyTpl, roomID)
 }
 
-// SaveGame 保存遊戲數據到 Redis
+// SaveGame 將當前遊戲保存到 Redis
 func (r *RedisRepository) SaveGame(ctx context.Context, game *GameData) error {
 	// 從遊戲ID中提取房間ID
 	roomID := GetRoomIDFromGameID(game.GameID)
+
+	// 更新遊戲的最後更新時間
+	game.LastUpdateTime = time.Now()
 
 	// 序列化遊戲數據
 	gameJSON, err := json.Marshal(game)
@@ -72,19 +75,43 @@ func (r *RedisRepository) SaveGame(ctx context.Context, game *GameData) error {
 		return fmt.Errorf("序列化遊戲數據失敗: %w", err)
 	}
 
-	// 保存到 Redis，過期時間設為 24 小時
-	key := r.getCurrentGameKey(roomID)
-	err = r.redisClient.Set(ctx, key, gameJSON, 24*time.Hour)
-	if err != nil {
-		return fmt.Errorf("保存遊戲數據到 Redis 失敗: %w", err)
+	// 定義重試邏輯
+	maxRetries := 3
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// 設置 Redis 鍵，保存 7 天
+		key := r.getCurrentGameKey(roomID)
+		err = r.redisClient.Set(ctx, key, gameJSON, 7*24*time.Hour)
+
+		if err == nil {
+			// 成功保存，記錄日誌並返回
+			r.logger.Debug("遊戲狀態已保存到 Redis",
+				zap.String("roomID", roomID),
+				zap.String("gameID", game.GameID),
+				zap.String("stage", string(game.CurrentStage)),
+				zap.Int("attempt", attempt))
+			return nil
+		}
+
+		// 發生錯誤，準備重試
+		lastErr = err
+		r.logger.Warn("保存遊戲狀態到 Redis 失敗，準備重試",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.Int("attempt", attempt),
+			zap.Int("maxRetries", maxRetries),
+			zap.Error(err))
+
+		// 如果不是最後一次嘗試，等待一段時間再重試，使用指數退避策略
+		if attempt < maxRetries {
+			backoffTime := time.Duration(attempt*200) * time.Millisecond
+			time.Sleep(backoffTime)
+		}
 	}
 
-	r.logger.Debug("已保存遊戲數據到 Redis",
-		zap.String("roomID", roomID),
-		zap.String("gameID", game.GameID),
-		zap.String("stage", string(game.CurrentStage)))
-
-	return nil
+	// 所有重試都失敗，返回最後的錯誤
+	return fmt.Errorf("經過 %d 次重試後，保存遊戲狀態到 Redis 仍然失敗: %w", maxRetries, lastErr)
 }
 
 // GetCurrentGame 從 Redis 獲取當前遊戲數據

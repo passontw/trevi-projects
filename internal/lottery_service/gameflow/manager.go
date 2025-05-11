@@ -448,14 +448,52 @@ func (m *GameManager) setupTimerForGame(ctx context.Context, game *GameData, roo
 		zap.Duration("duration", duration))
 
 	timer := time.AfterFunc(duration, func() {
+		// 創建獨立的上下文，不受原始請求上下文的影響
+		timerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		m.logger.Info("階段計時器觸發，自動推進到下一階段",
 			zap.String("roomID", roomID),
 			zap.String("gameID", game.GameID),
 			zap.String("stage", string(game.CurrentStage)))
 
-		// 推進到下一階段
-		if err := m.AdvanceStageForRoom(ctx, roomID, true); err != nil {
-			m.logger.Error("自動推進階段失敗",
+		// 定義重試邏輯的函數
+		retryAdvanceStage := func() error {
+			// 添加重試邏輯
+			maxRetries := 3
+			var lastErr error
+
+			for attempt := 1; attempt <= maxRetries; attempt++ {
+				// 推進到下一階段
+				if err := m.AdvanceStageForRoom(timerCtx, roomID, true); err != nil {
+					lastErr = err
+					m.logger.Warn("推進階段失敗，準備重試",
+						zap.String("roomID", roomID),
+						zap.String("gameID", game.GameID),
+						zap.Int("attempt", attempt),
+						zap.Int("maxRetries", maxRetries),
+						zap.Error(err))
+
+					// 如果不是最後一次嘗試，稍等一下再重試
+					if attempt < maxRetries {
+						time.Sleep(time.Duration(attempt*200) * time.Millisecond)
+						continue
+					}
+					return fmt.Errorf("重試 %d 次後，推進階段仍然失敗: %w", maxRetries, lastErr)
+				}
+				// 成功推進階段，跳出循環
+				m.logger.Info("成功推進階段",
+					zap.String("roomID", roomID),
+					zap.String("gameID", game.GameID),
+					zap.Int("attempt", attempt))
+				return nil
+			}
+			return lastErr
+		}
+
+		// 執行重試邏輯
+		if err := retryAdvanceStage(); err != nil {
+			m.logger.Error("經過多次重試後，自動推進階段失敗",
 				zap.String("roomID", roomID),
 				zap.String("gameID", game.GameID),
 				zap.Error(err))

@@ -16,7 +16,7 @@ import (
 // 資料庫模型結構定義
 type GameModel struct {
 	ID                    uint       `gorm:"primaryKey;autoIncrement"`
-	GameID                string     `gorm:"column:game_id;type:varchar(50);uniqueIndex;not null"`
+	GameID                string     `gorm:"column:game_id;type:varchar(100);uniqueIndex;not null"`
 	RoomID                string     `gorm:"column:room_id;type:varchar(20);not null"`
 	State                 string     `gorm:"column:state;type:varchar(30);not null"`
 	StartTime             time.Time  `gorm:"column:start_time;type:timestamp;not null"`
@@ -47,7 +47,7 @@ func (GameModel) TableName() string {
 // Jackpot遊戲模型
 type JackpotGameModel struct {
 	ID        uint       `gorm:"primaryKey;autoIncrement"`
-	GameID    string     `gorm:"column:game_id;type:varchar(50);not null"`
+	GameID    string     `gorm:"column:game_id;type:varchar(100);not null"`
 	JackpotID string     `gorm:"column:jackpot_id;type:varchar(50);uniqueIndex;not null"`
 	StartTime *time.Time `gorm:"column:start_time;type:timestamp;null"`
 	EndTime   *time.Time `gorm:"column:end_time;type:timestamp;null"`
@@ -63,7 +63,7 @@ func (JackpotGameModel) TableName() string {
 // 球資料庫模型
 type DrawnBallModel struct {
 	ID         uint      `gorm:"primaryKey;autoIncrement"`
-	GameID     string    `gorm:"column:game_id;type:varchar(50);not null;index"`
+	GameID     string    `gorm:"column:game_id;type:varchar(100);not null;index"`
 	Number     int       `gorm:"column:number;type:int;not null"`
 	Sequence   int       `gorm:"column:sequence;type:int;not null"`
 	BallType   string    `gorm:"column:ball_type;type:enum('REGULAR','EXTRA','JACKPOT','LUCKY');not null"`
@@ -81,7 +81,7 @@ func (DrawnBallModel) TableName() string {
 // 幸運號碼資料庫模型
 type LuckyBallsModel struct {
 	ID        uint      `gorm:"primaryKey;autoIncrement"`
-	GameID    string    `gorm:"column:game_id;type:varchar(50);null;index"`
+	GameID    string    `gorm:"column:game_id;type:varchar(100);null;index"`
 	DrawDate  time.Time `gorm:"column:draw_date;type:timestamp;not null"`
 	Number1   int       `gorm:"column:number1;type:int;not null"`
 	Number2   int       `gorm:"column:number2;type:int;not null"`
@@ -102,7 +102,7 @@ func (LuckyBallsModel) TableName() string {
 // 遊戲階段記錄模型
 type GameStateLogModel struct {
 	ID              uint       `gorm:"primaryKey;autoIncrement"`
-	GameID          string     `gorm:"column:game_id;type:varchar(50);not null;index"`
+	GameID          string     `gorm:"column:game_id;type:varchar(100);not null;index"`
 	State           string     `gorm:"column:state;type:varchar(30);not null"`
 	StartTime       time.Time  `gorm:"column:start_time;type:timestamp;not null"`
 	EndTime         *time.Time `gorm:"column:end_time;type:timestamp;null"`
