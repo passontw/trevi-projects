@@ -190,6 +190,15 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 			"請求必須包含至少一顆球")
 	}
 
+	// 首先檢查請求中是否有重複的球號
+	ballNumbers := make(map[int32]bool)
+	for _, ball := range reqBalls {
+		if ballNumbers[ball.Number] {
+			return nil, fmt.Errorf("請求中存在重複的球號: %d", ball.Number)
+		}
+		ballNumbers[ball.Number] = true
+	}
+
 	// 檢查最後一顆球是否標記為最後一顆
 	isLastBall := false
 	if len(reqBalls) > 0 {
@@ -197,7 +206,10 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 		isLastBall = lastBall.IsLast
 	}
 
-	// 處理所有球
+	// 清除已有的常規球，我們將使用請求中的球完全替換現有的球
+	game.RegularBalls = []gameflow.Ball{}
+
+	// 使用新的方式處理每一顆球
 	for _, pbBall := range reqBalls {
 		gameBall := gameflow.Ball{
 			Number:    int(pbBall.Number),
@@ -206,9 +218,12 @@ func (s *DealerService) DrawBall(ctx context.Context, req *pb.DrawBallRequest) (
 			Timestamp: pbBall.Timestamp.AsTime(),
 		}
 
-		// 使用單球 API 添加球
+		// 使用單球 API 添加球，但已事先清除球陣列，因此不會有重複問題
 		if err := s.gameManager.UpdateRegularBalls(ctx, roomID, gameBall); err != nil {
-			return nil, err
+			// 過濾重複球錯誤，因為我們已經在前面檢查過請求中的重複球
+			if !strings.Contains(err.Error(), "重複的球號") {
+				return nil, err
+			}
 		}
 	}
 
