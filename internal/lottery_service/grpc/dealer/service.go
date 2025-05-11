@@ -379,19 +379,22 @@ func (s *DealerService) DrawJackpotBall(ctx context.Context, req *pb.DrawJackpot
 			Timestamp: pbBall.Timestamp.AsTime(),
 		}
 
-		// 直接使用 gameflow.AddBall 方法添加JP球
-		_, err := gameflow.AddBall(game, gameBall.Number, gameBall.Type, gameBall.IsLast)
+		// 使用新的 UpdateJackpotBalls 方法添加JP球
+		err := s.gameManager.UpdateJackpotBalls(ctx, roomID, gameBall)
 		if err != nil {
+			s.logger.Error("添加JP球失敗",
+				zap.String("roomID", roomID),
+				zap.Int("ballNumber", gameBall.Number),
+				zap.Error(err))
 			return nil, err
 		}
 
+		s.logger.Info("成功添加JP球",
+			zap.String("roomID", roomID),
+			zap.Int("ballNumber", gameBall.Number))
+
 		// 如果是最後一個球並且標記為最後一球，自動推進遊戲階段
 		if gameBall.IsLast {
-			// 通過回調方法觸發球被抽取事件
-			if s.gameManager.GetOnBallDrawnCallback() != nil {
-				s.gameManager.GetOnBallDrawnCallback()(game.GameID, gameBall)
-			}
-
 			go func() {
 				// 使用無超時的 context
 				ctx := context.Background()

@@ -194,6 +194,26 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 			return nil, fmt.Errorf("已達到最大額外球數量")
 		}
 
+	case BallTypeJackpot:
+		if game.CurrentStage != StageJackpotDrawingStart {
+			return nil, fmt.Errorf("Jackpot球只能在 %s 階段抽取", StageJackpotDrawingStart)
+		}
+		// 確保 Jackpot 存在
+		if game.Jackpot == nil {
+			// 如果 Jackpot 不存在，初始化它
+			game.Jackpot = &JackpotGame{
+				ID:         fmt.Sprintf("jackpot_%s", time.Now().Format("20060102150405")),
+				StartTime:  time.Now(),
+				DrawnBalls: make([]Ball, 0),
+				LuckyBalls: make([]Ball, 0),
+				Active:     true,
+				Amount:     500000, // 默認JP金額
+			}
+		}
+		if IsBallDuplicate(number, game.Jackpot.DrawnBalls) {
+			return nil, fmt.Errorf("重複的Jackpot球號: %d", number)
+		}
+
 	case BallTypeLucky:
 		if game.CurrentStage != StageDrawingLuckyBallsStart {
 			return nil, fmt.Errorf("幸運號碼球只能在 %s 階段抽取", StageDrawingLuckyBallsStart)

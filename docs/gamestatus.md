@@ -235,38 +235,40 @@
 
 ```json
 {
-    "balls": [
-        { "number": 1, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 2, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 3, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 4, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 5, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 6, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 7, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 8, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 9, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 10, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 11, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 12, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 13, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 14, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 15, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 16, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 17, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 18, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 19, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 20, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 21, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 22, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 23, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 24, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 25, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 26, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 27, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 28, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 29, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
-        { "number": 30, "type": "BALL_TYPE_REGULAR", "isLast": true, "timestamp": "2024-06-19T08:00:00Z" }
-    ]
+
+  "roomId": "SG01",
+  "balls": [
+      { "number": 1, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 2, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 3, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 4, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 5, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 6, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 7, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 8, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 9, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 10, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 11, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 12, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 13, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 14, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 15, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 16, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 17, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 18, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 19, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 20, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 21, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 22, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 23, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 24, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 25, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 26, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 27, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 28, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 29, "type": "BALL_TYPE_REGULAR", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
+      { "number": 30, "type": "BALL_TYPE_REGULAR", "isLast": true, "timestamp": "2024-06-19T08:00:00Z" }
+  ]
 }
 ```
 
@@ -286,6 +288,7 @@
 
 ```json
 {
+  "roomId": "SG01",
     "balls": [
         { "number": 31, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
         { "number": 32, "type": "BALL_TYPE_EXTRA", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
@@ -300,6 +303,7 @@
 
 ```json
 {
+    "roomId": "SG01",
     "balls": [
         { "number": 1, "type": "BALL_TYPE_JACKPOT", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
         { "number": 2, "type": "BALL_TYPE_JACKPOT", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
@@ -376,6 +380,7 @@
 
 ```json
 {
+  "roomId": "SG01",
     "balls": [
         { "number": 1, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
         { "number": 2, "type": "BALL_TYPE_LUCKY", "isLast": false, "timestamp": "2024-06-19T08:00:00Z" },
@@ -403,4 +408,3 @@
 ```json
 {}
 ```
-
