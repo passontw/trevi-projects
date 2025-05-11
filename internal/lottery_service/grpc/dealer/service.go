@@ -54,6 +54,9 @@ func (s *DealerService) registerEventHandlers() {
 	// 註冊各種回調函數
 	s.gameManager.SetOnBallDrawnCallback(s.onBallDrawn) // 球抽取回調
 
+	// 註冊階段變化回調
+	s.gameManager.SetOnStageChangedCallback(s.onStageChanged) // 階段變化回調
+
 	s.logger.Info("事件處理函數註冊完成")
 }
 
@@ -1523,15 +1526,15 @@ func (s *DealerService) StartJackpotRound(ctx context.Context, req *pb.StartJack
 }
 
 // parseRoomIDFromGameID 從遊戲ID提取房間ID
-// 假設格式為 "房間ID_遊戲編號"，例如 "SG01_12345"
+// 遊戲ID格式為 "room_SG01_game_uuid"
 func (s *DealerService) parseRoomIDFromGameID(gameID string) string {
 	if gameID == "" || gameID == "system" {
 		return ""
 	}
 
 	parts := strings.Split(gameID, "_")
-	if len(parts) > 0 {
-		return parts[0]
+	if len(parts) >= 2 && parts[0] == "room" {
+		return parts[1] // 返回 "SG01" 等房間ID
 	}
 	return ""
 }

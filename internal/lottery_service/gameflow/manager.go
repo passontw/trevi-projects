@@ -24,15 +24,16 @@ type GameManager struct {
 	repo              GameRepository
 	logger            *zap.Logger
 	sidePicker        *SidePicker
-	stageMutex        sync.RWMutex                // 使用 RWMutex 代替 Mutex
-	currentGames      map[string]*GameData        // 以房間ID為鍵的遊戲映射
-	gameTimers        map[string]*time.Timer      // 以遊戲ID為鍵的計時器映射
-	stageTimeDefaults map[GameStage]time.Duration // 各階段默認時間
-	onGameCreated     func(string)                // 遊戲創建時的回調
-	onGameCancelled   func(string, string)        // 遊戲取消時的回調
-	onGameOver        func(string)                // 遊戲結束時的回調
-	onBallDrawn       func(string, Ball)          // 球抽取事件的回調
-	currentGame       *GameData                   // 向後兼容，使用默認房間的遊戲
+	stageMutex        sync.RWMutex                       // 使用 RWMutex 代替 Mutex
+	currentGames      map[string]*GameData               // 以房間ID為鍵的遊戲映射
+	gameTimers        map[string]*time.Timer             // 以遊戲ID為鍵的計時器映射
+	stageTimeDefaults map[GameStage]time.Duration        // 各階段默認時間
+	onGameCreated     func(string)                       // 遊戲創建時的回調
+	onGameCancelled   func(string, string)               // 遊戲取消時的回調
+	onGameOver        func(string)                       // 遊戲結束時的回調
+	onBallDrawn       func(string, Ball)                 // 球抽取事件的回調
+	onStageChanged    func(string, GameStage, GameStage) // 階段變化事件的回調
+	currentGame       *GameData                          // 向後兼容，使用默認房間的遊戲
 
 	// 多房間相關配置
 	defaultRoom    string   // 默認房間ID
@@ -408,6 +409,9 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 		zap.String("gameID", game.GameID),
 		zap.String("from", string(previousStage)),
 		zap.String("to", string(nextStage)))
+
+	// 觸發階段變化事件
+	m.handleStageChanged(roomID, previousStage, nextStage)
 
 	// 如果是 GameOver 階段，觸發事件並準備下一局
 	if nextStage == StageGameOver {
@@ -999,4 +1003,37 @@ func (m *GameManager) ResetGameForRoom(ctx context.Context, roomID string) (*Gam
 		zap.String("newGameID", gameID))
 
 	return newGame, nil
+}
+
+// SetOnStageChangedCallback 設置階段變化事件回調函數
+func (m *GameManager) SetOnStageChangedCallback(callback func(string, GameStage, GameStage)) {
+	m.stageMutex.Lock()
+	defer m.stageMutex.Unlock()
+	m.onStageChanged = callback
+}
+
+// handleStageChanged 處理階段變化事件
+func (m *GameManager) handleStageChanged(roomID string, oldStage, newStage GameStage) {
+	m.logger.Info("收到遊戲階段變更通知",
+		zap.String("roomID", roomID),
+		zap.String("oldStage", string(oldStage)),
+		zap.String("newStage", string(newStage)))
+
+	// 查找對應的遊戲
+	game, exists := m.currentGames[roomID]
+	if !exists || game == nil {
+		m.logger.Warn("找不到指定的遊戲",
+			zap.String("roomID", roomID))
+		return
+	}
+
+	m.logger.Info("遊戲階段已設置為",
+		zap.String("roomID", roomID),
+		zap.String("oldStage", string(oldStage)),
+		zap.String("newStage", string(newStage)))
+
+	// 觸發階段變化事件
+	if m.onStageChanged != nil {
+		m.onStageChanged(game.GameID, oldStage, newStage)
+	}
 }
