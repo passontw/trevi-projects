@@ -20,12 +20,13 @@ import (
 
 // GrpcServer 代表 gRPC 服務器
 type GrpcServer struct {
-	config      *config.AppConfig
-	logger      *zap.Logger
-	server      *grpc.Server
-	dealerSvc   *dealer.DealerService
-	gameManager *gameflow.GameManager
-	listener    net.Listener
+	config        *config.AppConfig
+	logger        *zap.Logger
+	server        *grpc.Server
+	dealerSvc     *dealer.DealerService
+	dealerWrapper *dealer.DealerServiceWrapper
+	gameManager   *gameflow.GameManager
+	listener      net.Listener
 }
 
 // NewGrpcServer 創建新的 gRPC 服務器
@@ -65,11 +66,18 @@ func NewGrpcServer(
 		gameManager: gameManager,
 	}
 
-	// 創建並註冊 DealerService
-	logger.Info("註冊 DealerService 到 gRPC 服務器")
+	// 創建並註冊 DealerServiceWrapper
+	logger.Info("創建並註冊 DealerServiceWrapper 到 gRPC 服務器")
+	// 先創建原始服務（內部使用）
 	dealerSvc := dealer.NewDealerService(logger, gameManager)
-	pb.RegisterDealerServiceServer(server, dealerSvc)
 	grpcServer.dealerSvc = dealerSvc
+
+	// 創建包裝器服務（對外暴露）
+	dealerWrapper := dealer.NewDealerServiceWrapper(logger, gameManager)
+	grpcServer.dealerWrapper = dealerWrapper
+
+	// 註冊服務到 gRPC 服務器
+	pb.RegisterDealerServiceServer(server, dealerSvc)
 
 	// 啟用反射服務，支持諸如 grpcurl 之類的工具進行服務發現
 	logger.Info("啟用 gRPC 反射服務")

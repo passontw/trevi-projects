@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package api.v1.dealer;
+
+import "proto/common/common.proto";
+import "proto/api/v1/dealer/ball.proto";
+import "proto/api/v1/dealer/game.proto";
+
+option go_package = "g38_lottery_service/internal/generated/api/v1/dealer";
+
+// GameEvent 代表一個遊戲事件
+message GameEvent {
+  // 事件類型
+  common.GameEventType type = 1;
+  
+  // 事件時間戳
+  int64 timestamp = 2;
+  
+  // 事件數據
+  oneof event_data {
+    StageChangedEvent stage_changed = 3;
+    BallDrawnEvent ball_drawn = 4;
+    GameCreatedEvent game_created = 5;
+    GameCancelledEvent game_cancelled = 6;
+    JackpotBallDrawnEvent jackpot_ball_drawn = 7;
+    ExtraBallDrawnEvent extra_ball_drawn = 8;
+    LuckyBallDrawnEvent lucky_ball_drawn = 9;
+    GameData game_data = 10;
+  }
+}
+
+// StageChangedEvent 表示遊戲階段變化事件
+message StageChangedEvent {
+  // 遊戲ID
+  string game_id = 1;
+  
+  // 舊階段
+  common.GameStage old_stage = 2;
+  
+  // 新階段
+  common.GameStage new_stage = 3;
+}
+
+// BallDrawnEvent 表示抽球事件
+message BallDrawnEvent {
+  // 遊戲ID
+  string game_id = 1;
+  
+  // 抽出的球
+  Ball ball = 2;
+  
+  // 球在序列中的位置
+  int32 position = 3;
+}
+
+// GameCreatedEvent 表示遊戲創建事件
+message GameCreatedEvent {
+  // 遊戲數據
+  GameData game_data = 1;
+}
+
+// GameCancelledEvent 表示遊戲取消事件
+message GameCancelledEvent {
+  // 遊戲ID
+  string game_id = 1;
+  
+  // 取消原因
+  string reason = 2;
+}
+
+// JackpotBallDrawnEvent 表示頭獎球抽取事件
+message JackpotBallDrawnEvent {
+  // 遊戲ID
+  string game_id = 1;
+  
+  // 頭獎球
+  Ball ball = 2;
+}
+
+// ExtraBallDrawnEvent 表示額外球抽取事件
+message ExtraBallDrawnEvent {
+  // 遊戲ID
+  string game_id = 1;
+  
+  // 額外球
+  Ball ball = 2;
+  
+  // 球側
+  common.ExtraBallSide side = 3;
+}
+
+// LuckyBallDrawnEvent 表示幸運球抽取事件
+message LuckyBallDrawnEvent {
+  // 遊戲ID
+  string game_id = 1;
+  
+  // 幸運球列表
+  repeated Ball balls = 2;
+} 

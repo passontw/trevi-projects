@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package api.v1.dealer;
+
+option go_package = "g38_lottery_service/internal/generated/api/v1/dealer";
+
+// Ball 代表一個球
+message Ball {
+  // id 球的唯一標識符
+  string id = 1;
+  
+  // number 球號
+  int32 number = 2;
+  
+  // color 球顏色
+  string color = 3;
+  
+  // is_odd 是否為奇數
+  bool is_odd = 4;
+  
+  // is_small 是否為小號球（1-20為小號）
+  bool is_small = 5;
+}
+
+// ExtraBallRequest 抽取額外球的請求
+message ExtraBallRequest {
+  // ball_type 球類型
+  string ball_type = 1;
+} 

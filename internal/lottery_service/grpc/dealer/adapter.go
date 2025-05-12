@@ -1,293 +1,176 @@
 package dealer
 
 import (
-	"fmt"
-	"math/rand"
+	"crypto/rand"
+	"math/big"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
+	commonpb "g38_lottery_service/internal/generated/common"
 	oldpb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
 
-	newpb "g38_lottery_service/internal/generated/api/v1/lottery"
-	commonpb "g38_lottery_service/internal/generated/common"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// 這個文件作為過渡期間的適配器，將新的 proto 定義映射到舊的 proto 定義
-// 在完全遷移到新的 proto 之前，這個適配器允許新舊代碼共存
+// 這個文件作為適配器層，將新版的 API 格式轉換為舊的 proto 格式，反之亦然
 
-// ConvertGameStage 將新的 GameStage 轉換為舊的 GameStage
-func ConvertGameStage(stage commonpb.GameStage) oldpb.GameStage {
-	return oldpb.GameStage(stage)
-}
-
-// ConvertGameStageToNew 將舊的 GameStage 轉換為新的 GameStage
-func ConvertGameStageToNew(stage oldpb.GameStage) commonpb.GameStage {
-	return commonpb.GameStage(stage)
-}
-
-// ConvertExtraBallSide 將新的 ExtraBallSide 轉換為舊的 ExtraBallSide
-func ConvertExtraBallSide(side commonpb.ExtraBallSide) oldpb.ExtraBallSide {
-	return oldpb.ExtraBallSide(side)
-}
-
-// ConvertExtraBallSideToNew 將舊的 ExtraBallSide 轉換為新的 ExtraBallSide
-func ConvertExtraBallSideToNew(side oldpb.ExtraBallSide) commonpb.ExtraBallSide {
-	return commonpb.ExtraBallSide(side)
-}
-
-// ConvertGameEventType 將新的 GameEventType 轉換為舊的 GameEventType
-func ConvertGameEventType(eventType commonpb.GameEventType) oldpb.GameEventType {
-	return oldpb.GameEventType(eventType)
-}
-
-// ConvertBall 將新的 Ball 轉換為舊的 Ball
-func ConvertBall(ball *newpb.Ball) *oldpb.Ball {
-	if ball == nil {
-		return nil
-	}
-	return &oldpb.Ball{
-		Number:    ball.Number,
-		Type:      oldpb.BallType(ball.Type),
-		IsLast:    ball.IsLast,
-		Timestamp: ball.Timestamp,
-	}
-}
-
-// ConvertBallToNew 將舊的 Ball 轉換為新的 Ball
-func ConvertBallToNew(ball *oldpb.Ball) *newpb.Ball {
-	if ball == nil {
-		return nil
-	}
-	return &newpb.Ball{
-		Number:    ball.Number,
-		Type:      newpb.BallType(ball.Type),
-		IsLast:    ball.IsLast,
-		Timestamp: ball.Timestamp,
-	}
-}
-
-// ConvertGameData 將新的 GameData 轉換為舊的 GameData
-func ConvertGameData(gameData *newpb.GameData) *oldpb.GameData {
-	if gameData == nil {
-		return nil
-	}
-
-	regularBalls := make([]*oldpb.Ball, 0, len(gameData.RegularBalls))
-	for _, ball := range gameData.RegularBalls {
-		regularBalls = append(regularBalls, ConvertBall(ball))
-	}
-
-	luckyBalls := make([]*oldpb.Ball, 0, len(gameData.LuckyBalls))
-	for _, ball := range gameData.LuckyBalls {
-		luckyBalls = append(luckyBalls, ConvertBall(ball))
-	}
-
-	result := &oldpb.GameData{
-		GameId:       gameData.GameId,
-		CurrentStage: ConvertGameStage(gameData.CurrentStage),
-		StartTime:    gameData.StartTime,
-		EndTime:      gameData.EndTime,
-		RegularBalls: regularBalls,
-		SelectedSide: ConvertExtraBallSide(gameData.SelectedExtraBallSide),
-	}
-
-	// 如果有額外球，轉換額外球
-	if gameData.ExtraBall != nil {
-		result.ExtraBalls = []*oldpb.Ball{ConvertBall(gameData.ExtraBall)}
-	}
-
-	// 如果有頭獎球，轉換頭獎球
-	if gameData.JackpotBall != nil {
-		result.JackpotBalls = []*oldpb.Ball{ConvertBall(gameData.JackpotBall)}
-	}
-
-	// 設置幸運球
-	result.LuckyBalls = luckyBalls
-
-	return result
-}
-
-// ConvertGameStatus 將新的 GameStatus 轉換為舊的 GameStatus
-func ConvertGameStatus(status *commonpb.GameStatus) *oldpb.GameStatus {
-	if status == nil {
-		return nil
-	}
-	return &oldpb.GameStatus{
-		Stage:   ConvertGameStage(status.Stage),
-		Message: status.Message,
-	}
-}
-
-// ConvertGameEvent 將新的 GameEvent 轉換為舊的 GameEvent
-func ConvertGameEvent(event *newpb.GameEvent) *oldpb.GameEvent {
-	if event == nil {
-		return nil
-	}
-
-	result := &oldpb.GameEvent{
-		EventType: ConvertGameEventType(event.Type),
-		Timestamp: event.Timestamp,
-		GameId:    event.GameId,
-	}
-
-	// 根據事件類型轉換對應的事件數據
-	switch x := event.EventData.(type) {
-	case *newpb.GameEvent_BallDrawn:
-		result.EventData = &oldpb.GameEvent_BallDrawn{
-			BallDrawn: &oldpb.BallDrawnEvent{
-				Ball: ConvertBall(x.BallDrawn.Ball),
-			},
-		}
-	case *newpb.GameEvent_StageChanged:
-		result.EventData = &oldpb.GameEvent_StageChanged{
-			StageChanged: &oldpb.StageChangedEvent{
-				OldStage: ConvertGameStage(x.StageChanged.OldStage),
-				NewStage: ConvertGameStage(x.StageChanged.NewStage),
-			},
-		}
-	case *newpb.GameEvent_NewGame:
-		result.EventData = &oldpb.GameEvent_GameCreated{
-			GameCreated: &oldpb.GameCreatedEvent{
-				InitialState: ConvertGameData(x.NewGame.GameData),
-			},
-		}
-	case *newpb.GameEvent_GameCancelled:
-		result.EventData = &oldpb.GameEvent_GameCancelled{
-			GameCancelled: &oldpb.GameCancelledEvent{
-				Reason:     x.GameCancelled.Reason,
-				CancelTime: timestamppb.Now(),
-			},
-		}
-	case *newpb.GameEvent_ExtraBallSideSelected:
-		result.EventData = &oldpb.GameEvent_ExtraBallSideSelected{
-			ExtraBallSideSelected: &oldpb.ExtraBallSideSelectedEvent{
-				SelectedSide: ConvertExtraBallSide(x.ExtraBallSideSelected.Side),
-			},
-		}
-	case *newpb.GameEvent_Heartbeat:
-		result.EventData = &oldpb.GameEvent_Heartbeat{
-			Heartbeat: &oldpb.HeartbeatEvent{
-				Message: fmt.Sprintf("Heartbeat: %d", x.Heartbeat.Count),
-			},
-		}
-	}
-
-	return result
-}
-
-// ConvertStartNewRoundResponse 將新的 StartNewRoundResponse 轉換為舊的 StartNewRoundResponse
-func ConvertStartNewRoundResponse(resp *newpb.StartNewRoundResponse) *oldpb.StartNewRoundResponse {
-	if resp == nil {
-		return nil
-	}
-	return &oldpb.StartNewRoundResponse{
-		GameId:       resp.GameId,
-		StartTime:    resp.StartTime,
-		CurrentStage: ConvertGameStage(resp.CurrentStage),
-	}
-}
-
-// ConvertDrawBallResponse 將新的 DrawBallResponse 轉換為舊的 DrawBallResponse
-func ConvertDrawBallResponse(resp *newpb.DrawBallResponse) *oldpb.DrawBallResponse {
-	if resp == nil {
-		return nil
-	}
-
-	balls := make([]*oldpb.Ball, 0, len(resp.Balls))
-	for _, ball := range resp.Balls {
-		balls = append(balls, ConvertBall(ball))
-	}
-
-	return &oldpb.DrawBallResponse{
-		Balls:      balls,
-		GameStatus: ConvertGameStatus(resp.Status),
-	}
-}
-
-// ConvertDrawExtraBallResponse 將新的 DrawExtraBallResponse 轉換為舊的 DrawExtraBallResponse
-func ConvertDrawExtraBallResponse(resp *newpb.DrawExtraBallResponse) *oldpb.DrawExtraBallResponse {
-	if resp == nil {
-		return nil
-	}
-
-	balls := []*oldpb.Ball{}
-	if resp.ExtraBall != nil {
-		balls = append(balls, ConvertBall(resp.ExtraBall))
-	}
-
-	return &oldpb.DrawExtraBallResponse{
-		Balls: balls,
-	}
-}
-
-// ConvertDrawJackpotBallResponse 將新的 DrawJackpotBallResponse 轉換為舊的 DrawJackpotBallResponse
-func ConvertDrawJackpotBallResponse(resp *newpb.DrawJackpotBallResponse) *oldpb.DrawJackpotBallResponse {
-	if resp == nil {
-		return nil
-	}
-
-	balls := []*oldpb.Ball{}
-	if resp.JackpotBall != nil {
-		balls = append(balls, ConvertBall(resp.JackpotBall))
-	}
-
-	return &oldpb.DrawJackpotBallResponse{
-		Balls: balls,
-	}
-}
-
-// ConvertDrawLuckyBallResponse 將新的 DrawLuckyBallResponse 轉換為舊的 DrawLuckyBallResponse
-func ConvertDrawLuckyBallResponse(resp *newpb.DrawLuckyBallResponse) *oldpb.DrawLuckyBallResponse {
-	if resp == nil {
-		return nil
-	}
-
-	balls := make([]*oldpb.Ball, 0, len(resp.LuckyBalls))
-	for _, ball := range resp.LuckyBalls {
-		balls = append(balls, ConvertBall(ball))
-	}
-
-	return &oldpb.DrawLuckyBallResponse{
-		Balls: balls,
-	}
-}
-
-// ConvertGetGameStatusResponse 將新的 GetGameStatusResponse 轉換為舊的 GetGameStatusResponse
-func ConvertGetGameStatusResponse(resp *newpb.GetGameStatusResponse) *oldpb.GetGameStatusResponse {
-	if resp == nil {
-		return nil
-	}
-	return &oldpb.GetGameStatusResponse{
-		GameData: ConvertGameData(resp.GameData),
-	}
-}
-
-// ConvertStartJackpotRoundResponse 將新的 StartJackpotRoundResponse 轉換為舊的 StartJackpotRoundResponse
-func ConvertStartJackpotRoundResponse(resp *newpb.StartJackpotRoundResponse) *oldpb.StartJackpotRoundResponse {
-	if resp == nil {
-		return nil
-	}
-	return &oldpb.StartJackpotRoundResponse{
-		Success:  true,
-		GameId:   resp.GameId,
-		OldStage: oldpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT,
-		NewStage: ConvertGameStage(resp.CurrentStage),
-	}
-}
-
-// 以下是用於將舊版 proto 轉換為新版 proto 的函數
-
-// ConvertBallReverse 將新的 Ball 轉換為舊的 Ball (保留為向後兼容)
-func ConvertBallReverse(ball *newpb.Ball) *oldpb.Ball {
-	return ConvertBall(ball)
-}
-
-// GenerateRandomString 生成隨機字符串，用作 ID
+// GenerateRandomString 生成指定長度的隨機字符串
 func GenerateRandomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	result := make([]byte, length)
 	for i := range result {
-		result[i] = charset[rand.Intn(len(charset))]
+		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		result[i] = charset[n.Int64()]
 	}
 	return string(result)
+}
+
+// ConvertGameStageToDealerPb 將遊戲階段轉換為舊版 oldpb.GameStage
+func ConvertGameStageToDealerPb(stage commonpb.GameStage) oldpb.GameStage {
+	switch stage {
+	case commonpb.GameStage_GAME_STAGE_UNSPECIFIED:
+		return oldpb.GameStage_GAME_STAGE_UNSPECIFIED
+	case commonpb.GameStage_GAME_STAGE_PREPARATION:
+		return oldpb.GameStage_GAME_STAGE_PREPARATION
+	case commonpb.GameStage_GAME_STAGE_NEW_ROUND:
+		return oldpb.GameStage_GAME_STAGE_NEW_ROUND
+	case commonpb.GameStage_GAME_STAGE_GAME_OVER:
+		return oldpb.GameStage_GAME_STAGE_GAME_OVER
+	case commonpb.GameStage_GAME_STAGE_CARD_PURCHASE_OPEN:
+		return oldpb.GameStage_GAME_STAGE_CARD_PURCHASE_OPEN
+	case commonpb.GameStage_GAME_STAGE_CARD_PURCHASE_CLOSE:
+		return oldpb.GameStage_GAME_STAGE_CARD_PURCHASE_CLOSE
+	case commonpb.GameStage_GAME_STAGE_DRAWING_START:
+		return oldpb.GameStage_GAME_STAGE_DRAWING_START
+	case commonpb.GameStage_GAME_STAGE_DRAWING_CLOSE:
+		return oldpb.GameStage_GAME_STAGE_DRAWING_CLOSE
+	case commonpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT:
+		return oldpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT
+	case commonpb.GameStage_GAME_STAGE_JACKPOT_START:
+		return oldpb.GameStage_GAME_STAGE_JACKPOT_START
+	default:
+		return oldpb.GameStage_GAME_STAGE_UNSPECIFIED
+	}
+}
+
+// ConvertGameStageFromDealerPb 將舊版 oldpb.GameStage 轉換為 commonpb.GameStage
+func ConvertGameStageFromDealerPb(stage oldpb.GameStage) commonpb.GameStage {
+	switch stage {
+	case oldpb.GameStage_GAME_STAGE_UNSPECIFIED:
+		return commonpb.GameStage_GAME_STAGE_UNSPECIFIED
+	case oldpb.GameStage_GAME_STAGE_PREPARATION:
+		return commonpb.GameStage_GAME_STAGE_PREPARATION
+	case oldpb.GameStage_GAME_STAGE_NEW_ROUND:
+		return commonpb.GameStage_GAME_STAGE_NEW_ROUND
+	case oldpb.GameStage_GAME_STAGE_GAME_OVER:
+		return commonpb.GameStage_GAME_STAGE_GAME_OVER
+	case oldpb.GameStage_GAME_STAGE_CARD_PURCHASE_OPEN:
+		return commonpb.GameStage_GAME_STAGE_CARD_PURCHASE_OPEN
+	case oldpb.GameStage_GAME_STAGE_CARD_PURCHASE_CLOSE:
+		return commonpb.GameStage_GAME_STAGE_CARD_PURCHASE_CLOSE
+	case oldpb.GameStage_GAME_STAGE_DRAWING_START:
+		return commonpb.GameStage_GAME_STAGE_DRAWING_START
+	case oldpb.GameStage_GAME_STAGE_DRAWING_CLOSE:
+		return commonpb.GameStage_GAME_STAGE_DRAWING_CLOSE
+	case oldpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT:
+		return commonpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT
+	case oldpb.GameStage_GAME_STAGE_JACKPOT_START:
+		return commonpb.GameStage_GAME_STAGE_JACKPOT_START
+	default:
+		return commonpb.GameStage_GAME_STAGE_UNSPECIFIED
+	}
+}
+
+// ConvertExtraBallSideToDealerPb 將額外球邊轉換為舊版 oldpb.ExtraBallSide
+func ConvertExtraBallSideToDealerPb(side commonpb.ExtraBallSide) oldpb.ExtraBallSide {
+	switch side {
+	case commonpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT:
+		return oldpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT
+	case commonpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT:
+		return oldpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT
+	default:
+		return oldpb.ExtraBallSide_EXTRA_BALL_SIDE_UNSPECIFIED
+	}
+}
+
+// ConvertExtraBallSideFromDealerPb 將舊版 oldpb.ExtraBallSide 轉換為 commonpb.ExtraBallSide
+func ConvertExtraBallSideFromDealerPb(side oldpb.ExtraBallSide) commonpb.ExtraBallSide {
+	switch side {
+	case oldpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT:
+		return commonpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT
+	case oldpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT:
+		return commonpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT
+	default:
+		return commonpb.ExtraBallSide_EXTRA_BALL_SIDE_UNSPECIFIED
+	}
+}
+
+// ConvertGameEventTypeToDealerPb 將事件類型轉換為舊版 oldpb.GameEventType
+func ConvertGameEventTypeToDealerPb(eventType commonpb.GameEventType) oldpb.GameEventType {
+	switch eventType {
+	case commonpb.GameEventType_GAME_EVENT_TYPE_UNSPECIFIED:
+		return oldpb.GameEventType_GAME_EVENT_TYPE_UNSPECIFIED
+	case commonpb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION:
+		return oldpb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION
+	case commonpb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT:
+		return oldpb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT
+	default:
+		return oldpb.GameEventType_GAME_EVENT_TYPE_UNSPECIFIED
+	}
+}
+
+// ConvertGameEventTypeFromDealerPb 將舊版 oldpb.GameEventType 轉換為 commonpb.GameEventType
+func ConvertGameEventTypeFromDealerPb(eventType oldpb.GameEventType) commonpb.GameEventType {
+	switch eventType {
+	case oldpb.GameEventType_GAME_EVENT_TYPE_UNSPECIFIED:
+		return commonpb.GameEventType_GAME_EVENT_TYPE_UNSPECIFIED
+	case oldpb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION:
+		return commonpb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION
+	case oldpb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT:
+		return commonpb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT
+	default:
+		return commonpb.GameEventType_GAME_EVENT_TYPE_UNSPECIFIED
+	}
+}
+
+// ConvertGameStatusToDealerPb 將遊戲狀態轉換為舊版 oldpb.GameStatus
+func ConvertGameStatusToDealerPb(status *commonpb.GameStatus) *oldpb.GameStatus {
+	if status == nil {
+		return nil
+	}
+	return &oldpb.GameStatus{
+		Stage:   ConvertGameStageToDealerPb(status.Stage),
+		Message: status.Message,
+	}
+}
+
+// ConvertGameStatusFromDealerPb 將舊版 oldpb.GameStatus 轉換為 commonpb.GameStatus
+func ConvertGameStatusFromDealerPb(status *oldpb.GameStatus) *commonpb.GameStatus {
+	if status == nil {
+		return nil
+	}
+	return &commonpb.GameStatus{
+		Stage:   ConvertGameStageFromDealerPb(status.Stage),
+		Message: status.Message,
+	}
+}
+
+// ConvertBallToDealerPb 將球轉換為舊版 oldpb.Ball
+func ConvertBallToDealerPb(number int32, ballType oldpb.BallType, isLast bool) *oldpb.Ball {
+	return &oldpb.Ball{
+		Number:    number,
+		Type:      ballType,
+		IsLast:    isLast,
+		Timestamp: timestamppb.Now(),
+	}
+}
+
+// ConvertBallsFromDealerPb 將舊版 oldpb.Ball 陣列轉換為新版 Ball 陣列
+func ConvertBallsFromDealerPb(balls []*oldpb.Ball) []*oldpb.Ball {
+	if balls == nil {
+		return nil
+	}
+	result := make([]*oldpb.Ball, 0, len(balls))
+	for _, ball := range balls {
+		result = append(result, ball)
+	}
+	return result
 }

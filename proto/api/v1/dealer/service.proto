@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package api.v1.dealer;
+
+import "proto/api/v1/dealer/game.proto";
+import "proto/api/v1/dealer/ball.proto";
+import "proto/api/v1/dealer/events.proto";
+import "proto/common/common.proto";
+
+option go_package = "g38_lottery_service/internal/generated/api/v1/dealer";
+
+// DealerService 提供荷官服務相關功能
+service DealerService {
+  // StartNewRound 開始新的遊戲回合
+  rpc StartNewRound(StartNewRoundRequest) returns (StartNewRoundResponse);
+  
+  // DrawBall 抽取遊戲球
+  rpc DrawBall(DrawBallRequest) returns (DrawBallResponse);
+  
+  // DrawExtraBall 抽取額外球
+  rpc DrawExtraBall(DrawExtraBallRequest) returns (DrawExtraBallResponse);
+  
+  // DrawJackpotBall 抽取頭獎球
+  rpc DrawJackpotBall(DrawJackpotBallRequest) returns (DrawJackpotBallResponse);
+  
+  // DrawLuckyBall 抽取幸運球
+  rpc DrawLuckyBall(DrawLuckyBallRequest) returns (DrawLuckyBallResponse);
+  
+  // CancelGame 取消遊戲
+  rpc CancelGame(CancelGameRequest) returns (CancelGameResponse);
+  
+  // GetGameStatus 獲取遊戲狀態
+  rpc GetGameStatus(GetGameStatusRequest) returns (GetGameStatusResponse);
+  
+  // StartJackpotRound 開始頭獎回合
+  rpc StartJackpotRound(StartJackpotRoundRequest) returns (StartJackpotRoundResponse);
+  
+  // SubscribeGameEvents 訂閱遊戲事件
+  rpc SubscribeGameEvents(SubscribeGameEventsRequest) returns (stream GameEvent);
+}
+
+// StartNewRoundRequest 開始新遊戲回合的請求
+message StartNewRoundRequest {
+}
+
+// StartNewRoundResponse 開始新遊戲回合的響應
+message StartNewRoundResponse {
+  // game_data 遊戲數據
+  GameData game_data = 1;
+}
+
+// DrawBallRequest 抽球請求
+message DrawBallRequest {
+}
+
+// DrawBallResponse 抽球響應
+message DrawBallResponse {
+  // game_data 遊戲數據
+  GameData game_data = 1;
+}
+
+// DrawExtraBallRequest 抽取額外球的請求
+message DrawExtraBallRequest {
+  // side 抽取的額外球側（左或右）
+  common.ExtraBallSide side = 1;
+}
+
+// DrawExtraBallResponse 抽取額外球的響應
+message DrawExtraBallResponse {
+  // game_data 遊戲數據
+  GameData game_data = 1;
+}
+
+// DrawJackpotBallRequest 抽取頭獎球的請求
+message DrawJackpotBallRequest {
+}
+
+// DrawJackpotBallResponse 抽取頭獎球的響應
+message DrawJackpotBallResponse {
+  // game_data 遊戲數據
+  GameData game_data = 1;
+}
+
+// DrawLuckyBallRequest 抽取幸運球的請求
+message DrawLuckyBallRequest {
+  // count 指定抽取的球數量
+  int32 count = 1;
+}
+
+// DrawLuckyBallResponse 抽取幸運球的響應
+message DrawLuckyBallResponse {
+  // game_data 遊戲數據
+  GameData game_data = 1;
+}
+
+// CancelGameRequest 取消遊戲請求
+message CancelGameRequest {
+}
+
+// CancelGameResponse 取消遊戲響應
+message CancelGameResponse {
+  // game_data 遊戲數據
+  GameData game_data = 1;
+}
+
+// GetGameStatusRequest 獲取遊戲狀態請求
+message GetGameStatusRequest {
+}
+
+// GetGameStatusResponse 獲取遊戲狀態響應
+message GetGameStatusResponse {
+  // game_data 遊戲數據
+  GameData game_data = 1;
+}
+
+// StartJackpotRoundRequest 開始頭獎回合請求
+message StartJackpotRoundRequest {
+  // room_id 指定房間ID，通常為硬編碼值
+  string room_id = 1;
+}
+
+// StartJackpotRoundResponse 開始頭獎回合響應
+message StartJackpotRoundResponse {
+  // game_data 遊戲數據
+  GameData game_data = 1;
+}
+
+// SubscribeGameEventsRequest 訂閱遊戲事件請求
+message SubscribeGameEventsRequest {
+} 

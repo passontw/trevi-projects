@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package api.v1.dealer;
+
+import "proto/common/common.proto";
+import "proto/api/v1/dealer/ball.proto";
+
+option go_package = "g38_lottery_service/internal/generated/api/v1/dealer";
+
+// GameData 代表遊戲數據
+message GameData {
+  // id 遊戲ID
+  string id = 1;
+  
+  // room_id 房間ID
+  string room_id = 2;
+  
+  // stage 當前遊戲階段
+  common.GameStage stage = 3;
+  
+  // status 遊戲狀態
+  GameStatus status = 4;
+  
+  // drawn_balls 已經抽取的球
+  repeated Ball drawn_balls = 5;
+  
+  // extra_balls 額外球
+  map<string, Ball> extra_balls = 6;
+  
+  // jackpot_ball 頭獎球
+  Ball jackpot_ball = 7;
+  
+  // lucky_balls 幸運球
+  repeated Ball lucky_balls = 8;
+  
+  // created_at 創建時間
+  int64 created_at = 9;
+  
+  // updated_at 更新時間
+  int64 updated_at = 10;
+  
+  // dealer_id 荷官ID
+  string dealer_id = 11;
+}
+
+// GameStatus 表示遊戲的狀態
+enum GameStatus {
+  // GAME_STATUS_UNSPECIFIED 未指定
+  GAME_STATUS_UNSPECIFIED = 0;
+  
+  // GAME_STATUS_NOT_STARTED 遊戲未開始
+  GAME_STATUS_NOT_STARTED = 1;
+  
+  // GAME_STATUS_RUNNING 遊戲進行中
+  GAME_STATUS_RUNNING = 2;
+  
+  // GAME_STATUS_COMPLETED 遊戲已完成
+  GAME_STATUS_COMPLETED = 3;
+  
+  // GAME_STATUS_CANCELLED 遊戲已取消
+  GAME_STATUS_CANCELLED = 4;
+  
+  // GAME_STATUS_ERROR 遊戲錯誤
+  GAME_STATUS_ERROR = 5;
+} 
