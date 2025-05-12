@@ -1,5 +1,5 @@
 version: v1
-name: github.com/g38-lottery-service
+name: buf.build/g38_speed_bingo/g38-lottery-service
 deps:
   - buf.build/googleapis/googleapis
 breaking:

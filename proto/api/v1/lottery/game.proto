@@ -2,11 +2,11 @@ syntax = "proto3";
 
 package api.v1.lottery;
 
-import "proto/common/common.proto";
-import "proto/api/v1/lottery/ball.proto";
+import "common/common.proto";
+import "api/v1/lottery/ball.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/g38-lottery-service/internal/generated/api/v1/lottery";
+option go_package = "g38_lottery_service/internal/generated/api/v1/lottery";
 
 // GameData 代表遊戲的完整狀態
 message GameData {

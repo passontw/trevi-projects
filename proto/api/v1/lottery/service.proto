@@ -2,11 +2,13 @@ syntax = "proto3";
 
 package api.v1.lottery;
 
-import "proto/api/v1/lottery/ball.proto";
-import "proto/api/v1/lottery/game.proto";
-import "proto/api/v1/lottery/events.proto";
+import "common/common.proto";
+import "api/v1/lottery/ball.proto";
+import "api/v1/lottery/game.proto";
+import "api/v1/lottery/events.proto";
+import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/g38-lottery-service/internal/generated/api/v1/lottery";
+option go_package = "g38_lottery_service/internal/generated/api/v1/lottery";
 
 // LotteryService 提供彩票遊戲相關的操作接口
 service LotteryService {

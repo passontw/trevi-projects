@@ -7,8 +7,8 @@ import (
 
 	oldpb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
 
-	newpb "github.com/g38-lottery-service/internal/generated/api/v1/lottery"
-	commonpb "github.com/g38-lottery-service/internal/generated/common"
+	newpb "g38_lottery_service/internal/generated/api/v1/lottery"
+	commonpb "g38_lottery_service/internal/generated/common"
 )
 
 // 這個文件作為過渡期間的適配器，將新的 proto 定義映射到舊的 proto 定義
@@ -143,37 +143,43 @@ func ConvertGameEvent(event *newpb.GameEvent) *oldpb.GameEvent {
 	// 根據事件類型轉換對應的事件數據
 	switch x := event.EventData.(type) {
 	case *newpb.GameEvent_BallDrawn:
-		ballDrawn := &oldpb.BallDrawnEvent{
-			Ball: ConvertBall(x.BallDrawn.Ball),
+		result.EventData = &oldpb.GameEvent_BallDrawn{
+			BallDrawn: &oldpb.BallDrawnEvent{
+				Ball: ConvertBall(x.BallDrawn.Ball),
+			},
 		}
-		result.BallDrawn = ballDrawn
 	case *newpb.GameEvent_StageChanged:
-		stageChanged := &oldpb.StageChangedEvent{
-			OldStage: ConvertGameStage(x.StageChanged.OldStage),
-			NewStage: ConvertGameStage(x.StageChanged.NewStage),
+		result.EventData = &oldpb.GameEvent_StageChanged{
+			StageChanged: &oldpb.StageChangedEvent{
+				OldStage: ConvertGameStage(x.StageChanged.OldStage),
+				NewStage: ConvertGameStage(x.StageChanged.NewStage),
+			},
 		}
-		result.StageChanged = stageChanged
 	case *newpb.GameEvent_NewGame:
-		gameCreated := &oldpb.GameCreatedEvent{
-			InitialState: ConvertGameData(x.NewGame.GameData),
+		result.EventData = &oldpb.GameEvent_GameCreated{
+			GameCreated: &oldpb.GameCreatedEvent{
+				InitialState: ConvertGameData(x.NewGame.GameData),
+			},
 		}
-		result.GameCreated = gameCreated
 	case *newpb.GameEvent_GameCancelled:
-		gameCancelled := &oldpb.GameCancelledEvent{
-			Reason:     x.GameCancelled.Reason,
-			CancelTime: timestamppb.Now(),
+		result.EventData = &oldpb.GameEvent_GameCancelled{
+			GameCancelled: &oldpb.GameCancelledEvent{
+				Reason:     x.GameCancelled.Reason,
+				CancelTime: timestamppb.Now(),
+			},
 		}
-		result.GameCancelled = gameCancelled
 	case *newpb.GameEvent_ExtraBallSideSelected:
-		extraBallSideSelected := &oldpb.ExtraBallSideSelectedEvent{
-			SelectedSide: ConvertExtraBallSide(x.ExtraBallSideSelected.Side),
+		result.EventData = &oldpb.GameEvent_ExtraBallSideSelected{
+			ExtraBallSideSelected: &oldpb.ExtraBallSideSelectedEvent{
+				SelectedSide: ConvertExtraBallSide(x.ExtraBallSideSelected.Side),
+			},
 		}
-		result.ExtraBallSideSelected = extraBallSideSelected
 	case *newpb.GameEvent_Heartbeat:
-		heartbeat := &oldpb.HeartbeatEvent{
-			Message: fmt.Sprintf("Heartbeat: %d", x.Heartbeat.Count),
+		result.EventData = &oldpb.GameEvent_Heartbeat{
+			Heartbeat: &oldpb.HeartbeatEvent{
+				Message: fmt.Sprintf("Heartbeat: %d", x.Heartbeat.Count),
+			},
 		}
-		result.Heartbeat = heartbeat
 	}
 
 	return result
@@ -215,9 +221,7 @@ func ConvertDrawExtraBallResponse(resp *newpb.DrawExtraBallResponse) *oldpb.Draw
 	}
 
 	return &oldpb.DrawExtraBallResponse{
-		Balls:      []*oldpb.Ball{ConvertBall(resp.ExtraBall)},
-		GameId:     resp.GameId,
-		GameStatus: ConvertGameStatus(resp.Status),
+		Balls: []*oldpb.Ball{ConvertBall(resp.ExtraBall)},
 	}
 }
 
