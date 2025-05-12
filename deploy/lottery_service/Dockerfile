@@ -8,7 +8,7 @@ ENV GOSUMDB=off
 ENV CGO_ENABLED=0
 
 # 安裝必要工具
-RUN apt-get update && apt-get install -y gcc libc6-dev git bash protobuf-compiler libprotobuf-dev
+RUN apt-get update && apt-get install -y gcc libc6-dev git bash protobuf-compiler libprotobuf-dev curl
 
 # 設定工作目錄 - 這裡是關鍵，確保使用正確的模組路徑
 WORKDIR /go/src/g38_lottery_service
@@ -23,14 +23,19 @@ RUN go mod download
 RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0
 RUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0
 
+# 安裝 buf 工具
+RUN curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.30.0/buf-$(uname -s)-$(uname -m)" -o /usr/local/bin/buf && \
+    chmod +x /usr/local/bin/buf && \
+    buf --version
+
 # 複製所有源代碼
 COPY . .
 
 # 確保 script 可執行
-RUN chmod +x scripts/gen-proto-smart.sh
+RUN chmod +x scripts/gen-proto-buf.sh
 
 # 生成 protobuf 代碼
-RUN ./scripts/gen-proto-smart.sh
+RUN ./scripts/gen-proto-buf.sh
 
 # 驗證生成是否成功
 RUN find internal/generated -name "*.pb.go" | sort

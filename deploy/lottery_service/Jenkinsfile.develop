@@ -118,7 +118,21 @@ pipeline {
                             fi
                         """
                     } else {
-                        echo "Skipping Buf installation as no proto changes detected."
+                        echo "檢查 Buf 工具是否可用..."
+                        sh """
+                            BUF_BINARY=\$(which buf || echo "")
+                            if [ -z "\$BUF_BINARY" ] && [ ! -f ./buf ]; then
+                                echo "Buf not found, installing for potential use..."
+                                curl -sSL "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-\$(uname -s)-\$(uname -m)" -o ./buf
+                                chmod +x ./buf
+                                export PATH=\$PATH:\$(pwd)
+                                echo "Buf installed: \$(./buf --version)"
+                            elif [ -f ./buf ]; then
+                                echo "Buf already installed locally: \$(./buf --version)"
+                            else
+                                echo "Buf already installed system-wide: \$(\$BUF_BINARY --version)"
+                            fi
+                        """
                     }
                 }
             }
@@ -130,21 +144,13 @@ pipeline {
             }
             steps {
                 script {
-                    echo "Generating code from proto files..."
+                    echo "使用 Buf 生成 proto 代碼..."
                     sh """
-                        cd ${env.PROTO_ROOT}
+                        chmod +x scripts/gen-proto-buf.sh
+                        ./scripts/gen-proto-buf.sh
                         
-                        # 檢查 buf.yaml 存在性
-                        if [ -f buf.yaml ]; then
-                            echo "Running Buf..."
-                            ../buf generate
-                        else
-                            echo "buf.yaml not found, using protoc directly..."
-                            # 備用方案：使用 protoc 直接生成
-                            find . -name "*.proto" -type f -exec protoc --go_out=../internal/generated --go-grpc_out=../internal/generated {} \\;
-                        fi
-                        
-                        echo "Proto code generation completed."
+                        echo "檢查生成的文件:"
+                        find internal/generated -name "*.pb.go" | wc -l
                     """
                 }
             }
