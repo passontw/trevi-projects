@@ -88,6 +88,7 @@ type NacosConfig struct {
 
 // RocketMQConfig RocketMQ 配置
 type RocketMQConfig struct {
+	Enabled       bool     `json:"enabled"` // 是否啟用 RocketMQ
 	NameServers   []string `json:"nameServers"`
 	AccessKey     string   `json:"accessKey"`
 	SecretKey     string   `json:"secretKey"`
@@ -109,6 +110,20 @@ type RedisXMLConfig struct {
 			NodeList []string `xml:"node"`
 		} `xml:"nodes"`
 	} `xml:"redis"`
+}
+
+// TiDBXMLConfig 是 TiDB XML 配置的結構
+type TiDBXMLConfig struct {
+	XMLName xml.Name `xml:"config"`
+	DBs     []struct {
+		Name     string `xml:"name,attr"`
+		Type     string `xml:"type"`
+		Host     string `xml:"host"`
+		Port     string `xml:"port"`
+		DBName   string `xml:"name"`
+		User     string `xml:"user"`
+		Password string `xml:"password"`
+	} `xml:"db"`
 }
 
 // ===== 環境變量工具函數 =====
@@ -215,6 +230,45 @@ func uploadConfigToNacos(client nacosManager.NacosClient, dataId, group, content
 	return success, nil
 }
 
+// getNacosConfig 從 Nacos 獲取配置
+func getNacosConfig(nacosIp, nacosPort, dataId string) (string, error) {
+	log.Printf("嘗試從 Nacos 獲取配置: %s:%s, DataId: %s", nacosIp, nacosPort, dataId)
+
+	// 解析端口
+	port, err := strconv.ParseUint(nacosPort, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("解析 Nacos 端口失敗: %w", err)
+	}
+
+	// 創建 Nacos 配置
+	nacosConfig := &nacosManager.NacosConfig{
+		IpAddr:      nacosIp,
+		Port:        port,
+		NamespaceId: "public",
+		Username:    "nacos",
+		Password:    "nacos",
+	}
+
+	// 創建 Nacos 客戶端
+	client, err := nacosManager.NewNacosClient(nacosConfig)
+	if err != nil {
+		return "", fmt.Errorf("創建 Nacos 客戶端失敗: %w", err)
+	}
+
+	// 獲取配置
+	content, err := client.GetConfig(dataId, "DEFAULT_GROUP")
+	if err != nil {
+		return "", fmt.Errorf("從 Nacos 獲取配置失敗: %w", err)
+	}
+
+	if content == "" {
+		return "", fmt.Errorf("從 Nacos 獲取的配置為空")
+	}
+
+	log.Printf("成功從 Nacos 獲取配置: %s, 長度: %d 字節", dataId, len(content))
+	return content, nil
+}
+
 // ===== 配置加載主要函數 =====
 
 // LoadConfig 加載配置，優先使用 .env 中的 Nacos 設定取回配置
@@ -281,6 +335,32 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 			}
 		}
 
+		// 獲取 TiDB XML 配置
+		tidbDataId := getEnv("NACOS_TIDB_DATAID", "dbconfig.xml")
+		serviceName := getEnv("SERVICE_NAME", "g38_lottery_service")
+
+		log.Printf("將使用 TiDB 配置 DataId: %s, 服務名稱: %s", tidbDataId, serviceName)
+
+		if tidbDataId != "" {
+			log.Printf("嘗試從 Nacos 獲取 TiDB XML 配置 (DataId: %s, 服務名稱: %s)...", tidbDataId, serviceName)
+			tidbXmlContent, err := nacosClient.GetConfig(tidbDataId, config.Nacos.Group)
+			if err != nil {
+				log.Printf("警告: 無法從 Nacos 獲取 TiDB XML 配置: %v", err)
+			} else if tidbXmlContent != "" {
+				log.Printf("已從 Nacos 獲取 TiDB XML 配置，長度: %d 字節", len(tidbXmlContent))
+				log.Printf("TiDB XML 配置內容摘要: %s", tidbXmlContent[:min(100, len(tidbXmlContent))])
+
+				// 解析並應用 TiDB XML 配置
+				if err := parseTiDBXmlConfig(tidbXmlContent, config, serviceName); err != nil {
+					log.Printf("警告: 解析 TiDB XML 配置失敗: %v", err)
+				} else {
+					log.Printf("成功應用 TiDB XML 配置")
+				}
+			} else {
+				log.Printf("警告: 從 Nacos 獲取的 TiDB XML 配置為空")
+			}
+		}
+
 		// 保留 Nacos 連接信息
 		preserveNacosConnectionInfo(config)
 	} else {
@@ -289,7 +369,22 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 		return nil, fmt.Errorf("Nacos 未啟用或客戶端無效，無法獲取配置")
 	}
 
+	// 打印最終配置
+	log.Printf("最終數據庫配置: Host=%s, Port=%d, Username=%s, DBName=%s",
+		config.Database.Host, config.Database.Port, config.Database.Username, config.Database.DBName)
+
+	// 創建 Redis 額外配置映射
+	config.Redis.Extra = make(map[string]interface{})
+
 	return config, nil
+}
+
+// min 返回兩個整數中較小的一個
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // createDefaultConfig, 創建默認配置, 但不從環境變量讀取 Redis 配置
@@ -345,6 +440,7 @@ func createDefaultConfig() *AppConfig {
 			ServicePort: getEnvAsInt("SERVICE_PORT", 8080),
 		},
 		RocketMQ: RocketMQConfig{
+			Enabled:       getEnvAsBool("ROCKETMQ_ENABLED", false),
 			NameServers:   []string{getEnv("ROCKETMQ_NAME_SERVERS", "localhost:9876")},
 			AccessKey:     getEnv("ROCKETMQ_ACCESS_KEY", ""),
 			SecretKey:     getEnv("ROCKETMQ_SECRET_KEY", ""),
@@ -359,6 +455,7 @@ func parseNacosConfig(content string, config *AppConfig) error {
 	// 保存原始的WebSocket端口設置
 	dealerWsPort := config.Server.DealerWsPort
 	grpcPort := config.Server.GrpcPort
+	apiPort := config.Server.Port
 
 	// 預處理 JSON 內容，處理註釋和換行符
 	processedContent := preprocessJsonContent(content)
@@ -376,6 +473,13 @@ func parseNacosConfig(content string, config *AppConfig) error {
 		return fmt.Errorf("解析 Nacos 配置失敗: %w", err)
 	}
 
+	// 打印 Nacos 中的 API_PORT 配置
+	if apiPortValue, ok := jsonMap["API_PORT"]; ok {
+		log.Printf("從 Nacos 獲取的 API_PORT 配置: %v (類型: %T)", apiPortValue, apiPortValue)
+	} else {
+		log.Printf("Nacos 配置中未找到 API_PORT 設定")
+	}
+
 	// 打印 Nacos 中的 DEALER_WS_PORT 配置
 	if dealerPort, ok := jsonMap["DEALER_WS_PORT"]; ok {
 		log.Printf("從 Nacos 獲取的 DEALER_WS_PORT 配置: %v (類型: %T)", dealerPort, dealerPort)
@@ -383,74 +487,49 @@ func parseNacosConfig(content string, config *AppConfig) error {
 		log.Printf("Nacos 配置中未找到 DEALER_WS_PORT 設定")
 	}
 
-	// 打印 Nacos 中的 Redis 配置
-	log.Printf("從 Nacos 獲取的 Redis 配置項:")
-	for _, key := range []string{"REDIS_HOST", "REDIS_PORT", "REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_DB"} {
-		if val, ok := jsonMap[key]; ok {
-			log.Printf("  %s = %v (類型: %T)", key, val, val)
-		} else {
-			log.Printf("  %s: 未設定", key)
-		}
+	// 打印 Nacos 中的 GRPC_PORT 配置
+	if grpcPortValue, ok := jsonMap["GRPC_PORT"]; ok {
+		log.Printf("從 Nacos 獲取的 GRPC_PORT 配置: %v (類型: %T)", grpcPortValue, grpcPortValue)
+	} else {
+		log.Printf("Nacos 配置中未找到 GRPC_PORT 設定")
 	}
 
-	// 將 JSON 映射到 AppConfig 結構
+	// 將配置映射到 AppConfig 結構
 	if err := mapJsonToAppConfig(jsonMap, config); err != nil {
-		return fmt.Errorf("映射 Nacos 配置到 AppConfig 失敗: %w", err)
+		return fmt.Errorf("映射 Nacos 配置到應用配置失敗: %w", err)
 	}
 
-	// 恢復 WebSocket 端口設置
-	restoreWebSocketPorts(config, dealerWsPort, grpcPort)
+	// 恢復 WebSocket 端口設置（如果 Nacos 配置中未提供或無效）
+	restoreWebSocketPorts(config, dealerWsPort, grpcPort, apiPort)
 
-	// 打印從 Nacos 獲取的 Redis 配置
-	log.Printf("從 Nacos 獲取的 Redis 配置: Host=%s, Port=%d, Username=%s, PasswordLen=%d, DB=%d",
-		config.Redis.Host, config.Redis.Port, config.Redis.Username,
-		len(config.Redis.Password), config.Redis.DB)
-
-	log.Printf("成功從 Nacos 獲取配置並合併")
 	return nil
 }
 
 // restoreWebSocketPorts 恢復 WebSocket 端口和 gRPC 端口
-func restoreWebSocketPorts(config *AppConfig, dealerWsPort int, grpcPort int) {
-	// 保存原始的荷官WebSocket端口
-	if dealerWsPort > 0 {
-		// 只有當配置中沒有設置值或值為 0 時才設置
-		if config.Server.DealerWsPort <= 0 {
-			config.Server.DealerWsPort = dealerWsPort
-			log.Printf("從保存的值恢復 DealerWsPort: %d", dealerWsPort)
-		} else {
-			log.Printf("保留 Nacos 配置的 DealerWsPort: %d (未使用保存的值: %d)",
-				config.Server.DealerWsPort, dealerWsPort)
-		}
-	} else {
-		envPort := getEnvAsInt("DEALER_WS_PORT", 0)
-		if envPort > 0 && config.Server.DealerWsPort <= 0 {
-			config.Server.DealerWsPort = envPort
-			log.Printf("從環境變量恢復 DealerWsPort: %d", envPort)
-		}
+func restoreWebSocketPorts(config *AppConfig, dealerWsPort int, grpcPort int, apiPort int) {
+	// 檢查荷官WebSocket端口是否需要恢復
+	if config.Server.DealerWsPort == 0 {
+		log.Printf("Nacos 中未配置有效的 DEALER_WS_PORT，恢復為原值: %d", dealerWsPort)
+		config.Server.DealerWsPort = dealerWsPort
+	} else if config.Server.DealerWsPort != dealerWsPort {
+		log.Printf("已從 Nacos 更新荷官 WebSocket 端口: %d -> %d", dealerWsPort, config.Server.DealerWsPort)
 	}
 
-	// 保存原始的gRPC端口
-	if grpcPort > 0 {
-		// 只有當配置中沒有設置值或值為 0 時才設置
-		if config.Server.GrpcPort <= 0 {
-			config.Server.GrpcPort = grpcPort
-			log.Printf("從保存的值恢復 GrpcPort: %d", grpcPort)
-		} else {
-			log.Printf("保留 Nacos 配置的 GrpcPort: %d (未使用保存的值: %d)",
-				config.Server.GrpcPort, grpcPort)
-		}
-	} else {
-		envPort := getEnvAsInt("GRPC_PORT", 0)
-		if envPort > 0 && config.Server.GrpcPort <= 0 {
-			config.Server.GrpcPort = envPort
-			log.Printf("從環境變量恢復 GrpcPort: %d", envPort)
-		}
+	// 檢查 gRPC 端口是否需要恢復
+	if config.Server.GrpcPort == 0 {
+		log.Printf("Nacos 中未配置有效的 GRPC_PORT，恢復為原值: %d", grpcPort)
+		config.Server.GrpcPort = grpcPort
+	} else if config.Server.GrpcPort != grpcPort {
+		log.Printf("已從 Nacos 更新 gRPC 端口: %d -> %d", grpcPort, config.Server.GrpcPort)
 	}
 
-	// 輸出最終端口設置
-	log.Printf("最終端口設置: DealerWsPort=%d, GrpcPort=%d",
-		config.Server.DealerWsPort, config.Server.GrpcPort)
+	// 檢查 API 端口是否需要恢復
+	if config.Server.Port == 0 {
+		log.Printf("Nacos 中未配置有效的 API_PORT，恢復為原值: %d", apiPort)
+		config.Server.Port = apiPort
+	} else if config.Server.Port != apiPort {
+		log.Printf("已從 Nacos 更新 API 端口: %d -> %d", apiPort, config.Server.Port)
+	}
 }
 
 // preserveNacosConnectionInfo 保留 Nacos 連接信息
@@ -458,9 +537,10 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 	// 保存原始的WebSocket端口和gRPC端口設置
 	dealerWsPort := config.Server.DealerWsPort
 	grpcPort := config.Server.GrpcPort
+	apiPort := config.Server.Port
 
-	log.Printf("保存端口值以進行還原: DealerWsPort=%d, GrpcPort=%d",
-		dealerWsPort, grpcPort)
+	log.Printf("保存端口值以進行還原: DealerWsPort=%d, GrpcPort=%d, ApiPort=%d",
+		dealerWsPort, grpcPort, apiPort)
 
 	// 設置Nacos連接信息
 	config.Nacos = NacosConfig{
@@ -476,38 +556,11 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 		ServicePort: getEnvAsInt("SERVICE_PORT", 8080),
 	}
 
-	// 保留原始的 DealerWsPort 設定，如果它有效且 Nacos 未設置
-	if dealerWsPort > 0 && config.Server.DealerWsPort <= 0 {
-		config.Server.DealerWsPort = dealerWsPort
-		log.Printf("恢復之前保存的 DealerWsPort: %d", dealerWsPort)
-	}
+	// 恢復端口設置
+	restoreWebSocketPorts(config, dealerWsPort, grpcPort, apiPort)
 
-	// 保留原始的 GrpcPort 設定，如果它有效且 Nacos 未設置
-	if grpcPort > 0 && config.Server.GrpcPort <= 0 {
-		config.Server.GrpcPort = grpcPort
-		log.Printf("恢復之前保存的 GrpcPort: %d", grpcPort)
-	}
-
-	// 確保 WebSocket 端口設置不為0
-	if config.Server.DealerWsPort <= 0 {
-		config.Server.DealerWsPort = 3002 // 默認值
-		log.Printf("DealerWsPort 為 0，設置默認值: 3002")
-	}
-
-	// 確保 gRPC 端口設置不為0
-	if config.Server.GrpcPort <= 0 {
-		config.Server.GrpcPort = 9100 // 默認值
-		log.Printf("GrpcPort 為 0，設置默認值: 9100")
-	}
-
-	// 若端口為 3002，嘗試使用備用端口 3033，因為 3002 可能被佔用
-	if config.Server.DealerWsPort == 3002 {
-		log.Printf("初始化階段檢測到使用可能被佔用的端口 3002，切換至備用端口 3033")
-		config.Server.DealerWsPort = 3033
-	}
-
-	log.Printf("Nacos 初始配置設置完成，最終設置: DealerWsPort=%d, GrpcPort=%d",
-		config.Server.DealerWsPort, config.Server.GrpcPort)
+	log.Printf("Nacos 初始配置設置完成，最終設置: DealerWsPort=%d, GrpcPort=%d, ApiPort=%d",
+		config.Server.DealerWsPort, config.Server.GrpcPort, config.Server.Port)
 }
 
 // mapJsonToAppConfig 將 JSON 映射到 AppConfig 結構
@@ -526,6 +579,16 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 				config.Debug = strings.ToLower(s) == "true"
 			}
 		},
+		"API_PORT": func(v interface{}) {
+			log.Printf("Nacos 配置中的 API_PORT 原始值: %v (類型: %T)", v, v)
+
+			if port, ok := parseIntValue(v); ok {
+				config.Server.Port = port
+				log.Printf("成功設置 API_PORT 為: %d", port)
+			} else {
+				log.Printf("無法解析 API_PORT 值: %v", v)
+			}
+		},
 		"DEALER_WS_PORT": func(v interface{}) {
 			log.Printf("Nacos 配置中的 DEALER_WS_PORT 原始值: %v (類型: %T)", v, v)
 
@@ -534,6 +597,16 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 				log.Printf("成功設置 DEALER_WS_PORT 為: %d", port)
 			} else {
 				log.Printf("無法解析 DEALER_WS_PORT 值: %v", v)
+			}
+		},
+		"GRPC_PORT": func(v interface{}) {
+			log.Printf("Nacos 配置中的 GRPC_PORT 原始值: %v (類型: %T)", v, v)
+
+			if port, ok := parseIntValue(v); ok {
+				config.Server.GrpcPort = port
+				log.Printf("成功設置 GRPC_PORT 為: %d", port)
+			} else {
+				log.Printf("無法解析 GRPC_PORT 值: %v", v)
 			}
 		},
 		"VERSION": func(v interface{}) {
@@ -566,7 +639,6 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 				config.Redis.DB = db
 			}
 		},
-
 		"DB_HOST": func(v interface{}) {
 			if s, ok := v.(string); ok {
 				config.Database.Host = s
@@ -594,9 +666,16 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 		},
 		// RocketMQ 配置映射
 		"ROCKETMQ_ENABLED": func(v interface{}) {
+			log.Printf("解析 ROCKETMQ_ENABLED: %v (類型: %T)", v, v)
+
 			if b, ok := v.(bool); ok {
-				// 只保存為記錄，實際不影響配置
+				config.RocketMQ.Enabled = b
 				log.Printf("ROCKETMQ_ENABLED 設定: %v", b)
+			} else if n, ok := v.(json.Number); ok {
+				if i, err := n.Int64(); err == nil {
+					config.RocketMQ.Enabled = i != 0
+					log.Printf("ROCKETMQ_ENABLED 設定: %v", config.RocketMQ.Enabled)
+				}
 			} else if s, ok := v.(string); ok {
 				log.Printf("ROCKETMQ_ENABLED 設定: %v", strings.ToLower(s) == "true")
 			}
@@ -858,6 +937,70 @@ func parseRedisXmlConfig(xmlContent string, cfg *AppConfig) error {
 	return nil
 }
 
+// parseTiDBXmlConfig 解析 TiDB XML 配置並更新應用配置
+func parseTiDBXmlConfig(xmlContent string, cfg *AppConfig, serviceName string) error {
+	// 防止空 XML 內容
+	if xmlContent == "" {
+		return fmt.Errorf("空的 TiDB XML 配置內容")
+	}
+
+	log.Printf("開始解析 TiDB XML 配置，長度: %d 字節", len(xmlContent))
+
+	// 解析 XML 配置
+	var tidbConfig TiDBXMLConfig
+	if err := xml.Unmarshal([]byte(xmlContent), &tidbConfig); err != nil {
+		log.Printf("解析 TiDB XML 配置錯誤: %v", err)
+		return fmt.Errorf("解析 TiDB XML 配置錯誤: %w", err)
+	}
+
+	// 尋找匹配的服務數據庫配置
+	var foundDB bool
+	for _, db := range tidbConfig.DBs {
+		// 檢查服務名稱是否匹配，處理特殊情況
+		if db.Name == serviceName ||
+			(serviceName == "g38_lottery_service" && db.Name == "g38_loterry_service") ||
+			(serviceName == "g38_loterry_service" && db.Name == "g38_lottery_service") {
+			log.Printf("找到服務 %s 對應的數據庫配置 (XML 中名稱: %s)", serviceName, db.Name)
+
+			// 更新數據庫配置
+			cfg.Database.Host = db.Host
+
+			// 解析端口
+			if db.Port != "" {
+				port, err := strconv.Atoi(db.Port)
+				if err != nil {
+					log.Printf("警告: 無法解析 TiDB 端口 '%s', 將使用默認端口", db.Port)
+				} else {
+					cfg.Database.Port = port
+				}
+			}
+
+			cfg.Database.DBName = db.DBName
+			cfg.Database.Username = db.User
+			cfg.Database.Password = db.Password
+
+			log.Printf("已更新 TiDB 配置: Host=%s, Port=%d, DBName=%s, User=%s",
+				cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName, cfg.Database.Username)
+
+			foundDB = true
+			break
+		}
+	}
+
+	if !foundDB {
+		log.Printf("警告: 在 TiDB XML 配置中未找到服務 %s 的配置", serviceName)
+
+		// 如果沒有找到匹配的服務，輸出所有可用的服務名稱以便調試
+		var availableServices []string
+		for _, db := range tidbConfig.DBs {
+			availableServices = append(availableServices, db.Name)
+		}
+		log.Printf("可用的服務名稱: %v", availableServices)
+	}
+
+	return nil
+}
+
 // ===== 依賴注入相關函數 =====
 
 // ProvideAppConfig 提供應用配置，用於 fx 依賴注入
@@ -1007,3 +1150,52 @@ var Module = fx.Module("config",
 		RegisterService,
 	),
 )
+
+// initNacosConfig 初始化 Nacos 配置
+func initNacosConfig(config *AppConfig) error {
+	if os.Getenv("G38_SKIP_NACOS") == "1" {
+		log.Printf("檢測到環境變量 G38_SKIP_NACOS=1，跳過 Nacos 配置")
+		return nil
+	}
+
+	// 保存原始的WebSocket端口設置
+	dealerWsPort := config.Server.DealerWsPort
+	grpcPort := config.Server.GrpcPort
+	apiPort := config.Server.Port
+
+	// 檢查是否設置了 Nacos 環境變量
+	nacosIp := os.Getenv("NACOS_SERVER_IP")
+	if nacosIp == "" {
+		log.Printf("未設置 NACOS_SERVER_IP 環境變量，使用默認值")
+		nacosIp = "127.0.0.1" // 默認值
+	}
+
+	nacosPort := os.Getenv("NACOS_SERVER_PORT")
+	if nacosPort == "" {
+		log.Printf("未設置 NACOS_SERVER_PORT 環境變量，使用默認值")
+		nacosPort = "8848" // 默認值
+	}
+
+	// 從 Nacos 獲取配置
+	dataId := "g38_lottery"
+	content, err := getNacosConfig(nacosIp, nacosPort, dataId)
+	if err != nil {
+		log.Printf("從 Nacos 獲取配置失敗: %v", err)
+		log.Printf("使用本地默認配置")
+		return nil
+	}
+
+	// 解析 Nacos 配置
+	if err := parseNacosConfig(content, config); err != nil {
+		log.Printf("解析 Nacos 配置失敗: %v", err)
+		log.Printf("使用本地默認配置")
+
+		// 恢復端口設置
+		restoreWebSocketPorts(config, dealerWsPort, grpcPort, apiPort)
+	}
+
+	log.Printf("Nacos 初始配置設置完成，最終設置: DealerWsPort=%d, GrpcPort=%d, ApiPort=%d",
+		config.Server.DealerWsPort, config.Server.GrpcPort, config.Server.Port)
+
+	return nil
+}
