@@ -1,53 +1,65 @@
-# 排除版本控制目錄
-.git/
+# Git
+.git
 .gitignore
-.github/
+.github
 
-# 排除開發工具和配置檔案
-.idea/
-.vscode/
-*.swp
-*.swo
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
 
-# 排除構建輸出和暫存目錄
-bin/
-build/
+# Binaries and build artifacts
+/bin
+/dist
+/target
+/build
 *.exe
+*.exe~
 *.dll
 *.so
 *.dylib
-
-# 排除日誌和暫存檔案
-*.log
-*.log.*
-logs/
-tmp/
-
-# 排除測試數據和測試報告
-test/
-tests/
-coverage.out
 *.test
+*.out
 
-# 排除部署相關的大型目錄
-deployments/tidb/data/
-deployments/**/data/
+# Development artifacts
+.idea
+.vscode
+*.swp
+*.swo
+*.sublime*
+.DS_Store
 
-# 排除文檔和範例
-docs/
-examples/
+# Logs
+logs
+*.log
+
+# Temporary files
+/tmp
+/temp
+
+# Test data and coverage reports
+/coverage
+/test-results
+*.coverprofile
+
+# Dependencies that can be reinstalled
+/vendor
+/node_modules
+
+# Documentation
+/docs
 README.md
-LICENSE
+/examples
+*.md
 
-# 排除特定應用程式相關的大文件
-node_modules/
-vendor/
+# Project specific
+# 保留測試目錄但排除測試數據文件
+**/*.test
+**/*.log
+*.env
+*.env.*
+!.env.example
 
-# 不要排除整個 deployments 目錄，因為裡面有 Dockerfile
-# 而是明確指定要排除的子目錄
-deployments/tidb/data/
-deployments/tidb/logs/
-deployments/tidb/data/
-deployments/tidb/logs/
-deployments/tidb/data/
-deployments/tidb/logs/
+# 保留必要的配置文件
+!configs/*.yaml
+!configs/*.json
