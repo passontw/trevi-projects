@@ -159,14 +159,33 @@ pipeline {
                         def testPath = env.TEST_PATH ?: "./internal/..."
                         echo "Test path: ${testPath}"
                         
-                        // 增加 -v 詳細輸出，保留錯誤資訊，並仍然生成覆蓋率報告
-                        sh """
-                            go test -v ${testPath} -coverprofile=coverage.out || true
-                            go tool cover -func=coverage.out
-                        """
+                        // 捕獲測試輸出但不讓失敗阻止構建
+                        def testOutput = sh(script: "go test -v ${testPath} -coverprofile=coverage.out || true", returnStdout: true)
+                        echo "Test output: ${testOutput}"
+                        
+                        // 顯示覆蓋率摘要
+                        sh "go tool cover -func=coverage.out || true"
+                        
+                        // 檢查測試輸出中的失敗
+                        if (testOutput.contains("FAIL")) {
+                            echo "警告: 有測試失敗，但繼續構建過程。構建前請檢查測試失敗原因。"
+                            
+                            // 只測試 config 包是否通過 (如果 TEST_PATH 未指定)
+                            if (!env.TEST_PATH) {
+                                echo "檢查核心配置包測試..."
+                                def configTestOutput = sh(script: "go test -v ./internal/lottery_service/config/", returnStdout: true)
+                                if (configTestOutput.contains("FAIL")) {
+                                    echo "警告: 配置包測試失敗，這可能會影響應用程序的正常運行。"
+                                } else {
+                                    echo "核心配置包測試通過。"
+                                }
+                            }
+                        } else {
+                            echo "所有測試通過！"
+                        }
                     } catch (Exception e) {
-                        echo "Warning: Unit tests failed: ${e.message}"
-                        echo "Continuing with build anyway."
+                        echo "警告: 單元測試執行出現問題: ${e.message}"
+                        echo "繼續構建過程，但請注意測試失敗可能導致應用程序不穩定。"
                     }
                 }
             }
@@ -264,32 +283,32 @@ pipeline {
             echo "Images: ${env.FULL_IMAGE_NAME} and ${env.LATEST_IMAGE_NAME}"
             
             // 可選：發送成功通知
-            script {
-                try {
-                    slackSend(
-                        color: 'good',
-                        message: "✅ 構建成功! 項目: '${env.JOB_NAME}', 版本: ${env.BUILD_VERSION}, 查看詳情: ${env.BUILD_URL}"
-                    )
-                } catch (Exception e) {
-                    echo "Warning: Failed to send Slack notification: ${e.message}"
-                }
-            }
+            // script {
+            //     try {
+            //         slackSend(
+            //             color: 'good',
+            //             message: "✅ 構建成功! 項目: '${env.JOB_NAME}', 版本: ${env.BUILD_VERSION}, 查看詳情: ${env.BUILD_URL}"
+            //         )
+            //     } catch (Exception e) {
+            //         echo "Warning: Failed to send Slack notification: ${e.message}"
+            //     }
+            // }
         }
         
         failure {
             echo "Build or push failed!"
             
             // 可選：發送失敗通知
-            script {
-                try {
-                    slackSend(
-                        color: 'danger',
-                        message: "❌ 構建失敗! 項目: '${env.JOB_NAME}', 版本: ${env.BUILD_VERSION}, 查看詳情: ${env.BUILD_URL}"
-                    )
-                } catch (Exception e) {
-                    echo "Warning: Failed to send Slack notification: ${e.message}"
-                }
-            }
+            // script {
+            //     try {
+            //         slackSend(
+            //             color: 'danger',
+            //             message: "❌ 構建失敗! 項目: '${env.JOB_NAME}', 版本: ${env.BUILD_VERSION}, 查看詳情: ${env.BUILD_URL}"
+            //         )
+            //     } catch (Exception e) {
+            //         echo "Warning: Failed to send Slack notification: ${e.message}"
+            //     }
+            // }
         }
     }
 }

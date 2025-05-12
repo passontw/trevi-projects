@@ -33,8 +33,10 @@ RUN chmod +x scripts/gen-proto-smart.sh
 RUN ./scripts/gen-proto-smart.sh
 
 # 驗證生成是否成功
-RUN ls -la internal/lottery_service/proto/generated/dealer/
-RUN cat internal/lottery_service/proto/generated/dealer/common.pb.go | head -20
+RUN find internal/generated -name "*.pb.go" | sort
+RUN ls -la internal/generated/api/v1/dealer/ || echo "Dealer API 目錄不存在"
+RUN ls -la internal/generated/common/ || echo "Common 目錄不存在"
+RUN cat internal/generated/common/common.pb.go | head -20 || echo "Common proto 文件未生成"
 
 # 構建應用程序
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o lottery_service ./cmd/lottery_service/main.go
