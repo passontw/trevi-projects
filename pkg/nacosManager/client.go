@@ -22,6 +22,7 @@ type NacosConfig struct {
 	NamespaceId string
 	Group       string
 	DataId      string
+	RedisDataId string
 	LogDir      string
 	CacheDir    string
 	Username    string
@@ -161,14 +162,15 @@ func ProvideNacosConfig() *NacosConfig {
 		NamespaceId: getEnv("NACOS_NAMESPACE", "public"),
 		Group:       getEnv("NACOS_GROUP", "DEFAULT_GROUP"),
 		DataId:      getEnv("NACOS_DATAID", "application"),
+		RedisDataId: getEnv("NACOS_REDIS_DATAID", "redisconfig.xml"),
 		LogDir:      "/tmp/nacos/log",
 		CacheDir:    "/tmp/nacos/cache",
 		Username:    getEnv("NACOS_USERNAME", "username"),
 		Password:    getEnv("NACOS_PASSWORD", "password"),
 	}
 
-	log.Printf("Nacos Config: Host=%s, Port=%d, Namespace=%s, Group=%s, DataId=%s",
-		config.IpAddr, config.Port, config.NamespaceId, config.Group, config.DataId)
+	log.Printf("Nacos Config: Host=%s, Port=%d, Namespace=%s, Group=%s, DataId=%s, RedisDataId=%s",
+		config.IpAddr, config.Port, config.NamespaceId, config.Group, config.DataId, config.RedisDataId)
 
 	return config
 }

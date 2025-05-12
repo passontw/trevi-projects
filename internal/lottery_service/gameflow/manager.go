@@ -82,24 +82,182 @@ func NewGameManager(repo GameRepository, logger *zap.Logger) *GameManager {
 
 // Start 啟動遊戲管理器
 func (m *GameManager) Start(ctx context.Context) error {
-	m.logger.Info("啟動遊戲管理器")
+	m.logger.Info("啟動遊戲管理器",
+		zap.Strings("supportedRooms", m.supportedRooms),
+		zap.String("defaultRoom", m.defaultRoom))
+
+	// 檢查遊戲管理器的基本配置
+	if m.repo == nil {
+		m.logger.Error("初始化錯誤：數據儲存庫未設置")
+		return fmt.Errorf("數據儲存庫未設置")
+	}
+
+	if len(m.supportedRooms) == 0 {
+		m.logger.Warn("沒有設置支持的房間，使用默認房間: SG01")
+		m.supportedRooms = []string{"SG01"}
+	}
+
+	m.logger.Info("開始初始化所有支持的房間", zap.Strings("房間列表", m.supportedRooms))
 
 	// 初始化所有支持的房間
+	var initErrors []string
 	for _, roomID := range m.supportedRooms {
+		m.logger.Info("開始初始化房間", zap.String("roomID", roomID))
 		if err := m.startRoomGameManager(ctx, roomID); err != nil {
 			m.logger.Error("初始化房間遊戲管理器失敗",
 				zap.String("roomID", roomID),
 				zap.Error(err))
-			return err
+			initErrors = append(initErrors, fmt.Sprintf("房間 %s: %v", roomID, err))
+			// 繼續初始化其他房間，不要因為一個房間失敗就停止
+		} else {
+			m.logger.Info("成功初始化房間遊戲管理器", zap.String("roomID", roomID))
 		}
 	}
 
 	// 向後兼容：將默認房間的遊戲賦值給 currentGame
 	if game, exists := m.currentGames[m.defaultRoom]; exists {
 		m.currentGame = game
+		m.logger.Info("已設置默認房間的遊戲作為當前遊戲",
+			zap.String("defaultRoom", m.defaultRoom),
+			zap.String("gameID", game.GameID))
+	} else {
+		m.logger.Warn("默認房間不存在遊戲，當前遊戲為空", zap.String("defaultRoom", m.defaultRoom))
 	}
 
+	// 如果有錯誤，報告但不中斷啟動
+	if len(initErrors) > 0 {
+		m.logger.Warn("部分房間初始化失敗，但服務將繼續運行",
+			zap.Strings("errors", initErrors))
+	}
+
+	// 確保所有房間都已初始化，這裡會再次檢查並完成未初始化的房間
+	m.ensureAllRoomsInitialized(ctx)
+
+	// 輸出初始化狀態總結
+	m.logInitializationSummary()
+
 	return nil
+}
+
+// logInitializationSummary 輸出房間初始化狀態的總結
+func (m *GameManager) logInitializationSummary() {
+	var initializedRooms []string
+	var missingRooms []string
+
+	for _, roomID := range m.supportedRooms {
+		if game, exists := m.currentGames[roomID]; exists {
+			initializedRooms = append(initializedRooms, fmt.Sprintf("%s (遊戲ID: %s, 階段: %s)",
+				roomID, game.GameID, game.CurrentStage))
+		} else {
+			missingRooms = append(missingRooms, roomID)
+		}
+	}
+
+	m.logger.Info("遊戲管理器初始化總結",
+		zap.Strings("已初始化房間", initializedRooms),
+		zap.Strings("未初始化房間", missingRooms),
+		zap.Int("總支持房間數", len(m.supportedRooms)),
+		zap.Int("已初始化房間數", len(initializedRooms)))
+}
+
+// ensureAllRoomsInitialized 確保所有支持的房間都已初始化
+func (m *GameManager) ensureAllRoomsInitialized(ctx context.Context) {
+	m.logger.Info("確保所有房間都已初始化", zap.Strings("supportedRooms", m.supportedRooms))
+
+	for _, roomID := range m.supportedRooms {
+		// 檢查是否已有當前遊戲
+		if _, exists := m.currentGames[roomID]; !exists {
+			m.logger.Warn("發現未初始化的房間，嘗試再次初始化", zap.String("roomID", roomID))
+
+			// 嘗試初始化幸運號碼球
+			luckyBalls, err := m.repo.GetLuckyBallsByRoom(ctx, roomID)
+			if err != nil {
+				m.logger.Warn("獲取幸運號碼球失敗，將嘗試創建新的幸運號碼球",
+					zap.String("roomID", roomID),
+					zap.Error(err))
+			}
+
+			if len(luckyBalls) == 0 {
+				m.logger.Info("未找到幸運號碼球或數量為0，生成新的幸運號碼球", zap.String("roomID", roomID))
+				newLuckyBalls, err := GenerateLuckyBalls()
+				if err != nil {
+					m.logger.Error("生成幸運號碼球失敗",
+						zap.String("roomID", roomID),
+						zap.Error(err))
+					continue // 跳過這個房間，繼續下一個
+				}
+
+				// 保存幸運號碼球
+				err = m.repo.SaveLuckyBallsToRoom(ctx, roomID, newLuckyBalls)
+				if err != nil {
+					m.logger.Error("保存幸運號碼球失敗",
+						zap.String("roomID", roomID),
+						zap.Error(err))
+				} else {
+					m.logger.Info("成功創建並保存幸運號碼球",
+						zap.String("roomID", roomID),
+						zap.Int("數量", len(newLuckyBalls)))
+					// 將新生成的幸運球賦值給 luckyBalls 變量
+					luckyBalls = newLuckyBalls
+				}
+			} else {
+				m.logger.Info("已找到幸運號碼球",
+					zap.String("roomID", roomID),
+					zap.Int("數量", len(luckyBalls)))
+			}
+
+			// 檢查是否有當前遊戲
+			currentGame, err := m.repo.GetCurrentGameByRoom(ctx, roomID)
+			if err != nil {
+				m.logger.Warn("獲取當前遊戲失敗，將創建新遊戲",
+					zap.String("roomID", roomID),
+					zap.Error(err))
+				currentGame = nil
+			}
+
+			if currentGame == nil {
+				// 創建新遊戲
+				m.logger.Info("創建新遊戲", zap.String("roomID", roomID))
+				gameID, err := m.CreateNewGameForRoom(ctx, roomID)
+				if err != nil {
+					m.logger.Error("創建新遊戲失敗",
+						zap.String("roomID", roomID),
+						zap.Error(err))
+				} else {
+					m.logger.Info("成功創建新遊戲",
+						zap.String("roomID", roomID),
+						zap.String("gameID", gameID))
+
+					// 驗證遊戲是否成功保存到 Redis
+					game, err := m.repo.GetCurrentGameByRoom(ctx, roomID)
+					if err != nil {
+						m.logger.Error("驗證新創建的遊戲失敗",
+							zap.String("roomID", roomID),
+							zap.String("gameID", gameID),
+							zap.Error(err))
+					} else {
+						m.logger.Info("確認新遊戲已成功保存",
+							zap.String("roomID", roomID),
+							zap.String("gameID", game.GameID),
+							zap.String("stage", string(game.CurrentStage)))
+					}
+				}
+			} else {
+				m.logger.Info("已找到當前遊戲",
+					zap.String("roomID", roomID),
+					zap.String("gameID", currentGame.GameID),
+					zap.String("stage", string(currentGame.CurrentStage)))
+
+				// 確保遊戲保存在 currentGames 映射中
+				m.currentGames[roomID] = currentGame
+			}
+		} else {
+			m.logger.Info("房間已初始化",
+				zap.String("roomID", roomID),
+				zap.String("gameID", m.currentGames[roomID].GameID),
+				zap.String("stage", string(m.currentGames[roomID].CurrentStage)))
+		}
+	}
 }
 
 // startRoomGameManager 初始化特定房間的遊戲管理器
@@ -114,9 +272,10 @@ func (m *GameManager) startRoomGameManager(ctx context.Context, roomID string) e
 			m.logger.Warn("幸運號碼不存在，將創建新的幸運號碼", zap.String("roomID", roomID))
 			// 繼續執行，會在下面創建新的幸運號碼
 		} else {
-			// 其他錯誤，返回
-			m.logger.Error("獲取幸運號碼失敗", zap.String("roomID", roomID), zap.Error(err))
-			return err
+			// 其他錯誤，記錄但不終止執行
+			m.logger.Error("獲取幸運號碼失敗，將嘗試創建新的幸運號碼",
+				zap.String("roomID", roomID),
+				zap.Error(err))
 		}
 	}
 
@@ -131,7 +290,9 @@ func (m *GameManager) startRoomGameManager(ctx context.Context, roomID string) e
 
 		// 保存幸運號碼
 		if err := m.repo.SaveLuckyBallsToRoom(ctx, roomID, luckyBalls); err != nil {
-			m.logger.Error("保存幸運號碼失敗", zap.String("roomID", roomID), zap.Error(err))
+			m.logger.Error("保存幸運號碼失敗",
+				zap.String("roomID", roomID),
+				zap.Error(err))
 			return err
 		}
 	}
@@ -147,9 +308,11 @@ func (m *GameManager) startRoomGameManager(ctx context.Context, roomID string) e
 			// 繼續執行，會在下面創建新遊戲
 			currentGame = nil
 		} else {
-			// 其他錯誤，返回
-			m.logger.Error("獲取當前遊戲失敗", zap.String("roomID", roomID), zap.Error(err))
-			return err
+			// 其他錯誤，記錄但不終止執行
+			m.logger.Error("獲取當前遊戲失敗，將嘗試創建新遊戲",
+				zap.String("roomID", roomID),
+				zap.Error(err))
+			currentGame = nil
 		}
 	}
 
@@ -168,12 +331,16 @@ func (m *GameManager) startRoomGameManager(ctx context.Context, roomID string) e
 	} else {
 		// 如果沒有未完成的遊戲，創建新遊戲
 		m.logger.Info("創建新遊戲", zap.String("roomID", roomID))
-		if _, err := m.CreateNewGameForRoom(ctx, roomID); err != nil {
+		gameID, err := m.CreateNewGameForRoom(ctx, roomID)
+		if err != nil {
 			m.logger.Error("創建新遊戲失敗",
 				zap.String("roomID", roomID),
 				zap.Error(err))
 			return err
 		}
+		m.logger.Info("新遊戲創建成功",
+			zap.String("roomID", roomID),
+			zap.String("gameID", gameID))
 	}
 
 	return nil

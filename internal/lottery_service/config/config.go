@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"log"
 	"os"
@@ -46,11 +47,12 @@ type ServerConfig struct {
 
 // RedisConfig Redis 配置
 type RedisConfig struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	DB       int    `json:"db"`
+	Host     string                 `json:"host"`
+	Port     int                    `json:"port"`
+	Username string                 `json:"username"`
+	Password string                 `json:"password"`
+	DB       int                    `json:"db"`
+	Extra    map[string]interface{} `json:"-"` // 額外的配置項，不會被 JSON 序列化
 }
 
 // DatabaseConfig 數據庫配置
@@ -91,6 +93,22 @@ type RocketMQConfig struct {
 	SecretKey     string   `json:"secretKey"`
 	ProducerGroup string   `json:"producerGroup"`
 	ConsumerGroup string   `json:"consumerGroup"`
+}
+
+// RedisXMLConfig 是 Redis XML 配置的結構
+type RedisXMLConfig struct {
+	XMLName xml.Name `xml:"config"`
+	Redis   struct {
+		Host      string `xml:"host,attr"`
+		Port      string `xml:"port,attr"`
+		Username  string `xml:"username,attr"`
+		Password  string `xml:"password,attr"`
+		DB        string `xml:"db,attr"`
+		IsCluster string `xml:"is_cluster,attr"`
+		Nodes     struct {
+			NodeList []string `xml:"node"`
+		} `xml:"nodes"`
+	} `xml:"redis"`
 }
 
 // ===== 環境變量工具函數 =====
@@ -217,7 +235,7 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 	if nacosEnabled && nacosClient != nil {
 		log.Println("Nacos 配置已啟用，正在從 Nacos 獲取配置...")
 
-		// 從 Nacos 獲取配置
+		// 從 Nacos 獲取主配置
 		content, err := nacosClient.GetConfig(config.Nacos.DataId, config.Nacos.Group)
 		if err != nil {
 			log.Printf("從 Nacos 獲取配置失敗: %v", err)
@@ -240,6 +258,28 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 		}
 
 		log.Println("成功從 Nacos 獲取配置並合併")
+
+		// 獲取 Redis XML 配置
+		redisDataId := getEnv("NACOS_REDIS_DATAID", "redisconfig.xml")
+		log.Printf("將使用 Redis 配置 DataId: %s", redisDataId)
+
+		if redisDataId != "" {
+			log.Printf("嘗試從 Nacos 獲取 Redis XML 配置 (DataId: %s)...", redisDataId)
+			redisXmlContent, err := nacosClient.GetConfig(redisDataId, config.Nacos.Group)
+			if err != nil {
+				log.Printf("警告: 無法從 Nacos 獲取 Redis XML 配置: %v", err)
+			} else if redisXmlContent != "" {
+				log.Printf("已從 Nacos 獲取 Redis XML 配置，長度: %d 字節", len(redisXmlContent))
+				// 解析並應用 Redis XML 配置
+				if err := parseRedisXmlConfig(redisXmlContent, config); err != nil {
+					log.Printf("警告: 解析 Redis XML 配置失敗: %v", err)
+				} else {
+					log.Printf("成功應用 Redis XML 配置")
+				}
+			} else {
+				log.Printf("警告: 從 Nacos 獲取的 Redis XML 配置為空")
+			}
+		}
 
 		// 保留 Nacos 連接信息
 		preserveNacosConnectionInfo(config)
@@ -673,6 +713,149 @@ func parseIntValue(v interface{}) (int, bool) {
 	}
 
 	return 0, false
+}
+
+// parseRedisXmlConfig 解析 Redis XML 配置並更新應用配置
+func parseRedisXmlConfig(xmlContent string, cfg *AppConfig) error {
+	// 防止空 XML 內容
+	if xmlContent == "" {
+		return fmt.Errorf("空的 Redis XML 配置內容")
+	}
+
+	log.Printf("開始解析 Redis XML 配置，長度: %d 字節", len(xmlContent))
+	log.Printf("XML 內容: %s", xmlContent)
+
+	// 解析 XML 配置
+	var redisConfig RedisXMLConfig
+	if err := xml.Unmarshal([]byte(xmlContent), &redisConfig); err != nil {
+		log.Printf("解析 Redis XML 配置錯誤: %v", err)
+		return fmt.Errorf("解析 Redis XML 配置錯誤: %w", err)
+	}
+
+	// 配置已成功解析，現在更新主配置
+	redis := redisConfig.Redis
+
+	log.Printf("成功解析 XML 配置: Host=%s, Port=%s, IsCluster=%s, 節點數=%d",
+		redis.Host, redis.Port, redis.IsCluster, len(redis.Nodes.NodeList))
+
+	// 記錄所有節點
+	for i, node := range redis.Nodes.NodeList {
+		log.Printf("  節點 %d: %s", i+1, node)
+	}
+
+	// 如果有 Username 屬性，為避免認證問題，我們明確將其設置為空
+	// 這是因為某些 Redis 版本在使用非空但無效的用戶名時會引發認證問題
+	cfg.Redis.Username = ""
+
+	// 初始化 Extra 映射
+	if cfg.Redis.Extra == nil {
+		cfg.Redis.Extra = make(map[string]interface{})
+		log.Printf("初始化 Redis.Extra 映射")
+	}
+
+	// 讀取集群設定
+	cfg.Redis.Extra["is_cluster"] = redis.IsCluster
+	log.Printf("設置 is_cluster = %s", redis.IsCluster)
+
+	// 如果是單節點模式
+	if redis.IsCluster == "false" {
+		log.Printf("解析到 Redis 單節點配置: host=%s, port=%s", redis.Host, redis.Port)
+
+		// 更新主機和端口
+		if redis.Host != "" {
+			cfg.Redis.Host = redis.Host
+		}
+
+		if redis.Port != "" {
+			port, err := strconv.Atoi(redis.Port)
+			if err != nil {
+				log.Printf("警告: 無法解析端口 '%s', 將使用默認端口", redis.Port)
+			} else {
+				cfg.Redis.Port = port
+			}
+		}
+
+		// 更新密碼和數據庫
+		if redis.Password != "" {
+			cfg.Redis.Password = redis.Password
+		}
+
+		if redis.DB != "" {
+			db, err := strconv.Atoi(redis.DB)
+			if err != nil {
+				log.Printf("警告: 無法解析數據庫編號 '%s', 將使用默認值", redis.DB)
+			} else {
+				cfg.Redis.DB = db
+			}
+		}
+
+		log.Printf("已更新 Redis 單節點配置: host=%s, port=%d, database=%d",
+			cfg.Redis.Host, cfg.Redis.Port, cfg.Redis.DB)
+	} else if redis.IsCluster == "true" {
+		// 集群模式
+		if len(redis.Nodes.NodeList) == 0 {
+			log.Printf("錯誤: Redis 集群配置中未找到節點")
+			return fmt.Errorf("Redis 集群配置中未找到節點")
+		}
+
+		log.Printf("解析到 Redis 集群配置，節點數量: %d", len(redis.Nodes.NodeList))
+
+		// 保存所有節點信息 - 確保它是字符串切片
+		// 檢查節點列表是否為 nil
+		if redis.Nodes.NodeList == nil {
+			log.Printf("警告: 節點列表為 nil，將創建空切片")
+			cfg.Redis.Extra["nodes"] = []string{}
+		} else {
+			// 複製節點列表
+			nodeList := make([]string, len(redis.Nodes.NodeList))
+			for i, node := range redis.Nodes.NodeList {
+				nodeList[i] = node
+				log.Printf("  添加節點 %d: %s", i+1, node)
+			}
+			cfg.Redis.Extra["nodes"] = nodeList
+			log.Printf("已保存 %d 個節點到 Extra[nodes]", len(nodeList))
+		}
+
+		// 使用第一個節點的地址作為主連接點
+		// 格式應該是 host:port
+		firstNode := redis.Nodes.NodeList[0]
+		parts := strings.Split(firstNode, ":")
+
+		if len(parts) != 2 {
+			log.Printf("錯誤: Redis 節點地址格式無效: %s", firstNode)
+			return fmt.Errorf("Redis 節點地址格式無效: %s", firstNode)
+		}
+
+		cfg.Redis.Host = parts[0]
+		port, err := strconv.Atoi(parts[1])
+		if err != nil {
+			log.Printf("錯誤: 無法解析 Redis 節點端口: %s", parts[1])
+			return fmt.Errorf("無法解析 Redis 節點端口: %s", parts[1])
+		}
+		cfg.Redis.Port = port
+
+		// 更新密碼和數據庫
+		if redis.Password != "" {
+			cfg.Redis.Password = redis.Password
+		}
+
+		if redis.DB != "" {
+			db, err := strconv.Atoi(redis.DB)
+			if err != nil {
+				log.Printf("警告: 無法解析數據庫編號 '%s', 將使用默認值", redis.DB)
+			} else {
+				cfg.Redis.DB = db
+			}
+		}
+
+		log.Printf("已更新 Redis 集群配置: 主節點=%s:%d, 數據庫=%d",
+			cfg.Redis.Host, cfg.Redis.Port, cfg.Redis.DB)
+	} else {
+		log.Printf("錯誤: 未知的 Redis 模式: %s", redis.IsCluster)
+		return fmt.Errorf("未知的 Redis 模式: %s", redis.IsCluster)
+	}
+
+	return nil
 }
 
 // ===== 依賴注入相關函數 =====

@@ -63,11 +63,19 @@ func (r *RedisRepository) getHistoryListKey(roomID string) string {
 
 // SaveGame 將當前遊戲保存到 Redis
 func (r *RedisRepository) SaveGame(ctx context.Context, game *GameData) error {
-	// 從遊戲ID中提取房間ID
-	roomID := GetRoomIDFromGameID(game.GameID)
+	if game == nil {
+		return fmt.Errorf("不能保存空的遊戲數據")
+	}
 
-	// 更新遊戲的最後更新時間
-	game.LastUpdateTime = time.Now()
+	// 從遊戲ID中提取房間ID
+	roomID := game.RoomID
+	if roomID == "" {
+		roomID = GetRoomIDFromGameID(game.GameID)
+		game.RoomID = roomID // 更新 RoomID 確保數據一致性
+		r.logger.Info("遊戲未指定房間ID，從遊戲ID中提取",
+			zap.String("gameID", game.GameID),
+			zap.String("extractedRoomID", roomID))
+	}
 
 	// 序列化遊戲數據
 	gameJSON, err := json.Marshal(game)
@@ -75,43 +83,45 @@ func (r *RedisRepository) SaveGame(ctx context.Context, game *GameData) error {
 		return fmt.Errorf("序列化遊戲數據失敗: %w", err)
 	}
 
-	// 定義重試邏輯
-	maxRetries := 3
-	var lastErr error
+	// 生成 Redis 鍵
+	key := r.getCurrentGameKey(roomID)
 
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		// 設置 Redis 鍵，保存 7 天
-		key := r.getCurrentGameKey(roomID)
-		err = r.redisClient.Set(ctx, key, gameJSON, 7*24*time.Hour)
-
-		if err == nil {
-			// 成功保存，記錄日誌並返回
-			r.logger.Debug("遊戲狀態已保存到 Redis",
-				zap.String("roomID", roomID),
-				zap.String("gameID", game.GameID),
-				zap.String("stage", string(game.CurrentStage)),
-				zap.Int("attempt", attempt))
-			return nil
-		}
-
-		// 發生錯誤，準備重試
-		lastErr = err
-		r.logger.Warn("保存遊戲狀態到 Redis 失敗，準備重試",
-			zap.String("roomID", roomID),
-			zap.String("gameID", game.GameID),
-			zap.Int("attempt", attempt),
-			zap.Int("maxRetries", maxRetries),
-			zap.Error(err))
-
-		// 如果不是最後一次嘗試，等待一段時間再重試，使用指數退避策略
-		if attempt < maxRetries {
-			backoffTime := time.Duration(attempt*200) * time.Millisecond
-			time.Sleep(backoffTime)
+	// 嘗試刪除現有資料
+	_, err = r.redisClient.Exists(ctx, key)
+	if err == nil {
+		err = r.redisClient.Delete(ctx, key)
+		if err != nil {
+			r.logger.Warn("刪除現有遊戲資料失敗",
+				zap.Error(err),
+				zap.String("key", key),
+				zap.String("roomID", roomID))
+			// 繼續執行，不要因為刪除失敗而停止
 		}
 	}
 
-	// 所有重試都失敗，返回最後的錯誤
-	return fmt.Errorf("經過 %d 次重試後，保存遊戲狀態到 Redis 仍然失敗: %w", maxRetries, lastErr)
+	// 保存到 Redis，設為永久保存
+	err = r.redisClient.Set(ctx, key, gameJSON, 0)
+	if err != nil {
+		return fmt.Errorf("保存遊戲數據到 Redis 失敗: %w", err)
+	}
+
+	r.logger.Info("已保存遊戲數據到 Redis",
+		zap.String("roomID", roomID),
+		zap.String("gameID", game.GameID),
+		zap.String("stage", string(game.CurrentStage)),
+		zap.String("key", key))
+
+	// 驗證寫入是否成功
+	verifyJSON, err := r.redisClient.Get(ctx, key)
+	if err != nil {
+		r.logger.Warn("無法驗證遊戲數據寫入", zap.Error(err), zap.String("roomID", roomID))
+	} else if verifyJSON != string(gameJSON) {
+		r.logger.Warn("遊戲數據寫入驗證失敗，資料不匹配", zap.String("roomID", roomID))
+	} else {
+		r.logger.Debug("遊戲數據寫入驗證成功", zap.String("roomID", roomID))
+	}
+
+	return nil
 }
 
 // GetCurrentGame 從 Redis 獲取當前遊戲數據
@@ -121,34 +131,44 @@ func (r *RedisRepository) GetCurrentGame(ctx context.Context) (*GameData, error)
 
 // GetCurrentGameByRoom 從 Redis 獲取特定房間的當前遊戲數據
 func (r *RedisRepository) GetCurrentGameByRoom(ctx context.Context, roomID string) (*GameData, error) {
-	r.logger.Debug("嘗試從 Redis 獲取當前遊戲", zap.String("roomID", roomID))
-
-	// 獲取當前遊戲數據
 	key := r.getCurrentGameKey(roomID)
+	r.logger.Debug("嘗試從 Redis 獲取當前遊戲", zap.String("roomID", roomID), zap.String("redisKey", key))
+
+	// 從 Redis 獲取遊戲數據
 	gameJSON, err := r.redisClient.Get(ctx, key)
+
+	// 如果鍵不存在，返回特定錯誤
+	if redis.IsKeyNotExist(err) {
+		r.logger.Debug("Redis 中未找到當前遊戲", zap.String("roomID", roomID))
+		return nil, fmt.Errorf("房間 %s 的遊戲不存在: %w", roomID, err)
+	}
+
+	// 其他錯誤
 	if err != nil {
-		// 檢查是否是「不存在」錯誤
-		if redis.IsKeyNotExist(err) {
-			r.logger.Info("Redis 中沒有當前遊戲", zap.String("roomID", roomID))
-			return nil, nil
-		}
-		r.logger.Error("無法從 Redis 獲取當前遊戲", zap.Error(err), zap.String("roomID", roomID))
-		return nil, fmt.Errorf("無法獲取當前遊戲: %w", err)
+		r.logger.Error("從 Redis 獲取當前遊戲失敗", zap.Error(err), zap.String("roomID", roomID))
+		return nil, fmt.Errorf("從 Redis 獲取當前遊戲失敗: %w", err)
 	}
 
-	// 解碼遊戲數據
-	var gameData GameData
-	if err := json.Unmarshal([]byte(gameJSON), &gameData); err != nil {
-		r.logger.Error("無法解碼遊戲數據", zap.Error(err))
-		return nil, fmt.Errorf("無法解碼遊戲數據: %w", err)
+	// 檢查返回的 JSON 是否為空
+	if gameJSON == "" {
+		r.logger.Warn("從 Redis 獲取的遊戲 JSON 為空", zap.String("roomID", roomID))
+		return nil, fmt.Errorf("房間 %s 的遊戲存在但數據為空", roomID)
 	}
 
-	r.logger.Debug("成功從 Redis 獲取遊戲數據",
+	// 反序列化數據
+	var game GameData
+	err = json.Unmarshal([]byte(gameJSON), &game)
+	if err != nil {
+		r.logger.Error("反序列化遊戲數據失敗", zap.Error(err), zap.String("data", gameJSON))
+		return nil, fmt.Errorf("反序列化遊戲數據失敗: %w", err)
+	}
+
+	r.logger.Debug("從 Redis 成功獲取遊戲數據",
 		zap.String("roomID", roomID),
-		zap.String("gameID", gameData.GameID),
-		zap.String("stage", string(gameData.CurrentStage)))
+		zap.String("gameID", game.GameID),
+		zap.String("stage", string(game.CurrentStage)))
 
-	return &gameData, nil
+	return &game, nil
 }
 
 // DeleteCurrentGame 從 Redis 刪除當前遊戲
@@ -219,7 +239,7 @@ func (r *RedisRepository) GetLuckyBallsByRoom(ctx context.Context, roomID string
 
 	// 如果鍵不存在，返回空數組而不是錯誤
 	if redis.IsKeyNotExist(err) {
-		r.logger.Debug("Redis 中未找到幸運號碼球，返回空數組", zap.String("roomID", roomID))
+		r.logger.Info("Redis 中未找到幸運號碼球，返回空數組", zap.String("roomID", roomID), zap.String("key", key))
 		return []Ball{}, nil
 	}
 
@@ -228,17 +248,24 @@ func (r *RedisRepository) GetLuckyBallsByRoom(ctx context.Context, roomID string
 		return nil, fmt.Errorf("從 Redis 獲取幸運號碼球失敗: %w", err)
 	}
 
+	// 檢查返回的 JSON 是否為空
+	if ballsJSON == "" {
+		r.logger.Info("從 Redis 獲取的幸運號碼球 JSON 為空，返回空數組", zap.String("roomID", roomID))
+		return []Ball{}, nil
+	}
+
 	// 反序列化數據
 	var balls []Ball
 	err = json.Unmarshal([]byte(ballsJSON), &balls)
 	if err != nil {
-		r.logger.Error("反序列化幸運號碼球數據失敗", zap.Error(err))
+		r.logger.Error("反序列化幸運號碼球數據失敗", zap.Error(err), zap.String("data", ballsJSON))
 		return nil, fmt.Errorf("反序列化幸運號碼球數據失敗: %w", err)
 	}
 
-	r.logger.Debug("已從 Redis 獲取幸運號碼球",
+	r.logger.Info("已從 Redis 獲取幸運號碼球",
 		zap.Int("數量", len(balls)),
-		zap.String("roomID", roomID))
+		zap.String("roomID", roomID),
+		zap.String("key", key))
 	return balls, nil
 }
 
@@ -250,20 +277,36 @@ func (r *RedisRepository) SaveLuckyBalls(ctx context.Context, balls []Ball) erro
 
 // SaveLuckyBallsToRoom 保存新的幸運號碼球到特定房間
 func (r *RedisRepository) SaveLuckyBallsToRoom(ctx context.Context, roomID string, balls []Ball) error {
-	key := r.getLuckyBallsKey(roomID)
+	if roomID == "" {
+		return fmt.Errorf("房間ID不能為空")
+	}
 
-	// 先刪除現有的幸運號碼球資料
-	err := r.redisClient.Delete(ctx, key)
-	if err != nil {
-		r.logger.Warn("刪除現有幸運號碼球資料失敗",
-			zap.Error(err),
-			zap.String("key", key),
-			zap.String("roomID", roomID))
-		// 繼續執行，不要因為刪除失敗而停止
-	} else {
-		r.logger.Debug("已刪除現有幸運號碼球資料",
-			zap.String("key", key),
-			zap.String("roomID", roomID))
+	if balls == nil || len(balls) == 0 {
+		r.logger.Error("嘗試保存空的幸運號碼球列表", zap.String("roomID", roomID))
+		return fmt.Errorf("不能保存空的幸運號碼球列表")
+	}
+
+	key := r.getLuckyBallsKey(roomID)
+	r.logger.Info("準備保存幸運號碼球",
+		zap.String("roomID", roomID),
+		zap.String("redisKey", key),
+		zap.Int("ballsCount", len(balls)))
+
+	// 嘗試刪除現有的幸運號碼球資料
+	_, err := r.redisClient.Exists(ctx, key)
+	if err == nil {
+		err = r.redisClient.Delete(ctx, key)
+		if err != nil {
+			r.logger.Warn("刪除現有幸運號碼球資料失敗",
+				zap.Error(err),
+				zap.String("key", key),
+				zap.String("roomID", roomID))
+			// 繼續執行，不要因為刪除失敗而停止
+		} else {
+			r.logger.Debug("已刪除現有幸運號碼球資料",
+				zap.String("key", key),
+				zap.String("roomID", roomID))
+		}
 	}
 
 	// 序列化球數據
@@ -286,11 +329,14 @@ func (r *RedisRepository) SaveLuckyBallsToRoom(ctx context.Context, roomID strin
 	// 驗證寫入是否成功
 	verifyJSON, err := r.redisClient.Get(ctx, key)
 	if err != nil {
-		r.logger.Warn("無法驗證幸運號碼球寫入", zap.Error(err))
+		r.logger.Warn("無法驗證幸運號碼球寫入", zap.Error(err), zap.String("roomID", roomID))
 	} else if verifyJSON != string(ballsJSON) {
-		r.logger.Warn("幸運號碼球寫入驗證失敗，資料不匹配")
+		r.logger.Warn("幸運號碼球寫入驗證失敗，資料不匹配",
+			zap.String("roomID", roomID),
+			zap.String("expect", string(ballsJSON)),
+			zap.String("actual", verifyJSON))
 	} else {
-		r.logger.Debug("幸運號碼球寫入驗證成功")
+		r.logger.Debug("幸運號碼球寫入驗證成功", zap.String("roomID", roomID))
 	}
 
 	return nil
