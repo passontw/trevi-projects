@@ -1,0 +1,10 @@
+version: v1
+name: github.com/g38-lottery-service
+deps:
+  - buf.build/googleapis/googleapis
+breaking:
+  use:
+    - FILE
+lint:
+  use:
+    - DEFAULT 

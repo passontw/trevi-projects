@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package api.v1.lottery;
+
+import "proto/third_party/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "proto/common/common.proto";
+
+option go_package = "github.com/g38-lottery-service/internal/generated/api/v1/lottery";
+
+// 球類型
+enum BallType {
+  BALL_TYPE_UNSPECIFIED = 0;
+  BALL_TYPE_REGULAR = 1;   // 常規球
+  BALL_TYPE_EXTRA = 2;     // 額外球
+  BALL_TYPE_JACKPOT = 3;   // Jackpot球
+  BALL_TYPE_LUCKY = 4;     // 幸運號碼球
+}
+
+// 球資訊
+message Ball {
+  // 球號 (1-75)
+  int32 number = 1 [(validate.rules).int32 = {gte: 1, lte: 100}];
+  // 球類型
+  BallType type = 2;
+  // 是否是該類型中的最後一顆球
+  bool is_last = 3;
+  // 抽取時間
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// 抽常規球請求
+message DrawBallRequest {
+  // 房間ID
+  string room_id = 1 [(validate.rules).string = {min_len: 1, max_len: 50}];
+  // 已抽出的球陣列,最後一顆為最新抽出的球
+  repeated Ball balls = 2 [(validate.rules).repeated = {min_items: 1, max_items: 100}];
+}
+
+// 抽常規球回應
+message DrawBallResponse {
+  // 抽取的球的資訊
+  repeated Ball balls = 1;
+  // 如果最後一顆球標記為最後一顆，則會提供遊戲狀態更新
+  common.GameStatus status = 2;
+}
+
+// 抽額外球請求
+message DrawExtraBallRequest {
+  // 房間ID
+  string room_id = 1 [(validate.rules).string = {min_len: 1, max_len: 50}];
+  // 已抽出的球陣列,最後一顆為最新抽出的球
+  repeated Ball balls = 2 [(validate.rules).repeated = {min_items: 1, max_items: 100}];
+}
+
+// 抽額外球回應
+message DrawExtraBallResponse {
+  // 抽取的球的資訊
+  repeated Ball balls = 1;
+  // 遊戲ID
+  string game_id = 2;
+  // 遊戲狀態
+  common.GameStatus status = 3;
+}
+
+// 抽JP球請求
+message DrawJackpotBallRequest {
+  // 房間ID
+  string room_id = 1 [(validate.rules).string = {min_len: 1, max_len: 50}];
+  // 頭獎球號碼
+  int32 ball_number = 2 [(validate.rules).int32 = {gte: 1, lte: 100}];
+}
+
+// 抽JP球回應
+message DrawJackpotBallResponse {
+  // 遊戲ID
+  string game_id = 1;
+  // 頭獎球
+  Ball jackpot_ball = 2;
+  // 遊戲狀態
+  common.GameStatus status = 3;
+}
+
+// 抽幸運號碼球請求
+message DrawLuckyBallRequest {
+  // 房間ID
+  string room_id = 1 [(validate.rules).string = {min_len: 1, max_len: 50}];
+  // 幸運球號碼
+  repeated int32 ball_numbers = 2 [(validate.rules).repeated = {min_items: 1, max_items: 10}];
+}
+
+// 抽幸運號碼球回應
+message DrawLuckyBallResponse {
+  // 遊戲ID
+  string game_id = 1;
+  // 幸運球
+  repeated Ball lucky_balls = 2;
+  // 遊戲狀態
+  common.GameStatus status = 3;
+}
+
+// 額外球選邊請求
+message SelectExtraBallSideRequest {
+  // 空的請求，額外球選邊由系統自動決定
+}
+
+// 額外球選邊回應
+message SelectExtraBallSideResponse {
+  // 額外球選邊結果
+  common.ExtraBallSide side = 1;
+} 

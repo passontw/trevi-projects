@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package common;
+
+option go_package = "github.com/g38-lottery-service/internal/generated/common";
+
+// GameStage 表示遊戲的不同階段
+enum GameStage {
+  // 未指定階段 
+  GAME_STAGE_UNSPECIFIED = 0;
+  
+  // 主遊戲流程階段
+  GAME_STAGE_PREPARATION = 1;           // 準備階段
+  GAME_STAGE_NEW_ROUND = 2;             // 新局開始
+  GAME_STAGE_CARD_PURCHASE_OPEN = 3;    // 開放購買卡片 
+  GAME_STAGE_CARD_PURCHASE_CLOSE = 4;   // 關閉購買卡片
+  GAME_STAGE_DRAWING_START = 5;         // 開始抽獎
+  GAME_STAGE_DRAWING_CLOSE = 6;         // 關閉抽獎
+
+  // 額外球流程階段
+  GAME_STAGE_EXTRA_BALL_PREPARE = 7;                     // 準備額外球
+  GAME_STAGE_EXTRA_BALL_SIDE_SELECT_BETTING_START = 8;   // 開始額外球側面選擇投注
+  GAME_STAGE_EXTRA_BALL_SIDE_SELECT_BETTING_CLOSED = 9;  // 關閉額外球側面選擇投注
+  GAME_STAGE_EXTRA_BALL_WAIT_CLAIM = 10;                 // 等待聲明額外球
+  GAME_STAGE_EXTRA_BALL_DRAWING_START = 11;              // 開始抽取額外球
+  GAME_STAGE_EXTRA_BALL_DRAWING_CLOSE = 12;              // 關閉抽取額外球
+
+  // 派彩與JP流程階段
+  GAME_STAGE_PAYOUT_SETTLEMENT = 13;            // 派彩結算
+  GAME_STAGE_JACKPOT_START = 14;                // 開始頭獎
+  GAME_STAGE_JACKPOT_DRAWING_START = 15;        // 開始頭獎抽獎
+  GAME_STAGE_JACKPOT_DRAWING_CLOSED = 16;       // 關閉頭獎抽獎
+  GAME_STAGE_JACKPOT_SETTLEMENT = 17;           // 頭獎結算
+  GAME_STAGE_DRAWING_LUCKY_BALLS_START = 18;    // 開始抽取幸運球
+  GAME_STAGE_DRAWING_LUCKY_BALLS_CLOSED = 19;   // 關閉抽取幸運球
+
+  // 結束階段
+  GAME_STAGE_GAME_OVER = 20;  // 遊戲結束
+}
+
+// ExtraBallSide 表示額外球選邊
+enum ExtraBallSide {
+  // 未指定側面
+  EXTRA_BALL_SIDE_UNSPECIFIED = 0;
+  // 左側
+  EXTRA_BALL_SIDE_LEFT = 1;
+  // 右側
+  EXTRA_BALL_SIDE_RIGHT = 2;
+}
+
+// GameEventType 表示遊戲事件類型
+enum GameEventType {
+  // 未指定事件類型
+  GAME_EVENT_TYPE_UNSPECIFIED = 0;
+  // 心跳事件
+  GAME_EVENT_TYPE_HEARTBEAT = 1;
+  // 通知事件
+  GAME_EVENT_TYPE_NOTIFICATION = 2;
+}
+
+// GameStatus 表示遊戲當前狀態
+message GameStatus {
+  // 遊戲階段
+  GameStage stage = 1;
+  // 狀態訊息
+  string message = 2;
+} 

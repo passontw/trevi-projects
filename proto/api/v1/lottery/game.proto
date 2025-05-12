@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package api.v1.lottery;
+
+import "proto/common/common.proto";
+import "proto/api/v1/lottery/ball.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/g38-lottery-service/internal/generated/api/v1/lottery";
+
+// GameData 代表遊戲的完整狀態
+message GameData {
+  // 遊戲 ID
+  string game_id = 1;
+  // 房間 ID
+  string room_id = 2;
+  // 遊戲開始時間
+  google.protobuf.Timestamp start_time = 3;
+  // 遊戲結束時間（如果遊戲已結束）
+  google.protobuf.Timestamp end_time = 4;
+  // 當前遊戲階段
+  common.GameStage current_stage = 5;
+  // 已抽取的一般球
+  repeated Ball regular_balls = 6;
+  // 額外球（如果已抽取）
+  Ball extra_ball = 7;
+  // 頭獎球（如果已抽取）
+  Ball jackpot_ball = 8;
+  // 幸運球列表（如果已抽取）
+  repeated Ball lucky_balls = 9;
+  // 已選擇的額外球邊
+  common.ExtraBallSide selected_extra_ball_side = 10;
+  // 遊戲狀態
+  common.GameStatus status = 11;
+  // 是否是一個有效的遊戲（非取消）
+  bool is_valid = 12;
+  // 取消原因（如果遊戲被取消）
+  string cancel_reason = 13;
+}
+
+// 開始新局請求
+message StartNewRoundRequest {
+  // 房間 ID
+  string room_id = 1;
+}
+
+// 開始新局回應
+message StartNewRoundResponse {
+  // 遊戲 ID
+  string game_id = 1;
+  // 遊戲開始時間
+  google.protobuf.Timestamp start_time = 2;
+  // 當前遊戲階段
+  common.GameStage current_stage = 3;
+}
+
+// 取消遊戲請求
+message CancelGameRequest {
+  // 房間 ID
+  string room_id = 1;
+  // 取消原因
+  string reason = 2;
+}
+
+// 獲取遊戲狀態請求
+message GetGameStatusRequest {
+  // 房間 ID
+  string room_id = 1;
+}
+
+// 獲取遊戲狀態回應
+message GetGameStatusResponse {
+  // 遊戲 ID
+  string game_id = 1;
+  // 當前遊戲階段
+  common.GameStage current_stage = 2;
+  // 遊戲狀態
+  common.GameStatus status = 3;
+  // 遊戲數據
+  GameData game_data = 4;
+}
+
+// 開始頭獎回合請求
+message StartJackpotRoundRequest {
+  // 房間 ID
+  string room_id = 1;
+}
+
+// 開始頭獎回合回應
+message StartJackpotRoundResponse {
+  // 遊戲 ID
+  string game_id = 1;
+  // 當前遊戲階段
+  common.GameStage current_stage = 2;
+  // 遊戲狀態
+  common.GameStatus status = 3;
+} 

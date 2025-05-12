@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package common;
+
+option go_package = "github.com/g38-lottery-service/internal/generated/common";
+
+// Error 代表 API 錯誤回應
+message Error {
+  // 錯誤碼
+  int32 code = 1;
+  // 錯誤訊息
+  string message = 2;
+  // 詳細錯誤資訊
+  repeated ErrorDetail details = 3;
+}
+
+// ErrorDetail 包含特定錯誤的詳細資訊
+message ErrorDetail {
+  // 錯誤類型
+  string type = 1;
+  // 錯誤描述
+  string description = 2;
+  // 相關欄位
+  string field = 3;
+} 
