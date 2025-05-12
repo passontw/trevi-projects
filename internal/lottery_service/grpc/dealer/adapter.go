@@ -2,6 +2,7 @@ package dealer
 
 import (
 	"fmt"
+	"math/rand"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -117,17 +118,6 @@ func ConvertGameStatus(status *commonpb.GameStatus) *oldpb.GameStatus {
 	}
 }
 
-// ConvertGameStatusToNew 將舊的 GameStatus 轉換為新的 GameStatus
-func ConvertGameStatusToNew(status *oldpb.GameStatus) *commonpb.GameStatus {
-	if status == nil {
-		return nil
-	}
-	return &commonpb.GameStatus{
-		Stage:   ConvertGameStageToNew(status.Stage),
-		Message: status.Message,
-	}
-}
-
 // ConvertGameEvent 將新的 GameEvent 轉換為舊的 GameEvent
 func ConvertGameEvent(event *newpb.GameEvent) *oldpb.GameEvent {
 	if event == nil {
@@ -220,8 +210,13 @@ func ConvertDrawExtraBallResponse(resp *newpb.DrawExtraBallResponse) *oldpb.Draw
 		return nil
 	}
 
+	balls := []*oldpb.Ball{}
+	if resp.ExtraBall != nil {
+		balls = append(balls, ConvertBall(resp.ExtraBall))
+	}
+
 	return &oldpb.DrawExtraBallResponse{
-		Balls: []*oldpb.Ball{ConvertBall(resp.ExtraBall)},
+		Balls: balls,
 	}
 }
 
@@ -231,8 +226,13 @@ func ConvertDrawJackpotBallResponse(resp *newpb.DrawJackpotBallResponse) *oldpb.
 		return nil
 	}
 
+	balls := []*oldpb.Ball{}
+	if resp.JackpotBall != nil {
+		balls = append(balls, ConvertBall(resp.JackpotBall))
+	}
+
 	return &oldpb.DrawJackpotBallResponse{
-		Balls: []*oldpb.Ball{ConvertBall(resp.JackpotBall)},
+		Balls: balls,
 	}
 }
 
@@ -257,7 +257,6 @@ func ConvertGetGameStatusResponse(resp *newpb.GetGameStatusResponse) *oldpb.GetG
 	if resp == nil {
 		return nil
 	}
-
 	return &oldpb.GetGameStatusResponse{
 		GameData: ConvertGameData(resp.GameData),
 	}
@@ -268,11 +267,27 @@ func ConvertStartJackpotRoundResponse(resp *newpb.StartJackpotRoundResponse) *ol
 	if resp == nil {
 		return nil
 	}
-
 	return &oldpb.StartJackpotRoundResponse{
 		Success:  true,
 		GameId:   resp.GameId,
 		OldStage: oldpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT,
 		NewStage: ConvertGameStage(resp.CurrentStage),
 	}
+}
+
+// 以下是用於將舊版 proto 轉換為新版 proto 的函數
+
+// ConvertBallReverse 將新的 Ball 轉換為舊的 Ball (保留為向後兼容)
+func ConvertBallReverse(ball *newpb.Ball) *oldpb.Ball {
+	return ConvertBall(ball)
+}
+
+// GenerateRandomString 生成隨機字符串，用作 ID
+func GenerateRandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	result := make([]byte, length)
+	for i := range result {
+		result[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(result)
 }

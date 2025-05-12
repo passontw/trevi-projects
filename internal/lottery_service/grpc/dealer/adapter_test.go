@@ -517,3 +517,14 @@ func TestAdditionalConversionFunctions(t *testing.T) {
 		assert.Nil(t, ConvertStartJackpotRoundResponse(nil))
 	})
 }
+
+// ConvertGameStatusToNew 將舊的 GameStatus 轉換為新的 GameStatus (測試用)
+func ConvertGameStatusToNew(status *oldpb.GameStatus) *commonpb.GameStatus {
+	if status == nil {
+		return nil
+	}
+	return &commonpb.GameStatus{
+		Stage:   ConvertGameStageToNew(status.Stage),
+		Message: status.Message,
+	}
+}
