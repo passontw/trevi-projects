@@ -1,0 +1,237 @@
+syntax = "proto3";
+
+package api.v1.player;
+
+import "common/common.proto";
+import "api/v1/dealer/game.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "g38_lottery_service/internal/generated/api/v1/player";
+
+// PlayerCommunicationService 提供玩家通訊服務
+service PlayerCommunicationService {
+  // ConnectToGame 連接到特定遊戲
+  rpc ConnectToGame(ConnectToGameRequest) returns (ConnectToGameResponse);
+  
+  // SubscribeToGameEvents 訂閱遊戲事件
+  rpc SubscribeToGameEvents(SubscribeToGameEventsRequest) returns (stream GameEvent);
+  
+  // GetPlayerStatus 獲取玩家狀態
+  rpc GetPlayerStatus(GetPlayerStatusRequest) returns (GetPlayerStatusResponse);
+  
+  // UpdatePlayerPreference 更新玩家偏好設置
+  rpc UpdatePlayerPreference(UpdatePlayerPreferenceRequest) returns (UpdatePlayerPreferenceResponse);
+}
+
+// SubscribeToGameEventsRequest 訂閱遊戲事件請求
+message SubscribeToGameEventsRequest {
+  // 房間 ID
+  string room_id = 1;
+  
+  // 玩家 ID
+  string player_id = 2;
+  
+  // 訂閱類型
+  repeated SubscriptionType subscription_types = 3;
+}
+
+// SubscriptionType 訂閱類型
+enum SubscriptionType {
+  // 未指定
+  SUBSCRIPTION_TYPE_UNSPECIFIED = 0;
+  
+  // 遊戲事件
+  SUBSCRIPTION_TYPE_GAME_EVENTS = 1;
+  
+  // 玩家事件
+  SUBSCRIPTION_TYPE_PLAYER_EVENTS = 2;
+  
+  // 聊天事件
+  SUBSCRIPTION_TYPE_CHAT_EVENTS = 3;
+}
+
+// GameEvent 遊戲事件
+message GameEvent {
+  // 事件 ID
+  string id = 1;
+  
+  // 事件類型
+  common.GameEventType type = 2;
+  
+  // 事件時間戳
+  int64 timestamp = 3;
+  
+  // 事件數據 - 使用 oneof 來處理不同類型的事件數據
+  oneof event_data {
+    // 遊戲數據
+    api.v1.dealer.GameData game_data = 4;
+    
+    // 玩家通知
+    PlayerNotification player_notification = 5;
+    
+    // 系統通知
+    SystemNotification system_notification = 6;
+  }
+}
+
+// PlayerNotification 玩家通知
+message PlayerNotification {
+  // 通知類型
+  string type = 1;
+  
+  // 消息
+  string message = 2;
+  
+  // 相關玩家 ID
+  string player_id = 3;
+  
+  // 附加數據
+  map<string, string> extra_data = 4;
+}
+
+// SystemNotification 系統通知
+message SystemNotification {
+  // 通知類型
+  string type = 1;
+  
+  // 消息
+  string message = 2;
+  
+  // 通知等級
+  NotificationLevel level = 3;
+  
+  // 附加數據
+  map<string, string> extra_data = 4;
+}
+
+// NotificationLevel 通知等級
+enum NotificationLevel {
+  // 未指定
+  NOTIFICATION_LEVEL_UNSPECIFIED = 0;
+  
+  // 資訊
+  NOTIFICATION_LEVEL_INFO = 1;
+  
+  // 警告
+  NOTIFICATION_LEVEL_WARNING = 2;
+  
+  // 錯誤
+  NOTIFICATION_LEVEL_ERROR = 3;
+  
+  // 嚴重
+  NOTIFICATION_LEVEL_CRITICAL = 4;
+}
+
+// ConnectToGameRequest 連接遊戲請求
+message ConnectToGameRequest {
+  // 房間 ID
+  string room_id = 1;
+  
+  // 玩家 ID
+  string player_id = 2;
+  
+  // 遊戲 ID（可選，如果不提供則使用房間當前的遊戲）
+  string game_id = 3;
+}
+
+// ConnectToGameResponse 連接遊戲回應
+message ConnectToGameResponse {
+  // 連接 ID
+  string connection_id = 1;
+  
+  // 遊戲數據
+  api.v1.dealer.GameData game_data = 2;
+  
+  // 玩家資訊
+  PlayerInfo player_info = 3;
+}
+
+// PlayerInfo 玩家資訊
+message PlayerInfo {
+  // 玩家 ID
+  string id = 1;
+  
+  // 暱稱
+  string nickname = 2;
+  
+  // 餘額
+  double balance = 3;
+  
+  // 卡片張數
+  int32 cards_count = 4;
+  
+  // 喜好設置
+  PlayerPreference preferences = 5;
+}
+
+// PlayerPreference 玩家喜好設置
+message PlayerPreference {
+  // 是否接收遊戲通知
+  bool receive_game_notifications = 1;
+  
+  // 是否接收聊天消息
+  bool receive_chat_messages = 2;
+  
+  // 是否顯示其他玩家的投注
+  bool show_other_players_bets = 3;
+  
+  // 界面主題
+  string ui_theme = 4;
+  
+  // 語言
+  string language = 5;
+}
+
+// GetPlayerStatusRequest 獲取玩家狀態請求
+message GetPlayerStatusRequest {
+  // 玩家 ID
+  string player_id = 1;
+}
+
+// GetPlayerStatusResponse 獲取玩家狀態回應
+message GetPlayerStatusResponse {
+  // 玩家資訊
+  PlayerInfo player_info = 1;
+  
+  // 遊戲歷史
+  repeated GameHistoryItem game_history = 2;
+}
+
+// GameHistoryItem 遊戲歷史項
+message GameHistoryItem {
+  // 遊戲 ID
+  string game_id = 1;
+  
+  // 遊戲時間
+  google.protobuf.Timestamp game_time = 2;
+  
+  // 贏取金額
+  double win_amount = 3;
+  
+  // 投注金額
+  double bet_amount = 4;
+  
+  // 遊戲結果摘要
+  string result_summary = 5;
+}
+
+// UpdatePlayerPreferenceRequest 更新玩家偏好設置請求
+message UpdatePlayerPreferenceRequest {
+  // 玩家 ID
+  string player_id = 1;
+  
+  // 新的偏好設置
+  PlayerPreference preferences = 2;
+}
+
+// UpdatePlayerPreferenceResponse 更新玩家偏好設置回應
+message UpdatePlayerPreferenceResponse {
+  // 更新後的玩家資訊
+  PlayerInfo player_info = 1;
+  
+  // 是否成功
+  bool success = 2;
+  
+  // 錯誤信息（如果有）
+  string error_message = 3;
+} 
