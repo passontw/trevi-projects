@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package api.v1.mq;
+
+import "common/common.proto";
+import "api/v1/dealer/game.proto";
+import "api/v1/dealer/ball.proto";
+
+option go_package = "g38_lottery_service/internal/generated/api/v1/mq";
+
+// MessageType 定義消息類型枚舉
+enum MessageType {
+  // 未指定消息類型
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  // 開獎結果通知
+  MESSAGE_TYPE_LOTTERY_RESULT = 1;
+  // 開獎狀態通知
+  MESSAGE_TYPE_LOTTERY_STATUS = 2;
+  // 遊戲階段變更
+  MESSAGE_TYPE_STAGE_CHANGE = 3;
+  // 遊戲事件通知
+  MESSAGE_TYPE_GAME_EVENT = 4;
+}
+
+// BaseMessage 所有消息的基本結構
+message BaseMessage {
+  // 消息類型
+  MessageType message_type = 1;
+  // 時間戳（Unix 格式）
+  int64 timestamp = 2;
+  // 遊戲 ID
+  string game_id = 3;
+}
+
+// LotteryResultMessage 開獎結果消息
+message LotteryResultMessage {
+  // 基本消息屬性
+  BaseMessage base = 1;
+  // 所有抽出的球
+  repeated api.v1.dealer.Ball drawn_balls = 2;
+  // 額外球結果
+  map<string, api.v1.dealer.Ball> extra_balls = 3;
+  // 頭獎球
+  api.v1.dealer.Ball jackpot_ball = 4;
+  // 幸運球
+  repeated api.v1.dealer.Ball lucky_balls = 5;
+  // 獎項信息
+  map<string, PrizeInfo> prizes = 6;
+}
+
+// PrizeInfo 獎項信息
+message PrizeInfo {
+  // 獎項名稱
+  string name = 1;
+  // 獎項級別
+  int32 level = 2;
+  // 獎金金額
+  int64 amount = 3;
+  // 中獎人數
+  int32 winners_count = 4;
+}
+
+// LotteryStatusMessage 開獎狀態消息
+message LotteryStatusMessage {
+  // 基本消息屬性
+  BaseMessage base = 1;
+  // 狀態
+  string status = 2;
+  // 當前遊戲階段
+  common.GameStage stage = 3;
+  // 狀態變更訊息
+  string message = 4;
+  // 額外詳情
+  map<string, string> details = 5;
+}
+
+// GameSnapshotMessage 遊戲狀態快照
+message GameSnapshotMessage {
+  // 基本消息屬性
+  BaseMessage base = 1;
+  // 遊戲數據
+  api.v1.dealer.GameData game_data = 2;
+  // 事件類型
+  string event_type = 3;
+  // 額外數據
+  map<string, string> extra_data = 4;
+} 

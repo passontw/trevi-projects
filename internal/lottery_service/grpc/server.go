@@ -6,10 +6,12 @@ import (
 	"net"
 	"time"
 
+	newlotterypb "g38_lottery_service/internal/generated/api/v1/lottery"
 	"g38_lottery_service/internal/lottery_service/config"
 	"g38_lottery_service/internal/lottery_service/gameflow"
 	"g38_lottery_service/internal/lottery_service/grpc/dealer"
-	pb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
+	"g38_lottery_service/internal/lottery_service/grpc/lottery"
+	oldpb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -18,146 +20,127 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
-// GrpcServer 代表 gRPC 服務器
+// GrpcServer 代表 gRPC 伺服器
 type GrpcServer struct {
-	config        *config.AppConfig
-	logger        *zap.Logger
-	server        *grpc.Server
-	dealerSvc     *dealer.DealerService
-	dealerWrapper *dealer.DealerServiceWrapper
-	gameManager   *gameflow.GameManager
-	listener      net.Listener
+	config         *config.AppConfig
+	logger         *zap.Logger
+	server         *grpc.Server
+	dealerSvc      *dealer.DealerService
+	dealerWrapper  *dealer.DealerServiceWrapper
+	lotteryService *lottery.LotteryService
+	lotteryWrapper *lottery.LotteryServiceWrapper
+	gameManager    *gameflow.GameManager
+	listener       net.Listener
 }
 
-// NewGrpcServer 創建新的 gRPC 服務器
+// NewGrpcServer 創建一個新的 gRPC 伺服器
 func NewGrpcServer(
 	config *config.AppConfig,
 	logger *zap.Logger,
 	gameManager *gameflow.GameManager,
 ) *GrpcServer {
-	// 設定 gRPC keepalive 參數，確保連接活躍
-	keepAliveParams := grpc.KeepaliveParams(keepalive.ServerParameters{
-		MaxConnectionIdle:     60 * time.Second, // 如果連接閒置超過此時間，發送 ping (延長至 60 秒)
-		MaxConnectionAge:      3 * time.Hour,    // 連接最大存活時間 (延長至 3 小時)
-		MaxConnectionAgeGrace: 30 * time.Second, // 強制關閉連接前的寬限期 (延長至 30 秒)
-		Time:                  20 * time.Second, // 每隔 x 秒發送一次 ping (延長至 20 秒)
-		Timeout:               10 * time.Second, // ping 超時後等待的時間 (延長至 10 秒)
-	})
+	// 設置 gRPC 的 keepalive 參數
+	kaep := keepalive.EnforcementPolicy{
+		MinTime:             5 * time.Second,
+		PermitWithoutStream: true,
+	}
 
-	// 設定 keepalive 強制執行策略
-	keepAlivePolicy := grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-		MinTime:             10 * time.Second, // 允許客戶端最小 ping 間隔
-		PermitWithoutStream: true,             // 允許沒有活動流的連接發送 ping
-	})
+	kasp := keepalive.ServerParameters{
+		MaxConnectionIdle:     15 * time.Second,
+		MaxConnectionAge:      30 * time.Second,
+		MaxConnectionAgeGrace: 5 * time.Second,
+		Time:                  5 * time.Second,
+		Timeout:               1 * time.Second,
+	}
 
-	// 創建 gRPC 服務器
-	logger.Info("創建 gRPC 服務器")
-	server := grpc.NewServer(
-		keepAliveParams,
-		keepAlivePolicy,
-		grpc.ConnectionTimeout(30*time.Second), // 連接超時設置 (延長至 30 秒)
+	// 創建 gRPC 伺服器
+	s := grpc.NewServer(
+		grpc.KeepaliveEnforcementPolicy(kaep),
+		grpc.KeepaliveParams(kasp),
 	)
 
-	// 創建實例
-	grpcServer := &GrpcServer{
-		config:      config,
-		logger:      logger.With(zap.String("component", "grpc_server")),
-		server:      server,
-		gameManager: gameManager,
-	}
-
-	// 創建並註冊 DealerServiceWrapper
-	logger.Info("創建並註冊 DealerServiceWrapper 到 gRPC 服務器")
-	// 先創建原始服務（內部使用）
+	// 創建 DealerService 實例
 	dealerSvc := dealer.NewDealerService(logger, gameManager)
-	grpcServer.dealerSvc = dealerSvc
 
-	// 創建包裝器服務（對外暴露）
+	// 創建 DealerServiceWrapper 實例
 	dealerWrapper := dealer.NewDealerServiceWrapper(logger, gameManager)
-	grpcServer.dealerWrapper = dealerWrapper
 
-	// 註冊服務到 gRPC 服務器
-	pb.RegisterDealerServiceServer(server, dealerSvc)
+	// 創建 LotteryService 實例
+	lotteryService := lottery.NewLotteryService(logger, gameManager, dealerSvc)
 
-	// 啟用反射服務，支持諸如 grpcurl 之類的工具進行服務發現
-	logger.Info("啟用 gRPC 反射服務")
-	reflection.Register(server)
+	// 創建 LotteryServiceWrapper 實例
+	lotteryWrapper := lottery.NewLotteryServiceWrapper(logger, lotteryService)
 
-	return grpcServer
+	// 註冊 DealerService
+	oldpb.RegisterDealerServiceServer(s, dealerSvc)
+
+	// 註冊新的 API 服務
+	// 暫時停用 DealerServiceAdapter 註冊，等待適配器正確實現
+	// newdealerpb.RegisterDealerServiceServer(s, ...)
+	newlotterypb.RegisterLotteryServiceServer(s, lotteryWrapper)
+
+	// 啟用 gRPC 反射，用於服務發現
+	reflection.Register(s)
+
+	return &GrpcServer{
+		config:         config,
+		logger:         logger.Named("grpc_server"),
+		server:         s,
+		dealerSvc:      dealerSvc,
+		dealerWrapper:  dealerWrapper,
+		lotteryService: lotteryService,
+		lotteryWrapper: lotteryWrapper,
+		gameManager:    gameManager,
+	}
 }
 
-// Start 啟動 gRPC 服務器
-func (s *GrpcServer) Start(lc fx.Lifecycle) {
-	// 使用應用配置中的 gRPC 端口
-	serverAddr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.GrpcPort)
-	s.logger.Info("Starting gRPC server",
-		zap.String("address", serverAddr),
-		zap.Int("port", s.config.Server.GrpcPort))
-
-	// 嘗試立即監聽，以便快速檢測端口問題
-	lis, err := net.Listen("tcp", serverAddr)
+// Start 啟動 gRPC 伺服器
+func (gs *GrpcServer) Start() error {
+	addr := fmt.Sprintf("%s:%d", gs.config.Server.Host, gs.config.Server.GrpcPort)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		s.logger.Error("Failed to listen on gRPC port, will retry in lifecycle hooks",
-			zap.Error(err),
-			zap.String("address", serverAddr))
-	} else {
-		s.listener = lis
-		s.logger.Info("Successfully listening on gRPC port",
-			zap.String("address", serverAddr))
+		gs.logger.Error("無法啟動 gRPC 伺服器", zap.Error(err))
+		return err
 	}
 
-	// 生命周期鉤子
+	gs.listener = listener
+	gs.logger.Info("gRPC 伺服器已啟動", zap.String("address", addr))
+
+	// 在新的 goroutine 中啟動伺服器
+	go func() {
+		if err := gs.server.Serve(listener); err != nil {
+			gs.logger.Error("gRPC 伺服器錯誤", zap.Error(err))
+		}
+	}()
+
+	return nil
+}
+
+// Stop 停止 gRPC 伺服器
+func (gs *GrpcServer) Stop() {
+	gs.logger.Info("正在停止 gRPC 伺服器")
+	gs.server.GracefulStop()
+	gs.logger.Info("gRPC 伺服器已停止")
+}
+
+// ProvideGrpcServer 為 fx 框架提供 gRPC 伺服器
+func ProvideGrpcServer(lc fx.Lifecycle, config *config.AppConfig, logger *zap.Logger, gameManager *gameflow.GameManager) *GrpcServer {
+	gs := NewGrpcServer(config, logger, gameManager)
+
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			// 如果已經成功監聽，直接啟動服務
-			if s.listener != nil {
-				// 啟動 gRPC 服務器
-				go func() {
-					s.logger.Info("gRPC server starts serving requests",
-						zap.String("address", serverAddr))
-
-					if err := s.server.Serve(s.listener); err != nil {
-						s.logger.Error("gRPC server failed", zap.Error(err))
-					}
-				}()
-				return nil
-			}
-
-			// 如果之前沒有成功監聽，再次嘗試
-			lis, err := net.Listen("tcp", serverAddr)
-			if err != nil {
-				s.logger.Error("Failed to listen on gRPC port", zap.Error(err))
-				return err
-			}
-
-			s.listener = lis
-			s.logger.Info("Successfully listening on gRPC port in lifecycle hook",
-				zap.String("address", serverAddr))
-
-			// 啟動 gRPC 服務器
-			go func() {
-				s.logger.Info("gRPC server starts serving requests in lifecycle hook",
-					zap.String("address", serverAddr))
-
-				if err := s.server.Serve(s.listener); err != nil {
-					s.logger.Error("gRPC server failed", zap.Error(err))
-				}
-			}()
-
-			return nil
+			return gs.Start()
 		},
 		OnStop: func(ctx context.Context) error {
-			s.logger.Info("Stopping gRPC server")
-			s.server.GracefulStop()
+			gs.Stop()
 			return nil
 		},
 	})
+
+	return gs
 }
 
-// Module 提供 FX 模塊
-var Module = fx.Options(
-	fx.Provide(NewGrpcServer),
-	fx.Invoke(func(server *GrpcServer, lc fx.Lifecycle) {
-		server.Start(lc)
-	}),
-)
+// RegisterGrpcServer 注册 gRPC 伺服器
+func RegisterGrpcServer() fx.Option {
+	return fx.Provide(ProvideGrpcServer)
+}
