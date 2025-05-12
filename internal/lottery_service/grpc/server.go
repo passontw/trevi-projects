@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	newdealerpb "g38_lottery_service/internal/generated/api/v1/dealer"
 	newlotterypb "g38_lottery_service/internal/generated/api/v1/lottery"
 	"g38_lottery_service/internal/lottery_service/config"
 	"g38_lottery_service/internal/lottery_service/gameflow"
@@ -28,6 +29,7 @@ type GrpcServer struct {
 	logger         *zap.Logger
 	server         *grpc.Server
 	dealerSvc      *dealer.DealerService
+	dealerAdapter  *dealer.DealerServiceAdapter
 	lotteryService *lottery.LotteryService
 	lotteryWrapper *lottery.LotteryServiceWrapper
 	gameManager    *gameflow.GameManager
@@ -64,6 +66,9 @@ func NewGrpcServer(
 	// 創建 DealerService 實例
 	dealerSvc := dealer.NewDealerService(logger, gameManager)
 
+	// 創建 DealerServiceAdapter 實例
+	dealerAdapter := dealer.NewDealerServiceAdapter(logger, dealerSvc)
+
 	// 創建 LotteryService 實例
 	lotteryService := lottery.NewLotteryService(logger, gameManager, dealerSvc)
 
@@ -74,8 +79,7 @@ func NewGrpcServer(
 	oldpb.RegisterDealerServiceServer(s, dealerSvc)
 
 	// 註冊新的 API 服務
-	// 暫時停用 DealerService 新版註冊，待完成適配器實現後再啟用
-	// newdealerpb.RegisterDealerServiceServer(s, dealerWrapper)
+	newdealerpb.RegisterDealerServiceServer(s, dealerAdapter)
 	newlotterypb.RegisterLotteryServiceServer(s, lotteryWrapper)
 
 	// 啟用 gRPC 反射，用於服務發現
@@ -86,6 +90,7 @@ func NewGrpcServer(
 		logger:         logger.Named("grpc_server"),
 		server:         s,
 		dealerSvc:      dealerSvc,
+		dealerAdapter:  dealerAdapter,
 		lotteryService: lotteryService,
 		lotteryWrapper: lotteryWrapper,
 		gameManager:    gameManager,
