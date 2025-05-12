@@ -952,7 +952,7 @@ func (s *DealerService) SubscribeGameEvents(req *pb.SubscribeGameEventsRequest, 
 					Timestamp: timestamppb.Now(),
 					EventData: &pb.GameEvent_Heartbeat{
 						Heartbeat: &pb.HeartbeatEvent{
-							Message: "hello",
+							Message: "Heartbeat",
 						},
 					},
 				}
@@ -1301,6 +1301,14 @@ func (s *DealerService) broadcastEvent(event map[string]interface{}) error {
 			// 如果可能，獲取完整遊戲數據
 			if roomID != "" {
 				if gameData := s.gameManager.GetCurrentGameByRoom(roomID); gameData != nil {
+					// 處理額外球選邊邏輯
+					ctx := context.Background()
+					if err := s.updateGameSelectedSide(ctx, gameData); err != nil {
+						s.logger.Warn("處理額外球選邊失敗",
+							zap.String("gameID", gameData.GameID),
+							zap.Error(err))
+					}
+
 					notification.GameData = convertGameDataToPb(gameData)
 				}
 			}
@@ -1314,6 +1322,22 @@ func (s *DealerService) broadcastEvent(event map[string]interface{}) error {
 		notification := &pb.NotificationEvent{
 			Message: eventType,
 		}
+
+		// 如果有房間ID，也添加遊戲數據
+		if roomID != "" {
+			if gameData := s.gameManager.GetCurrentGameByRoom(roomID); gameData != nil {
+				// 處理額外球選邊邏輯
+				ctx := context.Background()
+				if err := s.updateGameSelectedSide(ctx, gameData); err != nil {
+					s.logger.Warn("處理額外球選邊失敗",
+						zap.String("gameID", gameData.GameID),
+						zap.Error(err))
+				}
+
+				notification.GameData = convertGameDataToPb(gameData)
+			}
+		}
+
 		gameEvent.EventData = &pb.GameEvent_Notification{
 			Notification: notification,
 		}
@@ -1579,4 +1603,33 @@ func (s *DealerService) getRoomSubscribers(roomID string) []string {
 		return subscribers
 	}
 	return []string{}
+}
+
+// 處理遊戲數據中的額外球選邊，如果還未選邊則自動選擇一個
+func (s *DealerService) updateGameSelectedSide(ctx context.Context, gameData *gameflow.GameData) error {
+	if gameData == nil {
+		return fmt.Errorf("遊戲數據為空")
+	}
+
+	// 檢查是否在額外球繪製階段但尚未設置選邊
+	if gameData.CurrentStage == gameflow.StageExtraBallDrawingStart && gameData.SelectedSide == "" {
+		// 自動選擇一個邊
+		sidePicker := gameflow.NewSidePicker()
+		selectedSide, err := sidePicker.PickSide()
+		if err != nil {
+			return fmt.Errorf("選擇額外球邊失敗: %w", err)
+		}
+
+		s.logger.Info("自動選擇額外球邊",
+			zap.String("gameID", gameData.GameID),
+			zap.String("side", string(selectedSide)))
+
+		// 更新遊戲數據中的選邊
+		gameData.SelectedSide = selectedSide
+
+		// 通知選邊事件
+		go s.onExtraBallSideSelected(gameData.GameID, selectedSide)
+	}
+
+	return nil
 }
