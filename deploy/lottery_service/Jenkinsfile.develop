@@ -155,8 +155,13 @@ pipeline {
                 script {
                     try {
                         echo "Running unit tests..."
+                        // 允許通過 TEST_PATH 環境變數指定測試目錄，預設為 ./internal/...
+                        def testPath = env.TEST_PATH ?: "./internal/..."
+                        echo "Test path: ${testPath}"
+                        
+                        // 增加 -v 詳細輸出，保留錯誤資訊，並仍然生成覆蓋率報告
                         sh """
-                            go test -v ./internal/... -coverprofile=coverage.out || true
+                            go test -v ${testPath} -coverprofile=coverage.out || true
                             go tool cover -func=coverage.out
                         """
                     } catch (Exception e) {

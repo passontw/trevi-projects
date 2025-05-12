@@ -4,7 +4,12 @@ import (
 	"testing"
 )
 
-func TestParseRedisXmlConfig(t *testing.T) {
+// testParseRedisXml 是一個測試輔助函數，包裝 parseRedisXmlConfig 函數以便測試
+func testParseRedisXml(xmlContent string, cfg *AppConfig) error {
+	return parseRedisXmlConfig(xmlContent, cfg)
+}
+
+func TestParseRedisConfig(t *testing.T) {
 	// 測試案例 1: 單節點配置
 	xmlSingleNode := `<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
 <config>
@@ -22,7 +27,7 @@ func TestParseRedisXmlConfig(t *testing.T) {
 		},
 	}
 
-	err := parseRedisXmlConfig(xmlSingleNode, config)
+	err := testParseRedisXml(xmlSingleNode, config)
 	if err != nil {
 		t.Errorf("解析單節點配置失敗: %v", err)
 	}
@@ -66,7 +71,7 @@ func TestParseRedisXmlConfig(t *testing.T) {
 		},
 	}
 
-	err = parseRedisXmlConfig(xmlCluster, config)
+	err = testParseRedisXml(xmlCluster, config)
 	if err != nil {
 		t.Errorf("解析集群配置失敗: %v", err)
 	}
@@ -90,13 +95,13 @@ func TestParseRedisXmlConfig(t *testing.T) {
 	}
 
 	// 測試案例 3: 空 XML
-	err = parseRedisXmlConfig("", config)
+	err = testParseRedisXml("", config)
 	if err == nil {
 		t.Errorf("空 XML 應該返回錯誤")
 	}
 
 	// 測試案例 4: 無效 XML
-	err = parseRedisXmlConfig("<invalid>", config)
+	err = testParseRedisXml("<invalid>", config)
 	if err == nil {
 		t.Errorf("無效 XML 應該返回錯誤")
 	}
@@ -118,7 +123,7 @@ func TestParseRedisXmlConfig(t *testing.T) {
 		},
 	}
 
-	err = parseRedisXmlConfig(xmlWithUsername, config)
+	err = testParseRedisXml(xmlWithUsername, config)
 	if err != nil {
 		t.Errorf("解析帶有 username 配置失敗: %v", err)
 	}

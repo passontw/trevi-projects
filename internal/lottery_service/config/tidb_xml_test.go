@@ -4,15 +4,20 @@ import (
 	"testing"
 )
 
+// testParseTiDBXml 是一個測試輔助函數，包裝 parseTiDBXmlConfig 函數以便測試
+func testParseTiDBXml(xmlContent string, cfg *AppConfig, serviceName string) error {
+	return parseTiDBXmlConfig(xmlContent, cfg, serviceName)
+}
+
 func TestParseTiDBXmlConfig(t *testing.T) {
 	// 測試用的 XML 內容
 	xmlContent := `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <config>
-  <db name="dbname">
+  <db name="g38_lottery_service">
     <type>tidb</type>
-    <host>127.0.0.1</host>
+    <host>10.141.1.43</host>
     <port>4001</port>
-    <name>dbname</name>
+    <name>g38_loterry_service</name>
     <user>admin</user>
     <password>test-password</password>
   </db>
@@ -31,7 +36,7 @@ func TestParseTiDBXmlConfig(t *testing.T) {
 	}
 
 	// 解析 XML 配置
-	err := parseTiDBXmlConfig(xmlContent, cfg, "g38_lottery_service")
+	err := testParseTiDBXml(xmlContent, cfg, "g38_lottery_service")
 	if err != nil {
 		t.Fatalf("解析 TiDB XML 配置失敗: %v", err)
 	}
@@ -81,7 +86,7 @@ func TestParseTiDBXmlConfigWithNonExistingService(t *testing.T) {
 	}
 
 	// 解析 XML 配置，嘗試查找不存在的服務
-	err := parseTiDBXmlConfig(xmlContent, cfg, "non_existing_service")
+	err := testParseTiDBXml(xmlContent, cfg, "non_existing_service")
 	if err != nil {
 		t.Fatalf("解析 TiDB XML 配置失敗: %v", err)
 	}
