@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: g38-lottery-service
+  labels:
+    app: g38-lottery-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: g38-lottery-service
+  template:
+    metadata:
+      labels:
+        app: g38-lottery-service
+    spec:
+      containers:
+      - name: g38-lottery-service
+        image: your-registry/g38-lottery-service:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 8081
+          name: dealer-ws
+        - containerPort: 8082
+          name: grpc
+        env:
+        - name: NACOS_HOST
+          value: "nacos-service"
+        - name: NACOS_PORT
+          value: "8848"
+        - name: NACOS_NAMESPACE
+          value: "public"
+        - name: NACOS_GROUP
+          value: "DEFAULT_GROUP"
+        - name: NACOS_DATAID
+          value: "g38_lottery"
+        livenessProbe:
+          httpGet:
+            path: /liveness
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 3
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep 5"]  # 給服務器一些時間進行優雅關閉
+        resources:
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+          requests:
+            cpu: "0.5"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: g38-lottery-service
+  labels:
+    app: g38-lottery-service
+spec:
+  selector:
+    app: g38-lottery-service
+  ports:
+  - port: 8080
+    targetPort: http
+    name: http
+  - port: 8081
+    targetPort: dealer-ws
+    name: dealer-ws
+  - port: 8082
+    targetPort: grpc
+    name: grpc
+  type: ClusterIP 

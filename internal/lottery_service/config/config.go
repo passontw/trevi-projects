@@ -33,16 +33,17 @@ type AppConfig struct {
 
 // ServerConfig 服務器配置
 type ServerConfig struct {
-	Host            string `json:"host"`
-	Port            int    `json:"port"`
-	Version         string `json:"version"`
-	ServiceName     string `json:"serviceName"`
-	ServiceID       string `json:"serviceId"`
-	ServiceIP       string `json:"serviceIp"`
-	ServicePort     int    `json:"servicePort"`
-	DealerWsPort    int    `json:"dealerWsPort"` // 荷官 WebSocket 端口
-	GrpcPort        int    `json:"grpcPort"`     // gRPC 服務端口
-	RegisterService bool   `json:"registerService"`
+	Host                   string `json:"host"`
+	Port                   int    `json:"port"`
+	Version                string `json:"version"`
+	ServiceName            string `json:"serviceName"`
+	ServiceID              string `json:"serviceId"`
+	ServiceIP              string `json:"serviceIp"`
+	ServicePort            int    `json:"servicePort"`
+	DealerWsPort           int    `json:"dealerWsPort"` // 荷官 WebSocket 端口
+	GrpcPort               int    `json:"grpcPort"`     // gRPC 服務端口
+	RegisterService        bool   `json:"registerService"`
+	ShutdownTimeoutSeconds int    `json:"shutdownTimeout"` // 優雅關閉超時秒數
 }
 
 // RedisConfig Redis 配置
@@ -396,16 +397,17 @@ func createDefaultConfig() *AppConfig {
 		AppName: getEnv("APP_NAME", "g38_lottery_service"),
 		Debug:   getEnvAsBool("DEBUG", true),
 		Server: ServerConfig{
-			Host:            getEnv("SERVER_HOST", "0.0.0.0"),
-			Port:            getEnvAsInt("SERVER_PORT", 8000),
-			Version:         getEnv("SERVER_VERSION", "v1"),
-			ServiceName:     getEnv("SERVICE_NAME", "lottery-service"),
-			ServiceID:       getEnv("SERVICE_ID", "lottery-service-1"),
-			ServiceIP:       getEnv("SERVICE_IP", "127.0.0.1"),
-			ServicePort:     getEnvAsInt("SERVICE_PORT", 8080),
-			DealerWsPort:    getEnvAsInt("DEALER_WS_PORT", 9000), // 默認荷官 WebSocket 端口
-			GrpcPort:        getEnvAsInt("GRPC_PORT", 9100),      // 默認 gRPC 端口
-			RegisterService: getEnvAsBool("REGISTER_SERVICE", true),
+			Host:                   getEnv("SERVER_HOST", "0.0.0.0"),
+			Port:                   getEnvAsInt("SERVER_PORT", 8000),
+			Version:                getEnv("SERVER_VERSION", "v1"),
+			ServiceName:            getEnv("SERVICE_NAME", "lottery-service"),
+			ServiceID:              getEnv("SERVICE_ID", "lottery-service-1"),
+			ServiceIP:              getEnv("SERVICE_IP", "127.0.0.1"),
+			ServicePort:            getEnvAsInt("SERVICE_PORT", 8080),
+			DealerWsPort:           getEnvAsInt("DEALER_WS_PORT", 9000), // 默認荷官 WebSocket 端口
+			GrpcPort:               getEnvAsInt("GRPC_PORT", 9100),      // 默認 gRPC 端口
+			RegisterService:        getEnvAsBool("REGISTER_SERVICE", true),
+			ShutdownTimeoutSeconds: getEnvAsInt("SHUTDOWN_TIMEOUT", 30), // 優雅關閉默認 30 秒
 		},
 		Redis: RedisConfig{
 			Host:     "", // 空值，強制從 Nacos 讀取
