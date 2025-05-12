@@ -69,7 +69,7 @@ pipeline {
                     
                     // 檢查是否有 Proto 文件更改
                     def protoChanges = sh(script: '''
-                        git diff --name-only HEAD^ HEAD | grep -E "^proto/.*\.proto$" || echo ""
+                        git diff --name-only HEAD^ HEAD | grep -E "^proto/.*\\.proto$" || echo ""
                     ''', returnStdout: true).trim()
                     
                     if (protoChanges != '') {
