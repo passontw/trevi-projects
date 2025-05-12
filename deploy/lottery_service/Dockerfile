@@ -1,4 +1,4 @@
-# 構建階段
+# syntax=docker/dockerfile:1.4
 FROM golang:1.24.0-bookworm AS builder
 
 # 設定環境變數
@@ -15,7 +15,8 @@ ENV GO111MODULE=on \
     GOMAXPROCS=8
 
 # 安裝必要工具 (合併命令減少層數)
-RUN apt-get update && \
+RUN --mount=type=cache,target=/var/cache/apt \
+    apt-get update && \
     apt-get install -y --no-install-recommends gcc libc6-dev git bash protobuf-compiler libprotobuf-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
@@ -23,25 +24,26 @@ RUN apt-get update && \
 WORKDIR /go/src/g38_lottery_service
 
 # 先複製 go.mod 和 go.sum (如果存在)
-COPY go.mod ./
-COPY go.sum* ./
+COPY go.mod go.sum* ./
 
-# 預下載依賴 - 使用更高效的方法
-RUN go mod download -x && \
+# 預下載依賴 - 使用 BuildKit 緩存掛載加速下載
+RUN --mount=type=cache,target=/go/mod \
+    --mount=type=cache,target=/go/cache \
+    go mod download -x && \
     # 直接下載關鍵的依賴項，確保它們被正確快取
     go get -v github.com/apache/rocketmq-client-go/v2@latest && \
     go get -v github.com/apache/rocketmq-client-go/v2/primitive && \
     go get -v github.com/apache/rocketmq-client-go/v2/producer && \
     go get -v google.golang.org/grpc/keepalive && \
-    go get -v google.golang.org/grpc/reflection && \
-    # 移除下載的源碼以減少層大小
-    rm -rf $GOPATH/src/*
+    go get -v google.golang.org/grpc/reflection
 
 # 複製源代碼
 COPY . .
 
 # 安裝工具並生成 protobuf 代碼
-RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0 && \
+RUN --mount=type=cache,target=/go/mod \
+    --mount=type=cache,target=/go/cache \
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0 && \
     go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0 && \
     curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.30.0/buf-$(uname -s)-$(uname -m)" -o /usr/local/bin/buf && \
     chmod +x /usr/local/bin/buf && \
@@ -50,7 +52,9 @@ RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0 && \
     ./scripts/gen-proto-buf.sh
 
 # 構建應用程序 (使用 -ldflags 減小二進制檔案大小)
-RUN go build -ldflags="-s -w" -o lottery_service ./cmd/lottery_service/main.go
+RUN --mount=type=cache,target=/go/mod \
+    --mount=type=cache,target=/go/cache \
+    go build -ldflags="-s -w" -o lottery_service ./cmd/lottery_service/main.go
 
 # 最終階段 - 使用更小的基礎映像
 FROM alpine:3.19

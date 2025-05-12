@@ -221,13 +221,13 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Push to Harbor') {
             steps {
                 // Login to Harbor registry
-                withCredentials([usernamePassword(credentialsId: 'harbor.trevi-dev.cc', passwordVariable: 'HARBOR_PWD', usernameVariable: 'HARBOR_USER')]) {
+                withCredentials([usernamePassword(credentialsId: 'harbor-credentials', passwordVariable: 'HARBOR_PASSWORD', usernameVariable: 'HARBOR_USERNAME')]) {
                     sh """
-                        echo \"${HARBOR_PWD}\" | docker login \"https://${env.HARBOR_REGISTRY}\" -u \"${HARBOR_USER}\" --password-stdin
+                        echo ${HARBOR_PASSWORD} | docker login ${HARBOR_REGISTRY} -u ${HARBOR_USERNAME} --password-stdin
                     """
                 }
                 
