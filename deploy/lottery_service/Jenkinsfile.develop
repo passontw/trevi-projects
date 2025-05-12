@@ -15,6 +15,13 @@ pipeline {
         GO111MODULE = 'on'
         GOPROXY = 'https://goproxy.cn,direct'
         GOSUMDB = 'off'
+        
+        // 構建設定
+        BUILD_VERSION = "${env.BUILD_NUMBER}-${new Date().format('yyyyMMdd-HHmmss')}"
+        
+        // Proto 相關設定
+        PROTO_ROOT = './proto'
+        BUF_VERSION = '1.11.0'
     }
     
     stages {
@@ -41,15 +48,15 @@ pipeline {
                         changedFiles = "unknown"
                     }
                     
-                    // 檢查指定路徑是否有更改
+                    // 檢查指定路徑是否有更改（增加對 proto 目錄的檢查）
                     def hasRelevantChanges = false
                     if (changedFiles != "unknown") {
                         def relevantChanges = sh(script: '''
-                            git diff --name-only HEAD^ HEAD | grep -E "^cmd/lottery_service/main.go|^internal/|^pkg/.*/.*/" || echo ""
+                            git diff --name-only HEAD^ HEAD | grep -E "^cmd/lottery_service/main.go|^internal/|^pkg/.*/.*|^proto/" || echo ""
                         ''', returnStdout: true).trim()
                         
                         if (relevantChanges == '') {
-                            echo "No changes in cmd/lottery_service/main.go, internal/*, or pkg/****/****/* paths."
+                            echo "No changes in relevant paths."
                             echo "Build will continue for testing purposes."
                         } else {
                             echo "Relevant changes detected: ${relevantChanges}"
@@ -59,6 +66,19 @@ pipeline {
                     
                     // Store this for later use
                     env.HAS_RELEVANT_CHANGES = hasRelevantChanges.toString()
+                    
+                    // 檢查是否有 Proto 文件更改
+                    def protoChanges = sh(script: '''
+                        git diff --name-only HEAD^ HEAD | grep -E "^proto/.*\.proto$" || echo ""
+                    ''', returnStdout: true).trim()
+                    
+                    if (protoChanges != '') {
+                        echo "Proto file changes detected: ${protoChanges}"
+                        env.PROTO_CHANGES = "true"
+                    } else {
+                        echo "No proto file changes detected."
+                        env.PROTO_CHANGES = "false"
+                    }
                 }
             }
         }                
@@ -72,18 +92,86 @@ pipeline {
                     echo "Go environment:"
                     go version || echo "Go not installed on agent"
                     echo "Project structure:"
-                    find . -type f -name "*.go" | sort
+                    find . -maxdepth 3 -type d | sort
                     echo "go.mod content:"
                     cat go.mod || echo "go.mod not found"
                 """
             }
-        }        
+        }
+        
+        stage('Install Tools') {
+            steps {
+                script {
+                    // 安裝 Buf 工具（如果需要）
+                    if (env.PROTO_CHANGES == "true") {
+                        echo "Installing Buf tool for proto file handling..."
+                        sh """
+                            BUF_BINARY=\$(which buf || echo "")
+                            if [ -z "\$BUF_BINARY" ]; then
+                                echo "Buf not found, installing..."
+                                curl -sSL "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-\$(uname -s)-\$(uname -m)" -o ./buf
+                                chmod +x ./buf
+                                export PATH=\$PATH:\$(pwd)
+                                echo "Buf installed: \$(./buf --version)"
+                            else
+                                echo "Buf already installed: \$(\$BUF_BINARY --version)"
+                            fi
+                        """
+                    } else {
+                        echo "Skipping Buf installation as no proto changes detected."
+                    }
+                }
+            }
+        }
+        
+        stage('Generate Proto Code') {
+            when {
+                expression { env.PROTO_CHANGES == "true" }
+            }
+            steps {
+                script {
+                    echo "Generating code from proto files..."
+                    sh """
+                        cd ${env.PROTO_ROOT}
+                        
+                        # 檢查 buf.yaml 存在性
+                        if [ -f buf.yaml ]; then
+                            echo "Running Buf..."
+                            ../buf generate
+                        else
+                            echo "buf.yaml not found, using protoc directly..."
+                            # 備用方案：使用 protoc 直接生成
+                            find . -name "*.proto" -type f -exec protoc --go_out=../internal/generated --go-grpc_out=../internal/generated {} \\;
+                        fi
+                        
+                        echo "Proto code generation completed."
+                    """
+                }
+            }
+        }
+        
+        stage('Unit Tests') {
+            steps {
+                script {
+                    try {
+                        echo "Running unit tests..."
+                        sh """
+                            go test -v ./internal/... -coverprofile=coverage.out || true
+                            go tool cover -func=coverage.out
+                        """
+                    } catch (Exception e) {
+                        echo "Warning: Unit tests failed: ${e.message}"
+                        echo "Continuing with build anyway."
+                    }
+                }
+            }
+        }
         
         stage('Build Docker Image') {
             steps {
                 script {
                     // 定義 Docker 映像完整名稱
-                    def imageTag = env.BUILD_NUMBER
+                    def imageTag = "${env.BUILD_VERSION}"
                     env.FULL_IMAGE_NAME = "${env.HARBOR_REGISTRY}/${env.HARBOR_PROJECT}/${env.IMAGE_NAME}:${imageTag}"
                     env.LATEST_IMAGE_NAME = "${env.HARBOR_REGISTRY}/${env.HARBOR_PROJECT}/${env.IMAGE_NAME}:latest"
                     echo "Building image: ${env.FULL_IMAGE_NAME}"
@@ -119,8 +207,22 @@ pipeline {
                     docker push ${env.LATEST_IMAGE_NAME}
                 """
                 echo "Docker images pushed successfully: ${env.FULL_IMAGE_NAME} and ${env.LATEST_IMAGE_NAME}"
+                
+                // 記錄發布資訊
+                sh """
+                    echo "Build Information" > build_info.txt
+                    echo "----------------" >> build_info.txt
+                    echo "Version: ${env.BUILD_VERSION}" >> build_info.txt
+                    echo "Date: \$(date)" >> build_info.txt
+                    echo "Images: ${env.FULL_IMAGE_NAME}, ${env.LATEST_IMAGE_NAME}" >> build_info.txt
+                    echo "Commit: \$(git rev-parse HEAD)" >> build_info.txt
+                    echo "Branch: \$(git rev-parse --abbrev-ref HEAD)" >> build_info.txt
+                    echo "----------------" >> build_info.txt
+                """
+                
+                archiveArtifacts artifacts: 'build_info.txt', onlyIfSuccessful: true
             }
-        }                
+        }
     }
     
     post {
@@ -143,8 +245,11 @@ pipeline {
                     
                     // 清理未使用的映像和暫存文件
                     sh "docker system prune -f || true"
+                    
+                    // 清理 Buf 工具（如果安裝）
+                    sh "rm -f ./buf || true"
                 } catch (Exception e) {
-                    echo "Warning: Failed to clean up Docker images: ${e.message}"
+                    echo "Warning: Failed to clean up resources: ${e.message}"
                 }
             }
         }
@@ -152,10 +257,34 @@ pipeline {
         success {
             echo "Build and push completed successfully!"
             echo "Images: ${env.FULL_IMAGE_NAME} and ${env.LATEST_IMAGE_NAME}"
+            
+            // 可選：發送成功通知
+            script {
+                try {
+                    slackSend(
+                        color: 'good',
+                        message: "✅ 構建成功! 項目: '${env.JOB_NAME}', 版本: ${env.BUILD_VERSION}, 查看詳情: ${env.BUILD_URL}"
+                    )
+                } catch (Exception e) {
+                    echo "Warning: Failed to send Slack notification: ${e.message}"
+                }
+            }
         }
         
         failure {
             echo "Build or push failed!"
+            
+            // 可選：發送失敗通知
+            script {
+                try {
+                    slackSend(
+                        color: 'danger',
+                        message: "❌ 構建失敗! 項目: '${env.JOB_NAME}', 版本: ${env.BUILD_VERSION}, 查看詳情: ${env.BUILD_URL}"
+                    )
+                } catch (Exception e) {
+                    echo "Warning: Failed to send Slack notification: ${e.message}"
+                }
+            }
         }
     }
 }
