@@ -2,8 +2,8 @@ syntax = "proto3";
 
 package api.v1.dealer;
 
-import "proto/common/common.proto";
-import "proto/api/v1/dealer/ball.proto";
+import "common/common.proto";
+import "api/v1/dealer/ball.proto";
 
 option go_package = "g38_lottery_service/internal/generated/api/v1/dealer";
 
