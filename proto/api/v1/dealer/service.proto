@@ -71,6 +71,8 @@ message DrawExtraBallRequest {
   string room_id = 1;
   // side 抽取的額外球側（左或右）
   common.ExtraBallSide side = 2;
+  // balls 預定義球列表，用於客戶端指定要抽取的球
+  repeated Ball balls = 3;
 }
 
 // DrawExtraBallResponse 抽取額外球的響應
@@ -83,6 +85,8 @@ message DrawExtraBallResponse {
 message DrawJackpotBallRequest {
   // room_id 房間ID
   string room_id = 1;
+  // balls 預定義球列表，用於客戶端指定要抽取的球
+  repeated Ball balls = 2;
 }
 
 // DrawJackpotBallResponse 抽取頭獎球的響應
@@ -97,6 +101,8 @@ message DrawLuckyBallRequest {
   string room_id = 1;
   // count 指定抽取的球數量
   int32 count = 2;
+  // balls 預定義球列表，用於客戶端指定要抽取的球
+  repeated Ball balls = 3;
 }
 
 // DrawLuckyBallResponse 抽取幸運球的響應
@@ -127,6 +133,9 @@ message GetGameStatusRequest {
 message GetGameStatusResponse {
   // game_data 遊戲數據
   GameData game_data = 1;
+  
+  // extra_ball_count 額外球數量，用於客戶端顯示
+  int32 extra_ball_count = 2;
 }
 
 // StartJackpotRoundRequest 開始頭獎回合請求

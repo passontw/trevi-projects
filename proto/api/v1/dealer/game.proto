@@ -41,6 +41,9 @@ message GameData {
   
   // dealer_id 荷官ID
   string dealer_id = 11;
+  
+  // extra_ball_count 額外球數量
+  int32 extra_ball_count = 12;
 }
 
 // GameStatus 表示遊戲的狀態

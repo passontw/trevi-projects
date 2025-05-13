@@ -96,4 +96,13 @@ message LuckyBallDrawnEvent {
   
   // 幸運球列表
   repeated Ball balls = 2;
+}
+
+// NotificationData 表示通知事件數據
+message NotificationData {
+  // 遊戲數據
+  GameData game_data = 1;
+  
+  // 額外球數量
+  int32 extra_ball_count = 2;
 } 
