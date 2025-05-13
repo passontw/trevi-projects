@@ -40,8 +40,9 @@ type ServerConfig struct {
 	ServiceID              string `json:"serviceId"`
 	ServiceIP              string `json:"serviceIp"`
 	ServicePort            int    `json:"servicePort"`
-	DealerWsPort           int    `json:"dealerWsPort"` // 荷官 WebSocket 端口
-	GrpcPort               int    `json:"grpcPort"`     // gRPC 服務端口
+	DealerWsPort           int    `json:"dealerWsPort"`   // 荷官 WebSocket 端口
+	GrpcPort               int    `json:"grpcPort"`       // gRPC 服務端口
+	GrpcMaxConnectionAge   int    `json:"grpcMaxConnAge"` // gRPC 最大連接存活時間（秒）
 	RegisterService        bool   `json:"registerService"`
 	ShutdownTimeoutSeconds int    `json:"shutdownTimeout"` // 優雅關閉超時秒數
 }
@@ -404,8 +405,9 @@ func createDefaultConfig() *AppConfig {
 			ServiceID:              getEnv("SERVICE_ID", "lottery-service-1"),
 			ServiceIP:              getEnv("SERVICE_IP", "127.0.0.1"),
 			ServicePort:            getEnvAsInt("SERVICE_PORT", 8080),
-			DealerWsPort:           getEnvAsInt("DEALER_WS_PORT", 9000), // 默認荷官 WebSocket 端口
-			GrpcPort:               getEnvAsInt("GRPC_PORT", 9100),      // 默認 gRPC 端口
+			DealerWsPort:           getEnvAsInt("DEALER_WS_PORT", 9000),   // 默認荷官 WebSocket 端口
+			GrpcPort:               getEnvAsInt("GRPC_PORT", 9100),        // 默認 gRPC 端口
+			GrpcMaxConnectionAge:   getEnvAsInt("GRPC_MAX_CONN_AGE", 600), // gRPC 最大連接存活時間（秒），默認 10 分鐘
 			RegisterService:        getEnvAsBool("REGISTER_SERVICE", true),
 			ShutdownTimeoutSeconds: getEnvAsInt("SHUTDOWN_TIMEOUT", 30), // 優雅關閉默認 30 秒
 		},

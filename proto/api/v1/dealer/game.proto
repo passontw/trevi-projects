@@ -4,65 +4,73 @@ package api.v1.dealer;
 
 import "common/common.proto";
 import "api/v1/dealer/ball.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "g38_lottery_service/internal/generated/api/v1/dealer";
 
-// GameData 代表遊戲數據
+// GameData 包含遊戲信息
 message GameData {
-  // id 遊戲ID
-  string id = 1;
-  
-  // room_id 房間ID
+  string game_id = 1;
   string room_id = 2;
-  
-  // stage 當前遊戲階段
   common.GameStage stage = 3;
-  
-  // status 遊戲狀態
   GameStatus status = 4;
-  
-  // drawn_balls 已經抽取的球
-  repeated Ball drawn_balls = 5;
-  
-  // extra_balls 額外球
-  map<string, Ball> extra_balls = 6;
-  
-  // jackpot_ball 頭獎球
+  repeated Ball regular_balls = 5;
+  repeated Ball extra_balls = 6;
   Ball jackpot_ball = 7;
-  
-  // lucky_balls 幸運球
   repeated Ball lucky_balls = 8;
-  
-  // created_at 創建時間
   int64 created_at = 9;
-  
-  // updated_at 更新時間
   int64 updated_at = 10;
-  
-  // dealer_id 荷官ID
   string dealer_id = 11;
-  
-  // extra_ball_count 額外球數量
   int32 extra_ball_count = 12;
+  common.ExtraBallSide selected_side = 13;
+  bool has_jackpot = 14;
+  double jackpot = 15;
 }
 
-// GameStatus 表示遊戲的狀態
+// JackpotGame 代表樂透遊戲的大獎相關資訊
+message JackpotGame {
+  // id 大獎ID
+  string id = 1;
+  
+  // start_time 開始時間
+  google.protobuf.Timestamp start_time = 2;
+  
+  // end_time 結束時間
+  google.protobuf.Timestamp end_time = 3;
+  
+  // lucky_balls 幸運號碼球
+  repeated Ball lucky_balls = 4;
+  
+  // drawn_balls 已抽出的大獎球
+  repeated Ball drawn_balls = 5;
+  
+  // amount 獎金金額
+  double amount = 6;
+  
+  // active 是否啟用
+  bool active = 7;
+  
+  // winner_user_id 獲獎者ID
+  string winner_user_id = 8;
+  
+  // winner_nickname 獲獎者暱稱
+  string winner_nickname = 9;
+  
+  // win_amount 獲獎金額
+  double win_amount = 10;
+}
+
+// GameStatus 表示遊戲狀態
 enum GameStatus {
-  // GAME_STATUS_UNSPECIFIED 未指定
   GAME_STATUS_UNSPECIFIED = 0;
-  
-  // GAME_STATUS_NOT_STARTED 遊戲未開始
-  GAME_STATUS_NOT_STARTED = 1;
-  
-  // GAME_STATUS_RUNNING 遊戲進行中
-  GAME_STATUS_RUNNING = 2;
-  
-  // GAME_STATUS_COMPLETED 遊戲已完成
+  GAME_STATUS_CREATED = 1;
+  GAME_STATUS_IN_PROGRESS = 2;
   GAME_STATUS_COMPLETED = 3;
-  
-  // GAME_STATUS_CANCELLED 遊戲已取消
-  GAME_STATUS_CANCELLED = 4;
-  
-  // GAME_STATUS_ERROR 遊戲錯誤
+  GAME_STATUS_CANCELED = 4;
   GAME_STATUS_ERROR = 5;
+  GAME_STATUS_PENDING = 6;
+  GAME_STATUS_STARTED = 7;
+  GAME_STATUS_READY = 8;
+  GAME_STATUS_PAUSED = 9;
+  GAME_STATUS_RESUMED = 10;
 } 

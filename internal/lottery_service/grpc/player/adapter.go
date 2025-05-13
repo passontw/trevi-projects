@@ -8,7 +8,6 @@ import (
 	commonpb "g38_lottery_service/internal/generated/common"
 	"g38_lottery_service/internal/lottery_service/gameflow"
 
-	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -30,38 +29,24 @@ const (
 
 // ConvertGameDataToNewPb 將 gameflow.GameData 轉換為新版本的 Proto 結構
 func ConvertGameDataToNewPb(gameData *gameflow.GameData) *dealerPb.GameData {
-	if gameData == nil {
-		return nil
-	}
+	// 初始化空的列表
+	drawnBalls := make([]*dealerPb.Ball, 0)
+	extraBalls := make([]*dealerPb.Ball, 0)
+	luckyBalls := make([]*dealerPb.Ball, 0)
 
-	// 轉換所有球
-	// 使用 RegularBalls 作為 DrawnBalls
-	drawnBalls := make([]*dealerPb.Ball, 0, len(gameData.RegularBalls))
+	// 轉換抽出的球
 	for _, ball := range gameData.RegularBalls {
 		drawnBalls = append(drawnBalls, ConvertBallToNewPb(ball))
 	}
 
-	// ExtraBalls需要轉換為map格式
-	extraBallsMap := make(map[string]*dealerPb.Ball)
-	for i, ball := range gameData.ExtraBalls {
-		key := "extra_" + string(rune('a'+i))
-		if i == 0 {
-			key = "left"
-		} else if i == 1 {
-			key = "right"
-		}
-		extraBallsMap[key] = ConvertBallToNewPb(ball)
+	// 轉換額外球
+	for _, ball := range gameData.ExtraBalls {
+		extraBalls = append(extraBalls, ConvertBallToNewPb(ball))
 	}
 
-	// 處理頭獎球
-	var jackpotBall *dealerPb.Ball
-	if gameData.Jackpot != nil && len(gameData.Jackpot.DrawnBalls) > 0 {
-		jackpotBall = ConvertBallToNewPb(gameData.Jackpot.DrawnBalls[0])
-	}
-
-	// 處理幸運球
-	luckyBalls := make([]*dealerPb.Ball, 0)
-	if gameData.Jackpot != nil && len(gameData.Jackpot.LuckyBalls) > 0 {
+	// 轉換幸運號碼球（如果有）
+	if gameData.Jackpot != nil {
+		// 轉換幸運號碼球
 		for _, ball := range gameData.Jackpot.LuckyBalls {
 			luckyBalls = append(luckyBalls, ConvertBallToNewPb(ball))
 		}
@@ -75,52 +60,48 @@ func ConvertGameDataToNewPb(gameData *gameflow.GameData) *dealerPb.GameData {
 
 	// 返回新的GameData結構，根據 game.proto 中的 GameData 定義
 	return &dealerPb.GameData{
-		Id:          gameData.GameID,
-		RoomId:      gameData.RoomID,
-		Stage:       gameStage,
-		Status:      GetGameStatusFromStage(gameStage),
-		DrawnBalls:  drawnBalls,
-		ExtraBalls:  extraBallsMap,
-		JackpotBall: jackpotBall,
-		LuckyBalls:  luckyBalls,
-		CreatedAt:   ConvertTimestampToUnix(gameData.StartTime),
-		UpdatedAt:   updatedAt,
-		DealerId:    "system", // 使用默認值
+		GameId:       gameData.GameID,
+		RoomId:       gameData.RoomID,
+		Stage:        gameStage,
+		Status:       GetGameStatusFromStage(gameStage),
+		RegularBalls: drawnBalls,
+		ExtraBalls:   extraBalls,
+		LuckyBalls:   luckyBalls,
+		CreatedAt:    ConvertTimestampToUnix(gameData.StartTime),
+		UpdatedAt:    updatedAt,
+		DealerId:     "system", // 使用默認值
 	}
 }
 
 // ConvertBallToNewPb 將 gameflow.Ball 轉換為新版本的 Proto 結構
 func ConvertBallToNewPb(ball gameflow.Ball) *dealerPb.Ball {
+	timestamp := &timestamppb.Timestamp{
+		Seconds: ball.Timestamp.Unix(),
+		Nanos:   int32(ball.Timestamp.Nanosecond()),
+	}
+
 	return &dealerPb.Ball{
-		Id:      generateRandomId(), // 生成一個隨機ID
-		Number:  int32(ball.Number),
-		Color:   getBallColor(ball.Number),
-		IsOdd:   ball.Number%2 != 0,
-		IsSmall: ball.Number <= 40,
+		Number:    int32(ball.Number),
+		Type:      getBallType(ball.Type),
+		IsLast:    ball.IsLast,
+		Timestamp: timestamp,
 	}
 }
 
-// getBallColor 根據球號獲取顏色
-func getBallColor(number int) string {
-	switch {
-	case number >= 1 && number <= 16:
-		return "red"
-	case number >= 17 && number <= 32:
-		return "blue"
-	case number >= 33 && number <= 48:
-		return "green"
-	case number >= 49 && number <= 64:
-		return "yellow"
-	case number >= 65 && number <= 80:
-		return "purple"
+// getBallType 將遊戲邏輯層的球類型轉換為Proto的球類型
+func getBallType(ballType gameflow.BallType) dealerPb.BallType {
+	switch ballType {
+	case gameflow.BallTypeRegular:
+		return dealerPb.BallType_BALL_TYPE_REGULAR
+	case gameflow.BallTypeExtra:
+		return dealerPb.BallType_BALL_TYPE_EXTRA
+	case gameflow.BallTypeJackpot:
+		return dealerPb.BallType_BALL_TYPE_JACKPOT
+	case gameflow.BallTypeLucky:
+		return dealerPb.BallType_BALL_TYPE_LUCKY
 	default:
-		return "unknown"
+		return dealerPb.BallType_BALL_TYPE_UNSPECIFIED
 	}
-}
-
-// 生成隨機ID
-func generateRandomId() string {
-	return uuid.New().String()
 }
 
 // ConvertGameStageToCommonPb 將 gameflow.GameStage 轉換為 dealer.GameStage
@@ -179,11 +160,11 @@ func GetGameStatusFromStage(stage commonpb.GameStage) dealerPb.GameStatus {
 	case stage == commonpb.GameStage_GAME_STAGE_UNSPECIFIED:
 		return dealerPb.GameStatus_GAME_STATUS_UNSPECIFIED
 	case stage == commonpb.GameStage_GAME_STAGE_PREPARATION:
-		return dealerPb.GameStatus_GAME_STATUS_NOT_STARTED
+		return dealerPb.GameStatus_GAME_STATUS_IDLE // 替換 NOT_STARTED
 	case stage == commonpb.GameStage_GAME_STAGE_GAME_OVER:
 		return dealerPb.GameStatus_GAME_STATUS_COMPLETED
 	case stage >= commonpb.GameStage_GAME_STAGE_NEW_ROUND && stage < commonpb.GameStage_GAME_STAGE_GAME_OVER:
-		return dealerPb.GameStatus_GAME_STATUS_RUNNING
+		return dealerPb.GameStatus_GAME_STATUS_IN_PROGRESS // 替換 RUNNING
 	default:
 		return dealerPb.GameStatus_GAME_STATUS_UNSPECIFIED
 	}

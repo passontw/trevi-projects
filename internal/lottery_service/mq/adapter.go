@@ -224,7 +224,7 @@ func convertMapToGameData(dataMap map[string]interface{}) *dealer.GameData {
 
 	// 提取字段
 	if id, ok := dataMap["id"].(string); ok {
-		gameData.Id = id
+		gameData.GameId = id
 	}
 
 	if roomId, ok := dataMap["room_id"].(string); ok {
@@ -239,7 +239,19 @@ func convertMapToGameData(dataMap map[string]interface{}) *dealer.GameData {
 		gameData.Status = dealer.GameStatus(statusInt)
 	}
 
-	// 其他字段如 drawn_balls, extra_balls 等需要更複雜的轉換，根據需要進行實現
+	if dealerId, ok := dataMap["dealer_id"].(string); ok {
+		gameData.DealerId = dealerId
+	}
+
+	if createdAt, ok := getInt64Value(dataMap, "created_at"); ok {
+		gameData.CreatedAt = createdAt
+	}
+
+	if updatedAt, ok := getInt64Value(dataMap, "updated_at"); ok {
+		gameData.UpdatedAt = updatedAt
+	}
+
+	// 其他字段如 regular_balls, extra_balls 等需要更複雜的轉換，根據需要進行實現
 
 	return gameData
 }

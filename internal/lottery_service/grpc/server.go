@@ -45,8 +45,8 @@ func NewGrpcServer(
 
 	kasp := keepalive.ServerParameters{
 		MaxConnectionIdle:     15 * time.Second,
-		MaxConnectionAge:      30 * time.Second,
-		MaxConnectionAgeGrace: 5 * time.Second,
+		MaxConnectionAge:      24 * time.Hour, // 從配置中讀取，默認 10 分鐘
+		MaxConnectionAgeGrace: 24 * time.Hour,
 		Time:                  5 * time.Second,
 		Timeout:               1 * time.Second,
 	}
@@ -194,6 +194,7 @@ func ProvideGrpcServer(lc fx.Lifecycle, config *config.AppConfig, logger *zap.Lo
 			logger.Info("gRPC 伺服器詳細配置",
 				zap.String("host", config.Server.Host),
 				zap.Int("grpcPort", config.Server.GrpcPort),
+				zap.Int("maxConnectionAge", config.Server.GrpcMaxConnectionAge),
 				zap.String("address", fmt.Sprintf("%s:%d", config.Server.Host, config.Server.GrpcPort)))
 
 			// 啟動服務器

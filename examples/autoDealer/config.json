@@ -1,0 +1,28 @@
+{
+  "game": {
+    "regular_balls": {
+      "count": 30,
+      "max_value": 75
+    },
+    "extra_balls": {
+      "count": 3,
+      "max_value": 75
+    },
+    "jackpot_balls": {
+      "count": 1,
+      "max_value": 75
+    },
+    "lucky_balls": {
+      "count": 7,
+      "max_value": 75
+    }
+  },
+  "timing": {
+    "regular_ball_interval_ms": 500,
+    "extra_ball_interval_ms": 1000,
+    "jackpot_ball_interval_ms": 1000,
+    "lucky_ball_interval_ms": 700,
+    "card_purchase_duration_sec": 5,
+    "game_over_wait_sec": 5
+  }
+} 
