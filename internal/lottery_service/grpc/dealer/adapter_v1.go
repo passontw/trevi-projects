@@ -13,7 +13,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // DealerServiceAdapter 是將舊的 API 轉換到新的 API 的適配器
@@ -35,12 +34,8 @@ func NewDealerServiceAdapter(
 
 // StartNewRound 處理開始新遊戲回合的請求
 func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.StartNewRoundRequest) (*dealerpb.StartNewRoundResponse, error) {
-	// 獲取房間ID，如果沒有使用默認值
-	roomID := req.RoomId
-	if roomID == "" {
-		a.logger.Warn("無法開始新局，缺少房間ID參數")
-		return nil, status.Errorf(codes.InvalidArgument, "房間ID不能為空")
-	}
+	// 默認房間ID (因為 dealer 的 StartNewRoundRequest 是空的)
+	roomID := "SG01"
 
 	a.logger.Info("收到開始新遊戲回合請求", zap.String("roomID", roomID))
 
@@ -111,12 +106,9 @@ func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.
 		}
 	}()
 
-	// 構建回應，包含 gameData 和額外的字段
+	// 構建回應，只包含 gameData，因為 StartNewRoundResponse 只有這一個字段
 	resp := &dealerpb.StartNewRoundResponse{
-		GameData:     gameData,
-		GameId:       gameID,
-		StartTime:    timestamppb.New(game.StartTime),
-		CurrentStage: convertGameflowStageToPb(game.CurrentStage),
+		GameData: gameData,
 	}
 
 	a.logger.Info("正在返回 StartNewRound 響應，後台繼續處理階段推進", zap.String("roomID", roomID))
@@ -410,23 +402,6 @@ func (a *DealerServiceAdapter) SubscribeGameEvents(req *dealerpb.SubscribeGameEv
 			return nil
 		}
 	}
-}
-
-// SelectExtraBallSide 選擇額外球邊
-func (a *DealerServiceAdapter) SelectExtraBallSide(ctx context.Context, req *dealerpb.SelectExtraBallSideRequest) (*dealerpb.SelectExtraBallSideResponse, error) {
-	a.logger.Info("收到選擇額外球邊請求 (新 API)")
-
-	// 隨機選擇一個邊
-	sides := []commonpb.ExtraBallSide{
-		commonpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT,
-		commonpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT,
-	}
-	selectedSide := sides[rand.Intn(len(sides))]
-
-	// 構建回應
-	return &dealerpb.SelectExtraBallSideResponse{
-		Side: selectedSide,
-	}, nil
 }
 
 // convertGameflowStageToPb 將 gameflow.GameStage 轉換為 commonpb.GameStage
