@@ -7,6 +7,8 @@ import (
 	"g38_lottery_service/internal/generated/api/v1/dealer"
 	mqpb "g38_lottery_service/internal/generated/api/v1/mq"
 	"g38_lottery_service/internal/generated/common"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // 轉換 lottery result 到 proto 消息格式
@@ -151,24 +153,42 @@ func convertMapToBall(ballMap map[string]interface{}) *dealer.Ball {
 	ball := &dealer.Ball{}
 
 	// 提取字段
-	if id, ok := ballMap["id"].(string); ok {
-		ball.Id = id
-	}
-
 	if number, ok := getIntValue(ballMap, "number"); ok {
 		ball.Number = number
 	}
 
-	if color, ok := ballMap["color"].(string); ok {
-		ball.Color = color
+	// 處理球的類型
+	if typeStr, ok := ballMap["type"].(string); ok {
+		switch typeStr {
+		case "REGULAR":
+			ball.Type = dealer.BallType_BALL_TYPE_REGULAR
+		case "EXTRA":
+			ball.Type = dealer.BallType_BALL_TYPE_EXTRA
+		case "JACKPOT":
+			ball.Type = dealer.BallType_BALL_TYPE_JACKPOT
+		case "LUCKY":
+			ball.Type = dealer.BallType_BALL_TYPE_LUCKY
+		default:
+			ball.Type = dealer.BallType_BALL_TYPE_UNSPECIFIED
+		}
 	}
 
-	if isOdd, ok := ballMap["is_odd"].(bool); ok {
-		ball.IsOdd = isOdd
+	// 處理是否為最後一個球
+	if isLast, ok := ballMap["is_last"].(bool); ok {
+		ball.IsLast = isLast
 	}
 
-	if isSmall, ok := ballMap["is_small"].(bool); ok {
-		ball.IsSmall = isSmall
+	// 處理時間戳
+	if ts, ok := ballMap["timestamp"].(time.Time); ok {
+		ball.Timestamp = &timestamppb.Timestamp{
+			Seconds: ts.Unix(),
+			Nanos:   int32(ts.Nanosecond()),
+		}
+	} else if tsInt, ok := getInt64Value(ballMap, "timestamp"); ok {
+		ball.Timestamp = &timestamppb.Timestamp{
+			Seconds: tsInt,
+			Nanos:   0,
+		}
 	}
 
 	return ball
