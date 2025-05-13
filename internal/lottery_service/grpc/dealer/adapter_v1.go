@@ -8,45 +8,119 @@ import (
 
 	dealerpb "g38_lottery_service/internal/generated/api/v1/dealer"
 	commonpb "g38_lottery_service/internal/generated/common"
+	"g38_lottery_service/internal/lottery_service/gameflow"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // DealerServiceAdapter 是將舊的 API 轉換到新的 API 的適配器
 type DealerServiceAdapter struct {
-	logger *zap.Logger
+	logger      *zap.Logger
+	gameManager *gameflow.GameManager
 }
 
 // NewDealerServiceAdapter 創建一個新的 dealer 服務適配器
 func NewDealerServiceAdapter(
 	logger *zap.Logger,
+	gameManager *gameflow.GameManager,
 ) *DealerServiceAdapter {
 	return &DealerServiceAdapter{
-		logger: logger.Named("dealer_service_adapter"),
+		logger:      logger.Named("dealer_service_adapter"),
+		gameManager: gameManager,
 	}
 }
 
 // StartNewRound 處理開始新遊戲回合的請求
 func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.StartNewRoundRequest) (*dealerpb.StartNewRoundResponse, error) {
-	a.logger.Info("收到開始新遊戲回合請求 (新 API)")
+	// 獲取房間ID，如果沒有使用默認值
+	roomID := req.RoomId
+	if roomID == "" {
+		a.logger.Warn("無法開始新局，缺少房間ID參數")
+		return nil, status.Errorf(codes.InvalidArgument, "房間ID不能為空")
+	}
 
-	// 模擬創建新遊戲回合
+	a.logger.Info("收到開始新遊戲回合請求", zap.String("roomID", roomID))
+
+	// 檢查房間是否支持
+	supportedRooms := a.gameManager.GetSupportedRooms()
+	isSupportedRoom := false
+	for _, supported := range supportedRooms {
+		if supported == roomID {
+			isSupportedRoom = true
+			break
+		}
+	}
+
+	if !isSupportedRoom {
+		a.logger.Warn("無法開始新局，不支持的房間ID", zap.String("roomID", roomID))
+		return nil, status.Errorf(codes.InvalidArgument, "不支持的房間ID: %s", roomID)
+	}
+
+	// 檢查該房間的遊戲是否處於準備階段
+	currentGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if currentGame != nil && currentGame.CurrentStage != gameflow.StagePreparation {
+		a.logger.Warn("無法開始新局，當前房間的遊戲不在準備階段",
+			zap.String("roomID", roomID),
+			zap.String("currentStage", string(currentGame.CurrentStage)))
+		return nil, gameflow.ErrInvalidStage
+	}
+
+	// 為指定房間創建新遊戲
+	gameID, err := a.gameManager.CreateNewGameForRoom(ctx, roomID)
+	if err != nil {
+		a.logger.Error("創建新遊戲失敗", zap.String("roomID", roomID), zap.Error(err))
+		return nil, err
+	}
+
+	// 獲取當前遊戲數據
+	game := a.gameManager.GetCurrentGameByRoom(roomID)
+	if game == nil {
+		a.logger.Error("獲取新創建的遊戲失敗", zap.String("roomID", roomID))
+		return nil, gameflow.ErrGameNotFound
+	}
+
+	// 構建遊戲數據
 	gameData := &dealerpb.GameData{
-		Id:        fmt.Sprintf("G%s", generateRandomString(8)),
-		RoomId:    "SG01",
-		Stage:     commonpb.GameStage_GAME_STAGE_NEW_ROUND,
+		Id:        gameID,
+		RoomId:    roomID,
+		Stage:     convertGameflowStageToPb(game.CurrentStage),
 		Status:    dealerpb.GameStatus_GAME_STATUS_RUNNING,
 		DealerId:  "system",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 	}
 
-	// 構建回應
-	newResp := &dealerpb.StartNewRoundResponse{
-		GameData: gameData,
+	// 在後台推進階段，不阻塞 RPC 響應
+	go func() {
+		// 創建新的上下文，因為原始上下文可能會在 RPC 返回後被取消
+		newCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// 為指定房間推進到新局階段
+		if err := a.gameManager.AdvanceStageForRoom(newCtx, roomID, true); err != nil {
+			a.logger.Error("推進到新局階段失敗", zap.String("roomID", roomID), zap.Error(err))
+			// 無法返回錯誤，只能記錄
+		} else {
+			a.logger.Info("成功開始新局並推進階段",
+				zap.String("roomID", roomID),
+				zap.String("gameID", gameID),
+				zap.String("stage", string(a.gameManager.GetCurrentStage())))
+		}
+	}()
+
+	// 構建回應，包含 gameData 和額外的字段
+	resp := &dealerpb.StartNewRoundResponse{
+		GameData:     gameData,
+		GameId:       gameID,
+		StartTime:    timestamppb.New(game.StartTime),
+		CurrentStage: convertGameflowStageToPb(game.CurrentStage),
 	}
 
-	return newResp, nil
+	a.logger.Info("正在返回 StartNewRound 響應，後台繼續處理階段推進", zap.String("roomID", roomID))
+	return resp, nil
 }
 
 // DrawBall 處理抽球請求
@@ -335,6 +409,71 @@ func (a *DealerServiceAdapter) SubscribeGameEvents(req *dealerpb.SubscribeGameEv
 			a.logger.Info("客戶端斷開連接或上下文被取消")
 			return nil
 		}
+	}
+}
+
+// SelectExtraBallSide 選擇額外球邊
+func (a *DealerServiceAdapter) SelectExtraBallSide(ctx context.Context, req *dealerpb.SelectExtraBallSideRequest) (*dealerpb.SelectExtraBallSideResponse, error) {
+	a.logger.Info("收到選擇額外球邊請求 (新 API)")
+
+	// 隨機選擇一個邊
+	sides := []commonpb.ExtraBallSide{
+		commonpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT,
+		commonpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT,
+	}
+	selectedSide := sides[rand.Intn(len(sides))]
+
+	// 構建回應
+	return &dealerpb.SelectExtraBallSideResponse{
+		Side: selectedSide,
+	}, nil
+}
+
+// convertGameflowStageToPb 將 gameflow.GameStage 轉換為 commonpb.GameStage
+func convertGameflowStageToPb(stage gameflow.GameStage) commonpb.GameStage {
+	switch stage {
+	case gameflow.StagePreparation:
+		return commonpb.GameStage_GAME_STAGE_PREPARATION
+	case gameflow.StageNewRound:
+		return commonpb.GameStage_GAME_STAGE_NEW_ROUND
+	case gameflow.StageCardPurchaseOpen:
+		return commonpb.GameStage_GAME_STAGE_CARD_PURCHASE_OPEN
+	case gameflow.StageCardPurchaseClose:
+		return commonpb.GameStage_GAME_STAGE_CARD_PURCHASE_CLOSE
+	case gameflow.StageDrawingStart:
+		return commonpb.GameStage_GAME_STAGE_DRAWING_START
+	case gameflow.StageDrawingClose:
+		return commonpb.GameStage_GAME_STAGE_DRAWING_CLOSE
+	case gameflow.StageExtraBallPrepare:
+		return commonpb.GameStage_GAME_STAGE_EXTRA_BALL_PREPARE
+	case gameflow.StageExtraBallSideSelectBettingStart:
+		return commonpb.GameStage_GAME_STAGE_EXTRA_BALL_SIDE_SELECT_BETTING_START
+	case gameflow.StageExtraBallSideSelectBettingClosed:
+		return commonpb.GameStage_GAME_STAGE_EXTRA_BALL_SIDE_SELECT_BETTING_CLOSED
+	case gameflow.StageExtraBallWaitClaim:
+		return commonpb.GameStage_GAME_STAGE_EXTRA_BALL_WAIT_CLAIM
+	case gameflow.StageExtraBallDrawingStart:
+		return commonpb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_START
+	case gameflow.StageExtraBallDrawingClose:
+		return commonpb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_CLOSE
+	case gameflow.StagePayoutSettlement:
+		return commonpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT
+	case gameflow.StageJackpotPreparation:
+		return commonpb.GameStage_GAME_STAGE_JACKPOT_START
+	case gameflow.StageJackpotDrawingStart:
+		return commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START
+	case gameflow.StageJackpotDrawingClosed:
+		return commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_CLOSED
+	case gameflow.StageJackpotSettlement:
+		return commonpb.GameStage_GAME_STAGE_JACKPOT_SETTLEMENT
+	case gameflow.StageDrawingLuckyBallsStart:
+		return commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START
+	case gameflow.StageDrawingLuckyBallsClosed:
+		return commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_CLOSED
+	case gameflow.StageGameOver:
+		return commonpb.GameStage_GAME_STAGE_GAME_OVER
+	default:
+		return commonpb.GameStage_GAME_STAGE_UNSPECIFIED
 	}
 }
 

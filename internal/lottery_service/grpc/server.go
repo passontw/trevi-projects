@@ -67,7 +67,7 @@ func NewGrpcServer(
 	dealerSvc := dealer.NewDealerService(logger, gameManager)
 
 	// 創建 DealerServiceAdapter 實例，不再需要傳入 dealerSvc
-	dealerAdapter := dealer.NewDealerServiceAdapter(logger)
+	dealerAdapter := dealer.NewDealerServiceAdapter(logger, gameManager)
 
 	// 創建 LotteryService 實例
 	lotteryService := lottery.NewLotteryService(logger, gameManager, dealerSvc)
