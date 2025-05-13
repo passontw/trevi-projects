@@ -8,56 +8,44 @@ import "google/protobuf/timestamp.proto";
 
 option go_package = "g38_lottery_service/internal/generated/api/v1/dealer";
 
-// GameData 包含遊戲信息
+// GameData 包含遊戲信息，與 gameflow.GameData 保持一致
 message GameData {
-  string game_id = 1;
-  string room_id = 2;
-  common.GameStage stage = 3;
-  GameStatus status = 4;
-  repeated Ball regular_balls = 5;
-  repeated Ball extra_balls = 6;
-  Ball jackpot_ball = 7;
-  repeated Ball lucky_balls = 8;
-  int64 created_at = 9;
-  int64 updated_at = 10;
-  string dealer_id = 11;
-  int32 extra_ball_count = 12;
-  common.ExtraBallSide selected_side = 13;
-  bool has_jackpot = 14;
-  double jackpot = 15;
+  string game_id = 1;                    // 遊戲ID
+  string room_id = 2;                    // 房間ID
+  common.GameStage stage = 3;            // 當前階段 (對應 CurrentStage)
+  google.protobuf.Timestamp start_time = 4;      // 開始時間
+  google.protobuf.Timestamp end_time = 5;        // 結束時間
+  repeated Ball regular_balls = 6;       // 常規球
+  repeated Ball extra_balls = 7;         // 額外球
+  
+  common.ExtraBallSide selected_side = 8;  // 選擇的額外球一側
+  int32 extra_ball_count = 9;            // 額外球數量，範圍是1~3
+  bool has_jackpot = 10;                 // 是否有JP
+  JackpotGame jackpot = 11;              // JP遊戲數據
+  bool is_cancelled = 12;                // 是否已取消
+  string cancel_reason = 13;             // 取消原因
+  google.protobuf.Timestamp cancel_time = 14;    // 取消時間
+  google.protobuf.Timestamp last_update_time = 15; // 最後更新時間
+  
+  // 額外一些必要的欄位，可以用於相容現有代碼
+  GameStatus status = 16;                // 遊戲狀態
+  int64 created_at = 17;                 // 創建時間（Unix 時間戳）
+  int64 updated_at = 18;                 // 更新時間（Unix 時間戳）
+  string dealer_id = 19;                 // 莊家ID
 }
 
 // JackpotGame 代表樂透遊戲的大獎相關資訊
 message JackpotGame {
-  // id 大獎ID
-  string id = 1;
-  
-  // start_time 開始時間
-  google.protobuf.Timestamp start_time = 2;
-  
-  // end_time 結束時間
-  google.protobuf.Timestamp end_time = 3;
-  
-  // lucky_balls 幸運號碼球
-  repeated Ball lucky_balls = 4;
-  
-  // drawn_balls 已抽出的大獎球
-  repeated Ball drawn_balls = 5;
-  
-  // amount 獎金金額
-  double amount = 6;
-  
-  // active 是否啟用
-  bool active = 7;
-  
-  // winner_user_id 獲獎者ID
-  string winner_user_id = 8;
-  
-  // winner_nickname 獲獎者暱稱
-  string winner_nickname = 9;
-  
-  // win_amount 獲獎金額
-  double win_amount = 10;
+  string id = 1;                                  // 大獎ID
+  google.protobuf.Timestamp start_time = 2;       // 開始時間
+  google.protobuf.Timestamp end_time = 3;         // 結束時間
+  repeated Ball lucky_balls = 4;                  // 幸運號碼球
+  repeated Ball drawn_balls = 5;                  // 已抽出的大獎球
+  double amount = 6;                              // 獎金金額
+  bool active = 7;                                // 是否啟用
+  string winner_user_id = 8;                      // 獲獎者ID
+  string winner_nickname = 9;                     // 獲獎者暱稱
+  double win_amount = 10;                         // 獲獎金額
 }
 
 // GameStatus 表示遊戲狀態
@@ -69,8 +57,9 @@ enum GameStatus {
   GAME_STATUS_CANCELED = 4;
   GAME_STATUS_ERROR = 5;
   GAME_STATUS_PENDING = 6;
-  GAME_STATUS_STARTED = 7;
-  GAME_STATUS_READY = 8;
-  GAME_STATUS_PAUSED = 9;
-  GAME_STATUS_RESUMED = 10;
+  GAME_STATUS_IDLE = 7;      // 新增 IDLE 狀態用於空遊戲狀態
+  GAME_STATUS_STARTED = 8;
+  GAME_STATUS_READY = 9;
+  GAME_STATUS_PAUSED = 10;
+  GAME_STATUS_RESUMED = 11;
 } 
