@@ -60,23 +60,11 @@ func (w *PlayerCommunicationServiceWrapper) ConnectToGame(
 	// 轉換遊戲數據
 	var dealerGameData *dealerpb.GameData
 	if gameData != nil {
-		dealerGameData = ConvertGameDataToNewPb(gameData)
+		dealerGameData = convertGameDataToNewPb(gameData)
 	}
 
 	// 創建玩家資訊（這裡使用模擬數據，實際應用中應從用戶服務獲取）
-	playerInfo := &newpb.PlayerInfo{
-		Id:         req.PlayerId,
-		Nickname:   "Player_" + req.PlayerId,
-		Balance:    1000.0,
-		CardsCount: 0,
-		Preferences: &newpb.PlayerPreference{
-			ReceiveGameNotifications: true,
-			ReceiveChatMessages:      true,
-			ShowOtherPlayersBets:     true,
-			UiTheme:                  "default",
-			Language:                 "zh-TW",
-		},
-	}
+	playerInfo := convertPlayerInfoToNewPb(req.PlayerId, "Player_"+req.PlayerId, 1000.0)
 
 	// 構建回應
 	resp := &newpb.ConnectToGameResponse{
@@ -118,8 +106,18 @@ func (w *PlayerCommunicationServiceWrapper) SubscribeToGameEvents(
 				continue
 			}
 
+			// 轉換遊戲數據
+			dealerGameData := convertGameDataToNewPb(gameData)
+
 			// 創建一個包含遊戲數據的事件
-			event := createGameDataEvent(gameData)
+			event := &newpb.GameEvent{
+				Id:        uuid.New().String(),
+				Type:      commonpb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
+				Timestamp: time.Now().Unix(),
+				EventData: &newpb.GameEvent_GameData{
+					GameData: dealerGameData,
+				},
+			}
 
 			// 發送事件
 			if err := stream.Send(event); err != nil {
@@ -150,19 +148,9 @@ func (w *PlayerCommunicationServiceWrapper) GetPlayerStatus(
 		zap.String("playerID", req.PlayerId))
 
 	// 創建一個示例玩家狀態（在實際應用中，應該從用戶服務或數據庫獲取）
-	playerInfo := &newpb.PlayerInfo{
-		Id:         req.PlayerId,
-		Nickname:   "Player_" + req.PlayerId,
-		Balance:    1000.0,
-		CardsCount: 5,
-		Preferences: &newpb.PlayerPreference{
-			ReceiveGameNotifications: true,
-			ReceiveChatMessages:      true,
-			ShowOtherPlayersBets:     true,
-			UiTheme:                  "dark",
-			Language:                 "zh-TW",
-		},
-	}
+	playerInfo := convertPlayerInfoToNewPb(req.PlayerId, "Player_"+req.PlayerId, 1000.0)
+	playerInfo.CardsCount = 5
+	playerInfo.Preferences.UiTheme = "dark"
 
 	// 創建響應
 	resp := &newpb.GetPlayerStatusResponse{
@@ -197,25 +185,8 @@ func (w *PlayerCommunicationServiceWrapper) UpdatePlayerPreference(
 	return resp, nil
 }
 
-// 創建一個包含遊戲數據的事件
-func createGameDataEvent(gameData *gameflow.GameData) *newpb.GameEvent {
-	// 轉換遊戲數據
-	dealerGameData := ConvertGameDataToNewPb(gameData)
-
-	event := &newpb.GameEvent{
-		Id:        uuid.New().String(),
-		Type:      commonpb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
-		Timestamp: time.Now().Unix(),
-		EventData: &newpb.GameEvent_GameData{
-			GameData: dealerGameData,
-		},
-	}
-
-	return event
-}
-
-// ConvertGameDataToNewPb 將 gameflow.GameData 轉換為新版本的 Proto 結構
-func ConvertGameDataToNewPb(gameData *gameflow.GameData) *dealerpb.GameData {
+// convertGameDataToNewPb 將 gameflow.GameData 轉換為新版本的 Proto 結構
+func convertGameDataToNewPb(gameData *gameflow.GameData) *dealerpb.GameData {
 	if gameData == nil {
 		return nil
 	}
@@ -224,7 +195,7 @@ func ConvertGameDataToNewPb(gameData *gameflow.GameData) *dealerpb.GameData {
 	// 使用 RegularBalls 作為 DrawnBalls
 	drawnBalls := make([]*dealerpb.Ball, 0, len(gameData.RegularBalls))
 	for _, ball := range gameData.RegularBalls {
-		drawnBalls = append(drawnBalls, ConvertBallToNewPb(ball))
+		drawnBalls = append(drawnBalls, convertBallToNewPb(ball))
 	}
 
 	// ExtraBalls需要轉換為map格式
@@ -236,20 +207,20 @@ func ConvertGameDataToNewPb(gameData *gameflow.GameData) *dealerpb.GameData {
 		} else if i == 1 {
 			key = "right"
 		}
-		extraBallsMap[key] = ConvertBallToNewPb(ball)
+		extraBallsMap[key] = convertBallToNewPb(ball)
 	}
 
 	// 處理頭獎球
 	var jackpotBall *dealerpb.Ball
 	if gameData.Jackpot != nil && len(gameData.Jackpot.DrawnBalls) > 0 {
-		jackpotBall = ConvertBallToNewPb(gameData.Jackpot.DrawnBalls[0])
+		jackpotBall = convertBallToNewPb(gameData.Jackpot.DrawnBalls[0])
 	}
 
 	// 處理幸運球
 	luckyBalls := make([]*dealerpb.Ball, 0)
 	if gameData.Jackpot != nil && len(gameData.Jackpot.LuckyBalls) > 0 {
 		for _, ball := range gameData.Jackpot.LuckyBalls {
-			luckyBalls = append(luckyBalls, ConvertBallToNewPb(ball))
+			luckyBalls = append(luckyBalls, convertBallToNewPb(ball))
 		}
 	}
 
@@ -278,8 +249,8 @@ func ConvertGameDataToNewPb(gameData *gameflow.GameData) *dealerpb.GameData {
 	}
 }
 
-// ConvertBallToNewPb 將 gameflow.Ball 轉換為新版本的 Proto 結構
-func ConvertBallToNewPb(ball gameflow.Ball) *dealerpb.Ball {
+// convertBallToNewPb 將 gameflow.Ball 轉換為新版本的 Proto 結構
+func convertBallToNewPb(ball gameflow.Ball) *dealerpb.Ball {
 	// 生成球ID
 	ballID := uuid.New().String()[:8]
 
@@ -369,5 +340,21 @@ func getGameStatusFromStage(stage commonpb.GameStage) dealerpb.GameStatus {
 		return dealerpb.GameStatus_GAME_STATUS_RUNNING
 	default:
 		return dealerpb.GameStatus_GAME_STATUS_UNSPECIFIED
+	}
+}
+
+// convertPlayerInfoToNewPb 將玩家資訊轉換為新版本的 Proto 結構
+func convertPlayerInfoToNewPb(playerID string, nickname string, balance float64) *newpb.PlayerInfo {
+	return &newpb.PlayerInfo{
+		Id:       playerID,
+		Nickname: nickname,
+		Balance:  balance,
+		Preferences: &newpb.PlayerPreference{
+			ReceiveGameNotifications: true,
+			ReceiveChatMessages:      true,
+			ShowOtherPlayersBets:     true,
+			UiTheme:                  "default",
+			Language:                 "zh-TW",
+		},
 	}
 }

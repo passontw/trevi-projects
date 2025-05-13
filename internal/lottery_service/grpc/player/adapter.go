@@ -7,8 +7,6 @@ import (
 	playerPb "g38_lottery_service/internal/generated/api/v1/player"
 	commonpb "g38_lottery_service/internal/generated/common"
 	"g38_lottery_service/internal/lottery_service/gameflow"
-	oldDealerPb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
-	oldPlayerPb "g38_lottery_service/internal/lottery_service/proto/generated/player"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -199,81 +197,48 @@ func ConvertTimestampToUnix(t time.Time) int64 {
 	return t.Unix()
 }
 
-// ConvertExtraBallSideToCommonPb 將舊版 ExtraBallSide 轉換為新版 ExtraBallSide
-func ConvertExtraBallSideToCommonPb(side oldDealerPb.ExtraBallSide) commonpb.ExtraBallSide {
+// ConvertExtraBallSideToCommonPb 將遊戲邏輯層 ExtraBallSide 轉換為新版 ExtraBallSide
+func ConvertExtraBallSideToCommonPb(side gameflow.ExtraBallSide) commonpb.ExtraBallSide {
 	switch side {
-	case oldDealerPb.ExtraBallSide_LEFT:
+	case gameflow.ExtraBallSideLeft:
 		return commonpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT
-	case oldDealerPb.ExtraBallSide_RIGHT:
+	case gameflow.ExtraBallSideRight:
 		return commonpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT
 	default:
 		return commonpb.ExtraBallSide_EXTRA_BALL_SIDE_UNSPECIFIED
 	}
 }
 
-// ConvertPlayerStatusToNewPb 將舊版玩家狀態轉換為新版格式
-func ConvertPlayerStatusToNewPb(status *oldPlayerPb.PlayerStatus) *playerPb.PlayerInfo {
-	if status == nil {
-		return nil
-	}
-
-	// 設置默認主題和語言
-	uiTheme := "default"
-	language := "zh-TW"
-
-	// 如果有偏好設置，則使用其中的值
-	if status.Preferences != nil {
-		if status.Preferences.Theme != "" {
-			uiTheme = status.Preferences.Theme
-		}
-		if status.Preferences.Language != "" {
-			language = status.Preferences.Language
-		}
-	}
-
+// ConvertPlayerInfoToNewPb 將玩家資訊轉換為新版格式
+func ConvertPlayerInfoToNewPb(playerID string, nickname string, balance float64) *playerPb.PlayerInfo {
 	return &playerPb.PlayerInfo{
-		Id:         status.PlayerId,
-		Nickname:   status.Username,
-		Balance:    float64(status.TokenBalance),
-		CardsCount: 0, // 默認值，需要從其他來源獲取
+		Id:         playerID,
+		Nickname:   nickname,
+		Balance:    balance,
+		CardsCount: 0, // 默認值
 		Preferences: &playerPb.PlayerPreference{
-			ReceiveGameNotifications: status.Preferences != nil && status.Preferences.NotificationsOn,
-			ReceiveChatMessages:      true, // 默認值
-			ShowOtherPlayersBets:     true, // 默認值
-			UiTheme:                  uiTheme,
-			Language:                 language,
+			ReceiveGameNotifications: true,
+			ReceiveChatMessages:      true,
+			ShowOtherPlayersBets:     true,
+			UiTheme:                  "default",
+			Language:                 "zh-TW",
 		},
 	}
 }
 
-// ConvertGameHistoryToNewPb 將遊戲歷史記錄轉換為新版格式
-func ConvertGameHistoryToNewPb(history []*oldPlayerPb.GameHistory) []*playerPb.GameHistoryItem {
-	if history == nil {
-		return nil
+// CreateGameHistoryItem 創建遊戲歷史記錄項
+func CreateGameHistoryItem(gameID string, gameTime time.Time, winAmount float64, betAmount float64, resultSummary string) *playerPb.GameHistoryItem {
+	// 將時間轉換為 timestamp.Timestamp
+	gameTimeProto := &timestamppb.Timestamp{
+		Seconds: gameTime.Unix(),
+		Nanos:   int32(gameTime.Nanosecond()),
 	}
 
-	result := make([]*playerPb.GameHistoryItem, 0, len(history))
-	for _, item := range history {
-		if item == nil {
-			continue
-		}
-
-		// 將時間字符串轉換為 timestamp.Timestamp
-		gameTime := &timestamppb.Timestamp{}
-		t, err := time.Parse(time.RFC3339, item.GameTime)
-		if err == nil {
-			gameTime.Seconds = t.Unix()
-			gameTime.Nanos = int32(t.Nanosecond())
-		}
-
-		result = append(result, &playerPb.GameHistoryItem{
-			GameId:        item.GameId,
-			GameTime:      gameTime,
-			WinAmount:     float64(item.WinAmount),
-			BetAmount:     float64(item.BetAmount),
-			ResultSummary: item.ResultSummary,
-		})
+	return &playerPb.GameHistoryItem{
+		GameId:        gameID,
+		GameTime:      gameTimeProto,
+		WinAmount:     winAmount,
+		BetAmount:     betAmount,
+		ResultSummary: resultSummary,
 	}
-
-	return result
 }

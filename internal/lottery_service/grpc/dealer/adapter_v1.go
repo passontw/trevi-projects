@@ -301,6 +301,15 @@ func (a *DealerServiceAdapter) DrawExtraBall(ctx context.Context, req *dealerpb.
 		}
 	}
 
+	// 使用 onBallDrawn 回調而不是 DispatchEvent
+	if callback := a.gameManager.GetOnBallDrawnCallback(); callback != nil {
+		callback(roomID, ball)
+		a.logger.Info("已發送額外球抽取事件通知",
+			zap.String("room_id", roomID),
+			zap.String("game_id", gameData.Id),
+			zap.Any("ball", ball))
+	}
+
 	// 構建回應
 	response := &dealerpb.DrawExtraBallResponse{
 		GameData: gameData,
