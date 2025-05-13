@@ -585,3 +585,182 @@ go build -o ./build/g38_lottery_service ./cmd/lottery_service/main.go
 4. **管理介面**：開發後台管理介面，方便操作和監控系統狀態
 5. **自動化測試**：增加自動化測試覆蓋，確保系統穩定性 
 6. **消息序列化優化**：優化Rocket MQ消息格式和序列化方式，降低網路傳輸開銷 
+
+## 十、API 文檔
+
+### 1. 標準 gRPC 服務
+
+服務採用 gRPC 協議，提供標準的 RPC 調用功能。詳細請參考 proto 文件。
+
+### 2. REST API 端點
+
+#### 2.1 自定義抽球 API
+
+- **端點**: `POST /api/v1/dealer/custom-draw-ball`
+- **功能**: 處理包含預定義球數據的抽球請求
+- **請求格式**:
+```json
+{
+  "roomId": "room123",
+  "balls": [
+    {
+      "number": 42,
+      "isLast": false
+    }
+  ]
+}
+```
+
+- **參數說明**:
+  - `roomId` (必填): 房間 ID，字符串類型
+  - `balls` (可選): 預定義球列表，球參數包括：
+    - `number`: 球號 (1-80)
+    - `isLast`: 是否為最後一顆球，布爾類型
+
+- **響應格式**:
+```json
+{
+  "gameData": {
+    "id": "game123",
+    "roomId": "room123",
+    "stage": "GAME_STAGE_DRAWING_START",
+    "status": "GAME_STATUS_RUNNING",
+    "dealerId": "system",
+    "createdAt": 1642179600,
+    "updatedAt": 1642179620,
+    "drawnBalls": [
+      {
+        "number": 42,
+        "type": "BALL_TYPE_REGULAR",
+        "isLast": false,
+        "timestamp": {
+          "seconds": 1642179620,
+          "nanos": 123456789
+        }
+      }
+    ],
+    "luckyBalls": []
+  }
+}
+```
+
+- **錯誤響應**:
+```json
+{
+  "error": "錯誤信息"
+}
+```
+
+- **錯誤碼**:
+  - 400: 請求格式無效
+  - 404: 找不到指定房間的遊戲
+  - 500: 服務器內部錯誤
+
+**注意**: 若請求中不包含 `balls` 字段或列表為空，系統將自動生成隨機球號。 
+
+### 2.2 自動推進遊戲階段功能
+
+當抽取的球標記為最後一個球（`isLast=true`）時，系統會自動推進到下一個遊戲階段：
+
+- 服務會在收到標記為`isLast=true`的球後，立即觸發遊戲階段自動轉換
+- 適用於兩種抽球API：gRPC的`DrawBall`和HTTP的`CustomDrawBall`
+- 遊戲階段轉換是異步進行的，不會阻塞抽球操作的響應
+- 階段轉換日誌會記錄在服務日誌中，方便跟蹤和調試
+
+### 2.3 HTTP自定義抽球API
+
+使用POST方法訪問`/api/v1/dealer/custom-draw-ball`端點。
+
+請求格式：
+```json
+{
+  "roomId": "SG01",
+  "balls": [
+    {
+      "number": 8,
+      "isLast": true
+    }
+  ]
+}
+```
+
+其中：
+- `roomId`: 房間ID，必填
+- `balls`: 球陣列，可選。若提供，則使用第一個球的信息
+  - `number`: 球號(1-80)
+  - `isLast`: 是否為最後一個球，若為true則自動推進到下一個遊戲階段
+
+若未提供`balls`或`number`無效，系統會自動生成隨機球號。
+
+響應格式：
+```json
+{
+  "game_data": {
+    "id": "room_SG01_game_xxx",
+    "room_id": "SG01",
+    "stage": "DRAWING_START",
+    "status": "GAME_STATUS_RUNNING",
+    "dealer_id": "system",
+    "created_at": 1667123456,
+    "updated_at": 1667123457,
+    "drawn_balls": [
+      {
+        "number": 8,
+        "type": "BALL_TYPE_REGULAR",
+        "is_last": true,
+        "timestamp": {
+          "seconds": 1667123457,
+          "nanos": 123456789
+        }
+      }
+    ]
+  }
+}
+``` 
+
+## API功能增強
+
+### 批量替換球功能 (2023-07-10)
+
+新增了批量替換球功能，使API能接受一個球陣列並批量更新遊戲數據，而不檢查與既有球是否有重複。
+
+#### 請求格式
+
+可通過以下兩種方式使用：
+
+1. **gRPC方式**:
+```proto
+// DrawBallRequest
+message DrawBallRequest {
+  string room_id = 1;
+  repeated Ball balls = 2;  // 提供多個球一次性替換
+}
+```
+
+2. **HTTP方式** (POST `/api/v1/dealer/custom-draw-ball`):
+```json
+{
+  "roomId": "SG01",
+  "balls": [
+    {"number": 5, "isLast": false},
+    {"number": 18, "isLast": false},
+    {"number": 27, "isLast": false},
+    {"number": 36, "isLast": false},
+    {"number": 45, "isLast": true}  // 最後一個球設置isLast=true，會自動推進到下一階段
+  ]
+}
+```
+
+#### 功能特點
+
+- **整體替換**：提供的球陣列會整體替換遊戲中的當前球，而非追加
+- **重複檢查**：僅檢查請求中的球號是否有重複，不檢查與遊戲現有球的重複性
+- **有效性檢查**：確保每個球號在1-80範圍內
+- **自動推進**：如果請求中有球設置了`isLast=true`，會自動觸發遊戲階段推進
+- **批量回調**：每個球都會觸發已註冊的球抽取事件回調
+
+#### 實現細節
+
+- 新增了 `GameManager.ReplaceBalls()` 方法支持批量替換
+- 優化了時間戳處理，確保每個球有唯一的時間戳
+- 維持了線程安全機制，確保並發操作的正確性 

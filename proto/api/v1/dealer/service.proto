@@ -55,6 +55,8 @@ message StartNewRoundResponse {
 message DrawBallRequest {
   // room_id 房間ID
   string room_id = 1;
+  // balls 預定義球列表，用於客戶端指定要抽取的球
+  repeated Ball balls = 2;
 }
 
 // DrawBallResponse 抽球響應

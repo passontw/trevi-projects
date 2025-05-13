@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"g38_lottery_service/internal/lottery_service/config"
 	"g38_lottery_service/internal/lottery_service/gameflow"
+	"g38_lottery_service/internal/lottery_service/grpc/dealer"
 	"g38_lottery_service/pkg/healthcheck"
 
 	"go.uber.org/fx"
@@ -16,12 +18,13 @@ import (
 
 // APIServer 處理 API 請求的 HTTP 服務器
 type APIServer struct {
-	config      *config.AppConfig
-	logger      *zap.Logger
-	gameManager *gameflow.GameManager
-	repository  *gameflow.CompositeRepository
-	server      *http.Server
-	health      *healthcheck.Manager
+	config        *config.AppConfig
+	logger        *zap.Logger
+	gameManager   *gameflow.GameManager
+	repository    *gameflow.CompositeRepository
+	server        *http.Server
+	health        *healthcheck.Manager
+	dealerAdapter *dealer.DealerServiceAdapter
 }
 
 // NewAPIServer 創建新的 API 服務器
@@ -31,17 +34,19 @@ func NewAPIServer(
 	gameManager *gameflow.GameManager,
 	repository *gameflow.CompositeRepository,
 	health *healthcheck.Manager,
+	dealerAdapter *dealer.DealerServiceAdapter,
 ) *APIServer {
 	// 確保 logger 有適當的 tag
 	apiLogger := logger.With(zap.String("component", "api_server"))
 
 	// 創建 API 服務器
 	server := &APIServer{
-		config:      config,
-		logger:      apiLogger,
-		gameManager: gameManager,
-		repository:  repository,
-		health:      health,
+		config:        config,
+		logger:        apiLogger,
+		gameManager:   gameManager,
+		repository:    repository,
+		health:        health,
+		dealerAdapter: dealerAdapter,
 	}
 
 	return server
@@ -154,7 +159,80 @@ func (s *APIServer) registerRoutes(mux *http.ServeMux) {
 		w.Write([]byte("Lottery Service API Server is running."))
 	})
 
+	// 添加自定義抽球 API 路由
+	mux.HandleFunc("POST /api/v1/dealer/custom-draw-ball", s.handleCustomDrawBall)
+
 	s.logger.Info("API 路由註冊完成")
+}
+
+// handleCustomDrawBall 處理自定義抽球請求
+func (s *APIServer) handleCustomDrawBall(w http.ResponseWriter, r *http.Request) {
+	// 設置響應類型
+	w.Header().Set("Content-Type", "application/json")
+
+	// 解析請求 JSON 數據
+	var requestData map[string]interface{}
+	if err := decodeJSON(r, &requestData); err != nil {
+		s.logger.Error("解析 JSON 請求失敗", zap.Error(err))
+		respondWithError(w, http.StatusBadRequest, "無效的請求格式")
+		return
+	}
+
+	// 設置請求上下文，可以包含超時
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// 取得 grpc 服務適配器
+	dealerAdapter := getDealerAdapter(s)
+	if dealerAdapter == nil {
+		s.logger.Error("無法獲取 Dealer 服務適配器")
+		respondWithError(w, http.StatusInternalServerError, "服務當前不可用")
+		return
+	}
+
+	// 調用自定義抽球方法
+	resp, err := dealerAdapter.CustomDrawBall(ctx, requestData)
+	if err != nil {
+		s.logger.Error("處理自定義抽球請求失敗", zap.Error(err))
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// 返回成功響應
+	respondWithJSON(w, http.StatusOK, resp)
+}
+
+// decodeJSON 解析 JSON 請求
+func decodeJSON(r *http.Request, v interface{}) error {
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	return nil
+}
+
+// respondWithError 發送錯誤響應
+func respondWithError(w http.ResponseWriter, statusCode int, message string) {
+	respondWithJSON(w, statusCode, map[string]string{"error": message})
+}
+
+// respondWithJSON 發送 JSON 響應
+func respondWithJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+	// 設置響應狀態碼
+	w.WriteHeader(statusCode)
+
+	// 如果數據不是 nil，則進行 JSON 編碼
+	if data != nil {
+		if err := json.NewEncoder(w).Encode(data); err != nil {
+			// 如果編碼失敗，寫入一個簡單的錯誤信息
+			w.Write([]byte(`{"error":"JSON 編碼失敗"}`))
+		}
+	}
+}
+
+// getDealerAdapter 獲取 DealerServiceAdapter 實例
+func getDealerAdapter(s *APIServer) *dealer.DealerServiceAdapter {
+	return s.dealerAdapter
 }
 
 // Module 提供 FX 模塊

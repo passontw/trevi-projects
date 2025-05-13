@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package api.v1.dealer;
+
+option go_package = "g38_lottery_service/internal/generated/api/v1/dealer";
+
+import "google/protobuf/timestamp.proto";
+import "api/v1/dealer/ball.proto";
+
+// DrawBallWithPredefinedRequest 抽取預定義球請求
+message DrawBallWithPredefinedRequest {
+  // room_id 房間ID
+  string room_id = 1;
+  
+  // balls 預定義球列表，用於客戶端指定要抽取的球
+  repeated Ball balls = 2;
+} 
