@@ -117,157 +117,428 @@ func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.
 
 // DrawBall 處理抽球請求
 func (a *DealerServiceAdapter) DrawBall(ctx context.Context, req *dealerpb.DrawBallRequest) (*dealerpb.DrawBallResponse, error) {
-	a.logger.Info("收到抽球請求 (新 API)")
+	// 使用硬編碼的房間ID
+	roomID := "SG01"
 
-	// 模擬抽球
-	randomBall := &dealerpb.Ball{
-		Id:      generateRandomString(8),
-		Number:  int32(rand.Intn(75) + 1), // 1-75 之間的隨機數字
-		Color:   "red",
-		IsOdd:   rand.Intn(2) == 1,
-		IsSmall: rand.Intn(2) == 1,
+	a.logger.Info("收到抽球請求 (新 API)", zap.String("roomID", roomID))
+
+	// 從遊戲管理器獲取當前遊戲數據
+	currentGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if currentGame == nil {
+		a.logger.Warn("找不到指定房間的遊戲", zap.String("roomID", roomID))
+		return nil, fmt.Errorf("找不到指定房間的遊戲")
 	}
 
-	// 構建基本的遊戲數據
+	// 檢查遊戲階段是否允許抽球
+	if currentGame.CurrentStage != gameflow.StageDrawingStart {
+		a.logger.Warn("當前遊戲階段不允許抽球",
+			zap.String("roomID", roomID),
+			zap.String("currentStage", string(currentGame.CurrentStage)))
+		return nil, fmt.Errorf("當前遊戲階段不允許抽球，當前階段: %s", currentGame.CurrentStage)
+	}
+
+	// 準備要添加的球
+	var drawnBalls []*dealerpb.Ball
+	var gameflowBalls []gameflow.Ball
+
+	// 由於 dealer 服務的 DrawBallRequest 沒有 Balls 字段，始終使用隨機生成球邏輯
+	randNum := rand.Intn(75) + 1 // 1-75 之間的隨機數字
+
+	// 創建內部球對象
+	ball := gameflow.Ball{
+		Number:    randNum,
+		Type:      gameflow.BallTypeRegular,
+		IsLast:    true,
+		Timestamp: time.Now(),
+	}
+
+	// 將球添加到遊戲流程中
+	err := a.gameManager.UpdateRegularBalls(ctx, roomID, ball)
+	if err != nil {
+		a.logger.Error("添加常規球失敗",
+			zap.String("roomID", roomID),
+			zap.Int("number", ball.Number),
+			zap.Error(err))
+		return nil, fmt.Errorf("添加常規球失敗: %w", err)
+	}
+
+	gameflowBalls = append(gameflowBalls, ball)
+
+	// 創建返回的球對象
+	drawnBall := &dealerpb.Ball{
+		Id:      fmt.Sprintf("ball_%d", len(currentGame.RegularBalls)+1),
+		Number:  int32(randNum),
+		IsOdd:   randNum%2 == 1,
+		IsSmall: randNum <= 38,
+	}
+	drawnBalls = append(drawnBalls, drawnBall)
+
+	// 更新後重新獲取遊戲數據
+	updatedGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if updatedGame == nil {
+		updatedGame = currentGame // 如果無法獲取則使用原始數據
+	}
+
+	// 確定遊戲狀態
+	status := dealerpb.GameStatus_GAME_STATUS_RUNNING
+
+	// 構建遊戲數據
 	gameData := &dealerpb.GameData{
-		Id:        fmt.Sprintf("G%s", generateRandomString(8)),
-		RoomId:    "SG01",
-		Stage:     commonpb.GameStage_GAME_STAGE_DRAWING_START,
-		Status:    dealerpb.GameStatus_GAME_STATUS_RUNNING,
-		DealerId:  "system",
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
-		DrawnBalls: []*dealerpb.Ball{
-			randomBall,
-		},
+		Id:         updatedGame.GameID,
+		RoomId:     roomID,
+		Stage:      convertGameflowStageToPb(updatedGame.CurrentStage),
+		Status:     status,
+		DealerId:   "system",
+		CreatedAt:  updatedGame.StartTime.Unix(),
+		UpdatedAt:  time.Now().Unix(),
+		DrawnBalls: drawnBalls,
+	}
+
+	// 為之前已經存在的球添加到響應中
+	for i, ball := range updatedGame.RegularBalls {
+		// 跳過我們剛剛添加的球，以避免重複
+		isNewBall := false
+		for _, newBall := range gameflowBalls {
+			if ball.Number == newBall.Number {
+				isNewBall = true
+				break
+			}
+		}
+
+		if !isNewBall {
+			gameData.DrawnBalls = append(gameData.DrawnBalls, &dealerpb.Ball{
+				Id:      fmt.Sprintf("ball_%d", i+1),
+				Number:  int32(ball.Number),
+				IsOdd:   ball.Number%2 == 1,
+				IsSmall: ball.Number <= 38,
+			})
+		}
 	}
 
 	// 構建回應
-	newResp := &dealerpb.DrawBallResponse{
+	response := &dealerpb.DrawBallResponse{
 		GameData: gameData,
 	}
 
-	return newResp, nil
+	return response, nil
 }
 
 // DrawExtraBall 處理抽取額外球的請求
 func (a *DealerServiceAdapter) DrawExtraBall(ctx context.Context, req *dealerpb.DrawExtraBallRequest) (*dealerpb.DrawExtraBallResponse, error) {
-	a.logger.Info("收到抽取額外球請求 (新 API)")
+	// 使用硬編碼的房間ID
+	roomID := "SG01"
 
-	// 模擬抽取額外球
-	extraBall := &dealerpb.Ball{
-		Id:      generateRandomString(8),
-		Number:  int32(rand.Intn(75) + 1), // 1-75 之間的隨機數字
-		Color:   "blue",
-		IsOdd:   rand.Intn(2) == 1,
-		IsSmall: rand.Intn(2) == 1,
+	a.logger.Info("收到抽取額外球請求 (新 API)", zap.String("roomID", roomID))
+
+	// 從遊戲管理器獲取當前遊戲數據
+	currentGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if currentGame == nil {
+		a.logger.Warn("找不到指定房間的遊戲", zap.String("roomID", roomID))
+		return nil, fmt.Errorf("找不到指定房間的遊戲")
 	}
 
-	// 確定側邊
-	side := "left"
-	if req.Side == commonpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT {
-		side = "right"
+	// 檢查遊戲階段是否允許抽取額外球
+	if currentGame.CurrentStage != gameflow.StageExtraBallDrawingStart {
+		a.logger.Warn("當前遊戲階段不允許抽取額外球",
+			zap.String("roomID", roomID),
+			zap.String("currentStage", string(currentGame.CurrentStage)))
+		return nil, fmt.Errorf("當前遊戲階段不允許抽取額外球，當前階段: %s", currentGame.CurrentStage)
 	}
 
-	// 構建基本的遊戲數據
+	// 準備抽取的額外球
+	randNum := rand.Intn(75) + 1 // 1-75 之間的隨機數字
+
+	// 創建內部球對象
+	ball := gameflow.Ball{
+		Number:    randNum,
+		Type:      gameflow.BallTypeExtra,
+		IsLast:    true,
+		Timestamp: time.Now(),
+	}
+
+	// 將球添加到遊戲流程中
+	err := a.gameManager.UpdateExtraBalls(ctx, roomID, ball)
+	if err != nil {
+		a.logger.Error("添加額外球失敗",
+			zap.String("roomID", roomID),
+			zap.Int("number", ball.Number),
+			zap.Error(err))
+		return nil, fmt.Errorf("添加額外球失敗: %w", err)
+	}
+
+	// 更新後重新獲取遊戲數據
+	updatedGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if updatedGame == nil {
+		updatedGame = currentGame // 如果無法獲取則使用原始數據
+	}
+
+	// 確定遊戲狀態
+	status := dealerpb.GameStatus_GAME_STATUS_RUNNING
+
+	// 構建遊戲數據
 	gameData := &dealerpb.GameData{
-		Id:        fmt.Sprintf("G%s", generateRandomString(8)),
-		RoomId:    "SG01",
-		Stage:     commonpb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_START,
-		Status:    dealerpb.GameStatus_GAME_STATUS_RUNNING,
-		DealerId:  "system",
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
-		ExtraBalls: map[string]*dealerpb.Ball{
-			side: extraBall,
-		},
+		Id:         updatedGame.GameID,
+		RoomId:     roomID,
+		Stage:      convertGameflowStageToPb(updatedGame.CurrentStage),
+		Status:     status,
+		DealerId:   "system",
+		CreatedAt:  updatedGame.StartTime.Unix(),
+		UpdatedAt:  time.Now().Unix(),
+		ExtraBalls: make(map[string]*dealerpb.Ball),
+	}
+
+	// 如果存在額外球（應該存在），添加到響應中
+	if len(updatedGame.ExtraBalls) > 0 {
+		latestBall := updatedGame.ExtraBalls[len(updatedGame.ExtraBalls)-1]
+
+		// 將額外球添加到遊戲數據的 map 中
+		ballId := fmt.Sprintf("extra_ball_%d", len(updatedGame.ExtraBalls))
+		gameData.ExtraBalls[ballId] = &dealerpb.Ball{
+			Id:      ballId,
+			Number:  int32(latestBall.Number),
+			IsOdd:   latestBall.Number%2 == 1,
+			IsSmall: latestBall.Number <= 38,
+		}
 	}
 
 	// 構建回應
-	newResp := &dealerpb.DrawExtraBallResponse{
+	response := &dealerpb.DrawExtraBallResponse{
 		GameData: gameData,
 	}
 
-	return newResp, nil
+	return response, nil
 }
 
 // DrawJackpotBall 處理抽取頭獎球的請求
 func (a *DealerServiceAdapter) DrawJackpotBall(ctx context.Context, req *dealerpb.DrawJackpotBallRequest) (*dealerpb.DrawJackpotBallResponse, error) {
-	a.logger.Info("收到抽取頭獎球請求 (新 API)")
+	// 使用硬編碼的房間ID
+	roomID := "SG01"
 
-	// 模擬抽取頭獎球
-	jackpotBall := &dealerpb.Ball{
-		Id:      generateRandomString(8),
-		Number:  int32(rand.Intn(75) + 1), // 1-75 之間的隨機數字
-		Color:   "gold",
-		IsOdd:   rand.Intn(2) == 1,
-		IsSmall: rand.Intn(2) == 1,
+	a.logger.Info("收到抽取頭獎球請求 (新 API)", zap.String("roomID", roomID))
+
+	// 從遊戲管理器獲取當前遊戲數據
+	currentGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if currentGame == nil {
+		a.logger.Warn("找不到指定房間的遊戲", zap.String("roomID", roomID))
+		return nil, fmt.Errorf("找不到指定房間的遊戲")
 	}
 
-	// 構建基本的遊戲數據
+	// 檢查遊戲階段是否允許抽取頭獎球
+	if currentGame.CurrentStage != gameflow.StageJackpotDrawingStart {
+		a.logger.Warn("當前遊戲階段不允許抽取頭獎球",
+			zap.String("roomID", roomID),
+			zap.String("currentStage", string(currentGame.CurrentStage)))
+		return nil, fmt.Errorf("當前遊戲階段不允許抽取頭獎球，當前階段: %s", currentGame.CurrentStage)
+	}
+
+	// 準備抽取的頭獎球
+	randNum := rand.Intn(75) + 1 // 1-75 之間的隨機數字
+
+	// 創建內部球對象
+	ball := gameflow.Ball{
+		Number:    randNum,
+		Type:      gameflow.BallTypeJackpot,
+		IsLast:    true,
+		Timestamp: time.Now(),
+	}
+
+	// 將球添加到遊戲流程中
+	err := a.gameManager.UpdateJackpotBalls(ctx, roomID, ball)
+	if err != nil {
+		a.logger.Error("添加頭獎球失敗",
+			zap.String("roomID", roomID),
+			zap.Int("number", ball.Number),
+			zap.Error(err))
+		return nil, fmt.Errorf("添加頭獎球失敗: %w", err)
+	}
+
+	// 更新後重新獲取遊戲數據
+	updatedGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if updatedGame == nil {
+		updatedGame = currentGame // 如果無法獲取則使用原始數據
+	}
+
+	// 確定遊戲狀態
+	status := dealerpb.GameStatus_GAME_STATUS_RUNNING
+
+	// 構建遊戲數據
 	gameData := &dealerpb.GameData{
-		Id:          fmt.Sprintf("G%s", generateRandomString(8)),
-		RoomId:      "SG01",
-		Stage:       commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START,
-		Status:      dealerpb.GameStatus_GAME_STATUS_RUNNING,
-		DealerId:    "system",
-		CreatedAt:   time.Now().Unix(),
-		UpdatedAt:   time.Now().Unix(),
-		JackpotBall: jackpotBall,
+		Id:        updatedGame.GameID,
+		RoomId:    roomID,
+		Stage:     convertGameflowStageToPb(updatedGame.CurrentStage),
+		Status:    status,
+		DealerId:  "system",
+		CreatedAt: updatedGame.StartTime.Unix(),
+		UpdatedAt: time.Now().Unix(),
+	}
+
+	// 如果存在頭獎球且有Jackpot數據，添加到響應中
+	if updatedGame.Jackpot != nil && len(updatedGame.Jackpot.DrawnBalls) > 0 {
+		latestBall := updatedGame.Jackpot.DrawnBalls[len(updatedGame.Jackpot.DrawnBalls)-1]
+
+		// 設置頭獎球
+		gameData.JackpotBall = &dealerpb.Ball{
+			Id:      fmt.Sprintf("jackpot_ball_%d", len(updatedGame.Jackpot.DrawnBalls)),
+			Number:  int32(latestBall.Number),
+			IsOdd:   latestBall.Number%2 == 1,
+			IsSmall: latestBall.Number <= 38,
+		}
 	}
 
 	// 構建回應
-	newResp := &dealerpb.DrawJackpotBallResponse{
+	response := &dealerpb.DrawJackpotBallResponse{
 		GameData: gameData,
 	}
 
-	return newResp, nil
+	return response, nil
 }
 
 // DrawLuckyBall 處理抽取幸運球的請求
 func (a *DealerServiceAdapter) DrawLuckyBall(ctx context.Context, req *dealerpb.DrawLuckyBallRequest) (*dealerpb.DrawLuckyBallResponse, error) {
-	a.logger.Info("收到抽取幸運球請求 (新 API)")
+	// 使用硬編碼的房間ID，因為請求中沒有包含房間ID
+	roomID := "SG01"
 
-	// 決定要抽取多少幸運球
+	a.logger.Info("收到抽取幸運球請求 (新 API)", zap.String("roomID", roomID))
+
+	// 從遊戲管理器獲取當前遊戲數據
+	currentGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if currentGame == nil {
+		a.logger.Warn("找不到指定房間的遊戲", zap.String("roomID", roomID))
+		return nil, fmt.Errorf("找不到指定房間的遊戲")
+	}
+
+	// 檢查遊戲階段是否允許抽取幸運球
+	if currentGame.CurrentStage != gameflow.StageDrawingLuckyBallsStart {
+		a.logger.Warn("當前遊戲階段不允許抽取幸運球",
+			zap.String("roomID", roomID),
+			zap.String("currentStage", string(currentGame.CurrentStage)))
+		return nil, fmt.Errorf("當前遊戲階段不允許抽取幸運球，當前階段: %s", currentGame.CurrentStage)
+	}
+
+	// 決定要抽取的幸運球數量
 	count := int(req.Count)
 	if count <= 0 {
-		count = 1 // 默認至少抽取 1 個
-	}
-	if count > 5 {
-		count = 5 // 最多抽取 5 個
+		count = 1 // 默認至少抽取1個
 	}
 
-	// 模擬抽取幸運球
-	luckyBalls := make([]*dealerpb.Ball, 0, count)
+	// 確保不超過7個幸運球的限制
+	if count > 7 {
+		count = 7
+	}
+
+	// 檢查是否已經存在幸運球
+	var existingLuckyBallsCount int
+	if currentGame.Jackpot != nil {
+		existingLuckyBallsCount = len(currentGame.Jackpot.LuckyBalls)
+	}
+
+	// 確定還可以抽取多少球
+	remainingBallsToAdd := 7 - existingLuckyBallsCount
+	if count > remainingBallsToAdd {
+		count = remainingBallsToAdd
+	}
+
+	// 如果無法再添加球，返回錯誤
+	if count <= 0 {
+		a.logger.Warn("已達到最大幸運號碼球數量(7球)",
+			zap.String("roomID", roomID),
+			zap.Int("currentCount", existingLuckyBallsCount))
+		return nil, fmt.Errorf("已達到最大幸運號碼球數量(7球)")
+	}
+
+	a.logger.Info("準備抽取幸運球",
+		zap.String("roomID", roomID),
+		zap.Int("existingCount", existingLuckyBallsCount),
+		zap.Int("countToAdd", count))
+
+	// 生成並添加幸運球
+	var lastBall *gameflow.Ball // 用來記錄最後一個球，以便稍後決定是否推進階段
+
 	for i := 0; i < count; i++ {
-		luckyBall := &dealerpb.Ball{
-			Id:      generateRandomString(8),
-			Number:  int32(rand.Intn(75) + 1), // 1-75 之間的隨機數字
-			Color:   "rainbow",
-			IsOdd:   rand.Intn(2) == 1,
-			IsSmall: rand.Intn(2) == 1,
+		// 生成隨機數 (1-75)
+		randNum := rand.Intn(75) + 1
+
+		// 檢查最後一個球的標記
+		isLast := false
+		if existingLuckyBallsCount+i+1 == 7 { // 第7個球是最後一個
+			isLast = true
 		}
-		luckyBalls = append(luckyBalls, luckyBall)
+
+		// 添加球到遊戲
+		newBall, err := gameflow.AddBall(currentGame, randNum, gameflow.BallTypeLucky, isLast)
+		if err != nil {
+			a.logger.Error("添加幸運球失敗",
+				zap.String("roomID", roomID),
+				zap.Int("number", randNum),
+				zap.Error(err))
+			return nil, fmt.Errorf("添加幸運球失敗: %w", err)
+		}
+
+		// 記錄最後一個球
+		if isLast {
+			lastBall = newBall
+		}
+
+		a.logger.Info("成功添加幸運球",
+			zap.String("roomID", roomID),
+			zap.Int("ballNumber", newBall.Number))
 	}
 
-	// 構建基本的遊戲數據
+	// 如果有最後一個球，嘗試推進遊戲階段
+	if lastBall != nil && lastBall.IsLast {
+		go func() {
+			// 使用無超時的 context
+			ctx := context.Background()
+			// 嘗試推進階段
+			err := a.gameManager.AdvanceStageForRoom(ctx, roomID, true)
+			if err != nil {
+				a.logger.Error("自動推進階段失敗",
+					zap.String("roomID", roomID),
+					zap.Error(err))
+			}
+		}()
+	}
+
+	// 更新後重新獲取遊戲數據
+	updatedGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if updatedGame == nil {
+		updatedGame = currentGame // 如果無法獲取則使用原始數據
+	}
+
+	// 確定遊戲狀態
+	status := dealerpb.GameStatus_GAME_STATUS_RUNNING
+
+	// 構建遊戲數據
 	gameData := &dealerpb.GameData{
-		Id:         fmt.Sprintf("G%s", generateRandomString(8)),
-		RoomId:     "SG01",
-		Stage:      commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START,
-		Status:     dealerpb.GameStatus_GAME_STATUS_RUNNING,
+		Id:         updatedGame.GameID,
+		RoomId:     roomID,
+		Stage:      convertGameflowStageToPb(updatedGame.CurrentStage),
+		Status:     status,
 		DealerId:   "system",
-		CreatedAt:  time.Now().Unix(),
+		CreatedAt:  updatedGame.StartTime.Unix(),
 		UpdatedAt:  time.Now().Unix(),
-		LuckyBalls: luckyBalls,
+		LuckyBalls: make([]*dealerpb.Ball, 0),
+	}
+
+	// 取出所有幸運球
+	if updatedGame.Jackpot != nil && len(updatedGame.Jackpot.LuckyBalls) > 0 {
+		for i, luckyBall := range updatedGame.Jackpot.LuckyBalls {
+			ball := &dealerpb.Ball{
+				Id:      fmt.Sprintf("lucky_ball_%d", i+1),
+				Number:  int32(luckyBall.Number),
+				IsOdd:   luckyBall.Number%2 == 1,
+				IsSmall: luckyBall.Number <= 38,
+			}
+			gameData.LuckyBalls = append(gameData.LuckyBalls, ball)
+		}
 	}
 
 	// 構建回應
-	newResp := &dealerpb.DrawLuckyBallResponse{
+	response := &dealerpb.DrawLuckyBallResponse{
 		GameData: gameData,
 	}
 
-	return newResp, nil
+	return response, nil
 }
 
 // CancelGame 處理取消遊戲的請求
@@ -459,54 +730,115 @@ func (a *DealerServiceAdapter) StartJackpotRound(ctx context.Context, req *deale
 
 // SubscribeGameEvents 處理訂閱遊戲事件的請求
 func (a *DealerServiceAdapter) SubscribeGameEvents(req *dealerpb.SubscribeGameEventsRequest, stream dealerpb.DealerService_SubscribeGameEventsServer) error {
-	a.logger.Info("收到訂閱遊戲事件請求 (新 API)")
+	// 使用硬編碼的房間ID，因為dealer服務不需要在請求中指定房間
+	roomID := "SG01"
 
-	// 每隔5秒發送一個心跳事件
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	a.logger.Info("收到訂閱遊戲事件請求 (新 API)", zap.String("roomID", roomID))
 
-	// 發送初始遊戲狀態事件
-	initialEvent := &dealerpb.GameEvent{
-		Type:      commonpb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
-		Timestamp: time.Now().Unix(),
-		EventData: &dealerpb.GameEvent_GameData{
-			GameData: &dealerpb.GameData{
-				Id:        fmt.Sprintf("G%s", generateRandomString(8)),
-				RoomId:    "SG01",
-				Stage:     commonpb.GameStage_GAME_STAGE_NEW_ROUND,
-				Status:    dealerpb.GameStatus_GAME_STATUS_RUNNING,
-				CreatedAt: time.Now().Unix(),
-				UpdatedAt: time.Now().Unix(),
+	// 生成訂閱者ID
+	subscriberID := generateSubscriberID(roomID)
+
+	// 創建事件頻道
+	eventChan := make(chan *dealerpb.GameEvent, 100)
+
+	// 註冊訂閱者 - 這裡我們需要增加對訂閱者的管理
+	// 由於 DealerServiceAdapter 目前沒有內建訂閱者管理功能，我們將採用一個簡單的方式
+	// 在實際項目中，應當將訂閱者管理相關的代碼抽象為一個共用的服務或模塊
+
+	defer func() {
+		// 取消訂閱並關閉通道
+		close(eventChan)
+		a.logger.Info("關閉訂閱者連接",
+			zap.String("subscriberID", subscriberID),
+			zap.String("roomID", roomID))
+	}()
+
+	a.logger.Info("成功註冊訂閱者",
+		zap.String("subscriberID", subscriberID),
+		zap.String("roomID", roomID))
+
+	// 主動發送當前遊戲狀態
+	a.logger.Info("用戶請求獲取當前遊戲狀態", zap.String("roomID", roomID))
+
+	// 獲取當前遊戲狀態並發送
+	statusResp, err := a.GetGameStatus(context.Background(), &dealerpb.GetGameStatusRequest{})
+
+	if err == nil && statusResp != nil && statusResp.GameData != nil {
+		gameData := statusResp.GameData
+
+		// 創建事件時間戳
+		now := time.Now().Unix()
+
+		// 創建事件並發送
+		event := &dealerpb.GameEvent{
+			Type:      commonpb.GameEventType_GAME_EVENT_TYPE_NOTIFICATION,
+			Timestamp: now,
+			EventData: &dealerpb.GameEvent_GameData{
+				GameData: gameData,
 			},
-		},
-	}
+		}
 
-	if err := stream.Send(initialEvent); err != nil {
-		a.logger.Error("發送初始事件失敗", zap.Error(err))
-		return err
-	}
-
-	// 持續發送心跳事件，直到上下文被取消
-	for {
+		// 嘗試發送
 		select {
-		case <-ticker.C:
-			// 創建心跳事件
-			heartbeatEvent := &dealerpb.GameEvent{
-				Type:      commonpb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT,
-				Timestamp: time.Now().Unix(),
-			}
-
-			// 發送心跳事件
-			if err := stream.Send(heartbeatEvent); err != nil {
-				a.logger.Error("發送心跳事件失敗", zap.Error(err))
-				return err
-			}
-
-		case <-stream.Context().Done():
-			a.logger.Info("客戶端斷開連接或上下文被取消")
-			return nil
+		case eventChan <- event:
+			a.logger.Info("已發送當前遊戲狀態給新訂閱者",
+				zap.String("subscriberID", subscriberID),
+				zap.String("roomID", roomID),
+				zap.String("gameID", gameData.Id))
+		default:
+			a.logger.Warn("訂閱者通道已滿，無法發送當前遊戲狀態",
+				zap.String("subscriberID", subscriberID),
+				zap.String("roomID", roomID))
 		}
 	}
+
+	// 另外開一個 goroutine 定期發送心跳事件
+	stopHeartbeat := make(chan bool)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				// 創建心跳事件
+				heartbeatEvent := &dealerpb.GameEvent{
+					Type:      commonpb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT,
+					Timestamp: time.Now().Unix(),
+				}
+
+				// 發送心跳事件
+				select {
+				case eventChan <- heartbeatEvent:
+					// 成功發送心跳
+				default:
+					a.logger.Warn("無法發送心跳事件，頻道已滿",
+						zap.String("subscriberID", subscriberID))
+				}
+			case <-stopHeartbeat:
+				return
+			}
+		}
+	}()
+
+	// 處理事件流
+	for event := range eventChan {
+		if err := stream.Send(event); err != nil {
+			a.logger.Error("發送事件到客戶端失敗",
+				zap.String("subscriberID", subscriberID),
+				zap.Error(err))
+			close(stopHeartbeat) // 停止心跳
+			return err
+		}
+	}
+
+	close(stopHeartbeat) // 停止心跳
+	return nil
+}
+
+// 生成訂閱者 ID
+func generateSubscriberID(roomID string) string {
+	return "subscriber_" + roomID + "_" + generateRandomString(8)
 }
 
 // convertGameflowStageToPb 將 gameflow.GameStage 轉換為 commonpb.GameStage
