@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	newdealerpb "g38_lottery_service/internal/generated/api/v1/dealer"
+	dealerpb "g38_lottery_service/internal/generated/api/v1/dealer"
 	"g38_lottery_service/internal/lottery_service/config"
 	"g38_lottery_service/internal/lottery_service/gameflow"
 	"g38_lottery_service/internal/lottery_service/grpc/dealer"
@@ -61,7 +61,7 @@ func NewGrpcServer(
 	dealerAdapter := dealer.NewDealerServiceAdapter(logger, gameManager)
 
 	// 註冊新的 API 服務
-	newdealerpb.RegisterDealerServiceServer(s, dealerAdapter)
+	dealerpb.RegisterDealerServiceServer(s, dealerAdapter)
 
 	// 啟用 gRPC 反射，用於服務發現
 	reflection.Register(s)
