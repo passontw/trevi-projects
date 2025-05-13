@@ -49,10 +49,12 @@ func GenerateRandomString(length int) string {
 func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.StartNewRoundRequest) (*dealerpb.StartNewRoundResponse, error) {
 	a.logger.Info("收到開始新回合的請求 (新 API)")
 
-	roomId := "SG01" // req.RoomId
-	if roomId == "" {
-		return nil, status.Error(codes.InvalidArgument, "房間 ID 不能為空")
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
 	}
+
+	roomId := req.RoomId
 
 	// 構建基本的遊戲數據
 	gameData := &dealerpb.GameData{
@@ -77,6 +79,13 @@ func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.
 func (a *DealerServiceAdapter) DrawBall(ctx context.Context, req *dealerpb.DrawBallRequest) (*dealerpb.DrawBallResponse, error) {
 	a.logger.Info("收到抽取球的請求 (新 API)")
 
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
+	}
+
+	roomId := req.RoomId
+
 	// 隨機生成一個球號碼
 	ballNumber := mathrand.Intn(80) + 1
 
@@ -92,6 +101,7 @@ func (a *DealerServiceAdapter) DrawBall(ctx context.Context, req *dealerpb.DrawB
 	// 構建遊戲數據
 	gameData := &dealerpb.GameData{
 		Id:        fmt.Sprintf("G%s", GenerateRandomString(8)),
+		RoomId:    roomId,
 		Stage:     commonpb.GameStage_GAME_STAGE_DRAWING_START,
 		Status:    dealerpb.GameStatus_GAME_STATUS_RUNNING,
 		DealerId:  "system",
@@ -114,10 +124,13 @@ func (a *DealerServiceAdapter) DrawBall(ctx context.Context, req *dealerpb.DrawB
 func (a *DealerServiceAdapter) DrawExtraBall(ctx context.Context, req *dealerpb.DrawExtraBallRequest) (*dealerpb.DrawExtraBallResponse, error) {
 	a.logger.Info("收到抽取額外球請求 (新 API)")
 
-	// 在這個實現中，我們需要硬編碼房間 ID，因為 DrawExtraBallRequest 不包含 room_id 字段
-	roomID := "SG01"
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
+	}
 
 	// 獲取當前遊戲數據
+	roomID := req.RoomId
 	currentGame := a.gameManager.GetCurrentGameByRoom(roomID)
 	if currentGame == nil {
 		return nil, status.Errorf(codes.Internal, "無法獲取當前遊戲數據")
@@ -187,9 +200,12 @@ func (a *DealerServiceAdapter) DrawExtraBall(ctx context.Context, req *dealerpb.
 
 // DrawJackpotBall 處理抽取頭獎球的請求
 func (a *DealerServiceAdapter) DrawJackpotBall(ctx context.Context, req *dealerpb.DrawJackpotBallRequest) (*dealerpb.DrawJackpotBallResponse, error) {
-	// 使用硬編碼的房間ID
-	roomID := "SG01"
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
+	}
 
+	roomID := req.RoomId
 	a.logger.Info("收到抽取頭獎球請求 (新 API)", zap.String("roomID", roomID))
 
 	// 從遊戲管理器獲取當前遊戲數據
@@ -271,9 +287,12 @@ func (a *DealerServiceAdapter) DrawJackpotBall(ctx context.Context, req *dealerp
 
 // DrawLuckyBall 處理抽取幸運球的請求
 func (a *DealerServiceAdapter) DrawLuckyBall(ctx context.Context, req *dealerpb.DrawLuckyBallRequest) (*dealerpb.DrawLuckyBallResponse, error) {
-	// 使用硬編碼的房間ID，因為請求中沒有包含房間ID
-	roomID := "SG01"
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
+	}
 
+	roomID := req.RoomId
 	a.logger.Info("收到抽取幸運球請求 (新 API)", zap.String("roomID", roomID))
 
 	// 從遊戲管理器獲取當前遊戲數據
@@ -419,9 +438,12 @@ func (a *DealerServiceAdapter) DrawLuckyBall(ctx context.Context, req *dealerpb.
 
 // CancelGame 處理取消遊戲的請求
 func (a *DealerServiceAdapter) CancelGame(ctx context.Context, req *dealerpb.CancelGameRequest) (*dealerpb.CancelGameResponse, error) {
-	// 使用硬編碼的房間ID
-	roomID := "SG01"
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
+	}
 
+	roomID := req.RoomId
 	a.logger.Info("收到取消遊戲請求 (新 API)", zap.String("roomID", roomID))
 
 	// 從遊戲管理器獲取當前遊戲數據
@@ -500,9 +522,12 @@ func (a *DealerServiceAdapter) CancelGame(ctx context.Context, req *dealerpb.Can
 
 // GetGameStatus 處理獲取遊戲狀態的請求
 func (a *DealerServiceAdapter) GetGameStatus(ctx context.Context, req *dealerpb.GetGameStatusRequest) (*dealerpb.GetGameStatusResponse, error) {
-	// 使用硬編碼的房間ID
-	roomID := "SG01"
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
+	}
 
+	roomID := req.RoomId
 	a.logger.Info("收到獲取遊戲狀態請求 (新 API)", zap.String("roomID", roomID))
 
 	// 從遊戲管理器獲取當前遊戲數據
@@ -579,11 +604,13 @@ func (a *DealerServiceAdapter) GetGameStatus(ctx context.Context, req *dealerpb.
 func (a *DealerServiceAdapter) StartJackpotRound(ctx context.Context, req *dealerpb.StartJackpotRoundRequest) (*dealerpb.StartJackpotRoundResponse, error) {
 	a.logger.Info("收到開始頭獎回合請求 (新 API)")
 
-	// 保存原始房間ID
-	roomId := "SG01"
-	if req.RoomId != "" {
-		roomId = req.RoomId
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
 	}
+
+	// 使用請求中的房間ID
+	roomId := req.RoomId
 
 	// 構建基本的遊戲數據
 	gameData := &dealerpb.GameData{
@@ -606,9 +633,12 @@ func (a *DealerServiceAdapter) StartJackpotRound(ctx context.Context, req *deale
 
 // SubscribeGameEvents 處理訂閱遊戲事件的請求
 func (a *DealerServiceAdapter) SubscribeGameEvents(req *dealerpb.SubscribeGameEventsRequest, stream dealerpb.DealerService_SubscribeGameEventsServer) error {
-	// 使用硬編碼的房間ID，因為dealer服務不需要在請求中指定房間
-	roomID := "SG01"
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return status.Error(codes.InvalidArgument, "room_id 不能為空")
+	}
 
+	roomID := req.RoomId
 	a.logger.Info("收到訂閱遊戲事件請求 (新 API)", zap.String("roomID", roomID))
 
 	// 生成訂閱者ID
@@ -637,7 +667,9 @@ func (a *DealerServiceAdapter) SubscribeGameEvents(req *dealerpb.SubscribeGameEv
 	a.logger.Info("用戶請求獲取當前遊戲狀態", zap.String("roomID", roomID))
 
 	// 獲取當前遊戲狀態並發送
-	statusResp, err := a.GetGameStatus(context.Background(), &dealerpb.GetGameStatusRequest{})
+	statusResp, err := a.GetGameStatus(context.Background(), &dealerpb.GetGameStatusRequest{
+		RoomId: roomID,
+	})
 
 	if err == nil && statusResp != nil && statusResp.GameData != nil {
 		gameData := statusResp.GameData

@@ -41,6 +41,8 @@ service DealerService {
 
 // StartNewRoundRequest 開始新遊戲回合的請求
 message StartNewRoundRequest {
+  // room_id 房間ID
+  string room_id = 1;
 }
 
 // StartNewRoundResponse 開始新遊戲回合的響應
@@ -51,6 +53,8 @@ message StartNewRoundResponse {
 
 // DrawBallRequest 抽球請求
 message DrawBallRequest {
+  // room_id 房間ID
+  string room_id = 1;
 }
 
 // DrawBallResponse 抽球響應
@@ -61,8 +65,10 @@ message DrawBallResponse {
 
 // DrawExtraBallRequest 抽取額外球的請求
 message DrawExtraBallRequest {
+  // room_id 房間ID
+  string room_id = 1;
   // side 抽取的額外球側（左或右）
-  common.ExtraBallSide side = 1;
+  common.ExtraBallSide side = 2;
 }
 
 // DrawExtraBallResponse 抽取額外球的響應
@@ -73,6 +79,8 @@ message DrawExtraBallResponse {
 
 // DrawJackpotBallRequest 抽取頭獎球的請求
 message DrawJackpotBallRequest {
+  // room_id 房間ID
+  string room_id = 1;
 }
 
 // DrawJackpotBallResponse 抽取頭獎球的響應
@@ -83,8 +91,10 @@ message DrawJackpotBallResponse {
 
 // DrawLuckyBallRequest 抽取幸運球的請求
 message DrawLuckyBallRequest {
+  // room_id 房間ID
+  string room_id = 1;
   // count 指定抽取的球數量
-  int32 count = 1;
+  int32 count = 2;
 }
 
 // DrawLuckyBallResponse 抽取幸運球的響應
@@ -95,6 +105,8 @@ message DrawLuckyBallResponse {
 
 // CancelGameRequest 取消遊戲請求
 message CancelGameRequest {
+  // room_id 房間ID
+  string room_id = 1;
 }
 
 // CancelGameResponse 取消遊戲響應
@@ -105,6 +117,8 @@ message CancelGameResponse {
 
 // GetGameStatusRequest 獲取遊戲狀態請求
 message GetGameStatusRequest {
+  // room_id 房間ID
+  string room_id = 1;
 }
 
 // GetGameStatusResponse 獲取遊戲狀態響應
@@ -127,4 +141,6 @@ message StartJackpotRoundResponse {
 
 // SubscribeGameEventsRequest 訂閱遊戲事件請求
 message SubscribeGameEventsRequest {
+  // room_id 房間ID
+  string room_id = 1;
 } 
