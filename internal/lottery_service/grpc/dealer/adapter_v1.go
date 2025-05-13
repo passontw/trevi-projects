@@ -272,18 +272,78 @@ func (a *DealerServiceAdapter) DrawLuckyBall(ctx context.Context, req *dealerpb.
 
 // CancelGame 處理取消遊戲的請求
 func (a *DealerServiceAdapter) CancelGame(ctx context.Context, req *dealerpb.CancelGameRequest) (*dealerpb.CancelGameResponse, error) {
-	a.logger.Info("收到取消遊戲請求 (新 API)")
+	// 使用硬編碼的房間ID
+	roomID := "SG01"
 
-	// 構建一個基本的 GameData
-	gameData := &dealerpb.GameData{
-		Id:        fmt.Sprintf("G%s", generateRandomString(8)),
-		RoomId:    "SG01",
-		Status:    dealerpb.GameStatus_GAME_STATUS_CANCELLED,
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
+	a.logger.Info("收到取消遊戲請求 (新 API)", zap.String("roomID", roomID))
+
+	// 從遊戲管理器獲取當前遊戲數據
+	currentGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if currentGame == nil {
+		a.logger.Warn("找不到指定房間的遊戲", zap.String("roomID", roomID))
+		return &dealerpb.CancelGameResponse{
+			GameData: &dealerpb.GameData{
+				Id:        "",
+				RoomId:    roomID,
+				Stage:     commonpb.GameStage_GAME_STAGE_GAME_OVER,
+				Status:    dealerpb.GameStatus_GAME_STATUS_CANCELLED,
+				DealerId:  "system",
+				CreatedAt: time.Now().Unix(),
+				UpdatedAt: time.Now().Unix(),
+			},
+		}, nil
 	}
 
-	// 構建取消遊戲的回應
+	// 更新遊戲狀態，我們不能直接使用 CancelGameForRoom，因為該方法不存在
+	// 相反，我們需要手動更新遊戲狀態
+	// 先記錄原始遊戲 ID 和信息
+	gameID := currentGame.GameID
+
+	// 嘗試重置遊戲狀態（相當於取消當前遊戲並準備新遊戲）
+	_, err := a.gameManager.ResetGameForRoom(ctx, roomID)
+	if err != nil {
+		a.logger.Error("重置遊戲失敗", zap.String("roomID", roomID), zap.Error(err))
+		return nil, fmt.Errorf("取消遊戲失敗: %w", err)
+	}
+
+	// 構建取消後的遊戲數據
+	gameData := &dealerpb.GameData{
+		Id:         gameID,
+		RoomId:     roomID,
+		Stage:      commonpb.GameStage_GAME_STAGE_GAME_OVER,
+		Status:     dealerpb.GameStatus_GAME_STATUS_CANCELLED,
+		DealerId:   "system",
+		CreatedAt:  currentGame.StartTime.Unix(),
+		UpdatedAt:  time.Now().Unix(),
+		DrawnBalls: []*dealerpb.Ball{},
+	}
+
+	// 填充已抽取的球
+	for i, ball := range currentGame.RegularBalls {
+		gameData.DrawnBalls = append(gameData.DrawnBalls, &dealerpb.Ball{
+			Id:      fmt.Sprintf("ball_%d", i+1),
+			Number:  int32(ball.Number),
+			IsOdd:   ball.Number%2 == 1,
+			IsSmall: ball.Number <= 38,
+		})
+	}
+
+	// 填充額外球
+	gameData.ExtraBalls = make(map[string]*dealerpb.Ball)
+	if len(currentGame.ExtraBalls) > 0 {
+		side := "left"
+		if currentGame.SelectedSide == gameflow.ExtraBallSideRight {
+			side = "right"
+		}
+		gameData.ExtraBalls[side] = &dealerpb.Ball{
+			Id:      "extra_ball",
+			Number:  int32(currentGame.ExtraBalls[0].Number),
+			IsOdd:   currentGame.ExtraBalls[0].Number%2 == 1,
+			IsSmall: currentGame.ExtraBalls[0].Number <= 38,
+		}
+	}
+
+	// 構建回應
 	newResp := &dealerpb.CancelGameResponse{
 		GameData: gameData,
 	}
