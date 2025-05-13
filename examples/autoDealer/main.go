@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"math"
@@ -12,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,11 +20,12 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
 	defaultRoomID        = "SG01"
-	defaultServerAddress = "localhost:8080"
+	defaultServerAddress = "localhost:9100"
 	defaultConfigFile    = "config.json"
 )
 
@@ -65,6 +66,7 @@ type AutoDealer struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	state         *GameState
+	stateMutex    sync.Mutex
 	extraBallSide commonpb.ExtraBallSide
 	config        *Config
 }
@@ -78,6 +80,7 @@ type GameState struct {
 	drawnJPBalls      []int32
 	drawnLuckyBalls   []int32
 	preparingNewGame  bool
+	currentGameData   *dealerpb.GameData
 }
 
 // 載入配置文件
@@ -161,6 +164,7 @@ func NewAutoDealer(serverAddr, roomID string, config *Config) (*AutoDealer, erro
 		ctx:           ctx,
 		cancel:        cancel,
 		state:         state,
+		stateMutex:    sync.Mutex{},
 		extraBallSide: extraBallSide,
 		config:        config,
 	}, nil
@@ -192,246 +196,148 @@ func (d *AutoDealer) Stop() {
 
 // SubscribeGameEvents 訂閱遊戲事件
 func (d *AutoDealer) SubscribeGameEvents() error {
-	// 實現帶重試機制的訂閱
-	go d.subscribeWithRetry()
-	return nil
-}
+	log.Println("訂閱遊戲事件...")
 
-// subscribeWithRetry 實現帶重試機制的事件訂閱
-func (d *AutoDealer) subscribeWithRetry() {
-	var (
-		backoff     = 1 * time.Second
-		maxBackoff  = 30 * time.Second
-		maxAttempts = 10
-		attempts    = 0
-	)
-
-	for {
-		select {
-		case <-d.ctx.Done():
-			log.Println("訂閱服務已停止")
-			return
-		default:
-			// 繼續嘗試連接
-		}
-
-		attempts++
-		if attempts > maxAttempts {
-			log.Printf("嘗試重連 %d 次後放棄", maxAttempts)
-			return
-		}
-
-		log.Printf("建立訂閱連接 (嘗試 %d/%d)...", attempts, maxAttempts)
-		err := d.establishSubscription()
-		if err != nil {
-			log.Printf("訂閱失敗: %v, %d 秒後重試...", err, backoff/time.Second)
-			time.Sleep(backoff)
-			// 增加退避時間，但不超過最大值
-			backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
-			continue
-		}
-
-		// 成功建立訂閱後，重置重試次數和退避時間
-		attempts = 0
-		backoff = 1 * time.Second
-
-		// 給系統一些時間冷卻，避免立即重連
-		time.Sleep(2 * time.Second)
-	}
-}
-
-// establishSubscription 建立單次訂閱
-func (d *AutoDealer) establishSubscription() error {
 	// 創建訂閱請求
 	req := &dealerpb.SubscribeGameEventsRequest{
 		RoomId: d.roomID,
 	}
 
-	log.Printf("正在連接服務器並訂閱房間 %s 的遊戲事件...", d.roomID)
-
-	// 設置上下文，加上10分鐘超時
-	ctx, cancel := context.WithTimeout(d.ctx, 10*time.Minute)
-	defer cancel()
-
-	// 訂閱遊戲事件
-	stream, err := d.client.SubscribeGameEvents(ctx, req)
-	if err != nil {
-		return fmt.Errorf("訂閱遊戲事件失敗: %v", err)
-	}
-
-	log.Printf("遊戲事件流已成功建立")
-
-	// 記錄最後接收心跳的時間
-	lastHeartbeat := time.Now()
-
-	// 創建用於檢查心跳超時的計時器
-	heartbeatTimeout := time.NewTimer(30 * time.Second)
-
-	// 創建初始事件定時器
-	initialEventTimer := time.NewTimer(5 * time.Second)
-	initialEventReceived := false
-
-	// 監聽事件
-	for {
-		// 設置接收超時
-		recvCtx, recvCancel := context.WithTimeout(ctx, 20*time.Second)
-
-		// 在單獨的goroutine中接收事件
-		eventCh := make(chan *dealerpb.GameEvent, 1)
-		errCh := make(chan error, 1)
-
-		go func() {
-			// 使用 recvCtx 來控制接收超時
-			select {
-			case <-recvCtx.Done():
-				// 超時或被取消
-				errCh <- recvCtx.Err()
-			default:
-				event, err := stream.Recv()
-				if err != nil {
-					errCh <- err
-					return
-				}
-				eventCh <- event
-			}
-		}()
-
-		// 等待事件、錯誤、心跳超時或上下文取消
+	// 嘗試建立訂閱
+	maxAttempts := 10
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// 判斷服務是否已經關閉
 		select {
 		case <-d.ctx.Done():
-			log.Println("客戶端請求終止訂閱")
-			recvCancel()
+			log.Println("自動莊家服務已關閉，停止嘗試訂閱")
 			return nil
-
-		case <-ctx.Done():
-			log.Println("訂閱上下文已取消")
-			recvCancel()
-			return ctx.Err()
-
-		case <-heartbeatTimeout.C:
-			elapsed := time.Since(lastHeartbeat)
-			log.Printf("心跳超時 (%s)，重新建立連接", elapsed)
-			recvCancel()
-			return fmt.Errorf("心跳超時")
-
-		case <-initialEventTimer.C:
-			if !initialEventReceived {
-				log.Println("未收到初始事件，主動開始新遊戲...")
-				go d.startNewGame()
-			}
-
-		case event := <-eventCh:
-			// 重置心跳超時計時器
-			if !heartbeatTimeout.Stop() {
-				<-heartbeatTimeout.C
-			}
-			heartbeatTimeout.Reset(30 * time.Second)
-
-			initialEventReceived = true
-
-			// 使用正確的心跳事件類型常量
-			if event.GetType() == commonpb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT {
-				lastHeartbeat = time.Now()
-				log.Printf("收到心跳事件，時間戳: %d", event.Timestamp)
-				continue
-			}
-
-			// 處理其他事件
-			d.handleGameEvent(event)
-
-		case err := <-errCh:
-			recvCancel()
-			if err == io.EOF {
-				log.Println("服務器關閉了連接 (EOF)")
-			} else if strings.Contains(err.Error(), "max_age") {
-				log.Println("服務器因最大存活時間限制關閉了連接")
-			} else {
-				log.Printf("事件接收錯誤: %v", err)
-			}
-			return err
+		default:
+			// 繼續執行
 		}
+
+		log.Printf("嘗試建立訂閱連接 (嘗試 %d/%d)...", attempt, maxAttempts)
+
+		// 建立串流
+		stream, err := d.client.SubscribeGameEvents(d.ctx, req)
+		if err != nil {
+			log.Printf("建立事件訂閱失敗: %v, 等待重試...", err)
+			time.Sleep(time.Duration(d.getBackoffTime(attempt)) * time.Second)
+			continue
+		}
+
+		log.Println("成功連接到遊戲事件串流，開始接收事件...")
+
+		// 持續處理接收的事件
+		for {
+			event, err := stream.Recv()
+			if err != nil {
+				log.Printf("接收事件時發生錯誤: %v, 重新連接...", err)
+				break
+			}
+
+			// 處理接收到的事件
+			d.processGameEvent(event)
+		}
+
+		// 如果執行到這裡，表示串流已中斷，等待後重試
+		time.Sleep(2 * time.Second)
 	}
+
+	log.Printf("已達到最大重試次數 (%d)，無法建立訂閱連接", maxAttempts)
+	return nil
 }
 
-// handleGameEvent 處理遊戲事件
-func (d *AutoDealer) handleGameEvent(event *dealerpb.GameEvent) {
+func (d *AutoDealer) getBackoffTime(attempt int) int {
+	// 使用指數退避算法: 2^attempt，最大30秒
+	backoff := int(math.Pow(2, float64(attempt-1)))
+	if backoff > 30 {
+		return 30
+	}
+	return backoff
+}
+
+// processGameEvent 處理接收到的遊戲事件
+func (d *AutoDealer) processGameEvent(event *dealerpb.GameEvent) {
 	if event == nil {
 		log.Println("收到空事件")
 		return
 	}
 
-	// 記錄事件類型，跳過心跳事件的詳細日誌
-	if event.GetType() != commonpb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT {
-		log.Printf("收到遊戲事件 - 類型: %s, 時間戳: %d", event.Type, event.Timestamp)
-	}
+	// 記錄事件類型
+	log.Printf("收到事件類型: %s", event.Type.String())
 
-	// 檢查事件類型
+	// 檢查遊戲數據事件
 	if gameData := event.GetGameData(); gameData != nil {
-		d.state.gameID = gameData.GameId
-		d.state.currentStage = gameData.Stage
+		log.Printf("遊戲數據事件 - ID: %s, 階段: %s",
+			gameData.GameId,
+			gameData.Stage.String())
 
-		log.Printf("【遊戲數據事件】遊戲ID: %s, 階段: %s, 狀態: %s",
-			gameData.GameId, gameData.Stage, gameData.Status)
+		// 更新遊戲狀態
+		d.updateGameState(gameData)
 
-		// 輸出已抽出的球
-		if len(gameData.RegularBalls) > 0 {
-			log.Printf("  已抽出的常規球: %d 個", len(gameData.RegularBalls))
-			for i, ball := range gameData.RegularBalls {
-				if i < 5 || i >= len(gameData.RegularBalls)-5 {
-					log.Printf("    球 #%d: 號碼=%d, 類型=%s", i+1, ball.Number, ball.Type)
-				} else if i == 5 {
-					log.Printf("    ... (省略中間球) ...")
-				}
-			}
-		}
-
-		// 根據遊戲階段進行相應的操作
+		// 處理階段邏輯
 		d.processStage()
-
-	} else if stageChanged := event.GetStageChanged(); stageChanged != nil {
-		oldStage := stageChanged.OldStage
-		newStage := stageChanged.NewStage
-		d.state.currentStage = newStage
-
-		log.Printf("【階段變更事件】舊階段: %s, 新階段: %s", oldStage, newStage)
-
-		// 根據遊戲階段進行相應的操作
-		d.processStage()
-
-	} else if ballDrawn := event.GetBallDrawn(); ballDrawn != nil {
-		// 處理抽球事件
-		log.Printf("【抽球事件】球號: %d, 類型: %s, 位置: %d",
-			ballDrawn.Ball.Number, ballDrawn.Ball.Type, ballDrawn.Position)
-		d.handleBallDrawEvent(ballDrawn.Ball)
-
-	} else if gameCreated := event.GetGameCreated(); gameCreated != nil {
-		log.Printf("【遊戲創建事件】遊戲ID: %s", gameCreated.GameData.GameId)
-		d.state.gameID = gameCreated.GameData.GameId
-		d.state.currentStage = gameCreated.GameData.Stage
-
-		// 根據遊戲階段進行相應的操作
-		d.processStage()
-
-	} else if gameCancelled := event.GetGameCancelled(); gameCancelled != nil {
-		log.Printf("【遊戲取消事件】原因: %s", gameCancelled.Reason)
-
-	} else if jpBallDrawn := event.GetJackpotBallDrawn(); jpBallDrawn != nil {
-		log.Printf("【JP球抽取事件】球號: %d", jpBallDrawn.Ball.Number)
-
-	} else if extraBallDrawn := event.GetExtraBallDrawn(); extraBallDrawn != nil {
-		log.Printf("【額外球抽取事件】球號: %d, 側: %s",
-			extraBallDrawn.Ball.Number, extraBallDrawn.Side)
-
-	} else if luckyBallDrawn := event.GetLuckyBallDrawn(); luckyBallDrawn != nil {
-		log.Printf("【幸運球抽取事件】")
-		for i, ball := range luckyBallDrawn.Balls {
-			log.Printf("  幸運球 #%d: 號碼=%d", i+1, ball.Number)
-		}
-	} else if event.GetType() == commonpb.GameEventType_GAME_EVENT_TYPE_HEARTBEAT {
-		// 心跳事件已在上層處理，這裡不需要特別動作
-	} else {
-		log.Printf("收到未知類型的事件")
+		return
 	}
+
+	// 檢查階段變更事件
+	if stageChange := event.GetStageChanged(); stageChange != nil {
+		log.Printf("階段變更事件 - 舊: %s, 新: %s",
+			stageChange.OldStage.String(),
+			stageChange.NewStage.String())
+
+		// 更新階段
+		d.stateMutex.Lock()
+		d.state.currentStage = stageChange.NewStage
+		d.stateMutex.Unlock()
+
+		// 處理階段邏輯
+		d.processStage()
+		return
+	}
+
+	// 檢查球抽取事件
+	if ballDrawn := event.GetBallDrawn(); ballDrawn != nil {
+		log.Printf("球抽取事件 - 號碼: %d", ballDrawn.Ball.Number)
+		d.handleBallDrawEvent(ballDrawn.Ball)
+		return
+	}
+
+	// 檢查額外球抽取事件
+	if extraBall := event.GetExtraBallDrawn(); extraBall != nil {
+		log.Printf("額外球抽取事件 - 號碼: %d", extraBall.Ball.Number)
+		return
+	}
+
+	// 檢查JP球抽取事件
+	if jpBall := event.GetJackpotBallDrawn(); jpBall != nil {
+		log.Printf("JP球抽取事件 - 號碼: %d", jpBall.Ball.Number)
+		return
+	}
+
+	// 檢查幸運球抽取事件
+	if luckyBall := event.GetLuckyBallDrawn(); luckyBall != nil && len(luckyBall.Balls) > 0 {
+		log.Printf("幸運球抽取事件 - 已抽取: %d個", len(luckyBall.Balls))
+		return
+	}
+
+	// 其他事件類型
+	log.Printf("接收到其他類型事件")
+}
+
+// updateGameState 更新自動莊家的遊戲狀態
+func (d *AutoDealer) updateGameState(gameData *dealerpb.GameData) {
+	d.stateMutex.Lock()
+	defer d.stateMutex.Unlock()
+
+	// 更新遊戲階段和ID
+	d.state.currentStage = gameData.Stage
+	d.state.gameID = gameData.GameId
+
+	// 存儲完整的遊戲數據
+	d.state.currentGameData = gameData
+
+	log.Printf("更新遊戲狀態：遊戲階段=%s, 遊戲ID=%s", gameData.Stage.String(), gameData.GameId)
 }
 
 // processStage 根據遊戲階段執行相應操作
@@ -448,11 +354,13 @@ func (d *AutoDealer) processStage() {
 
 			// 啟動一個goroutine來處理新遊戲的開始
 			go func() {
-				// 等待5秒，給系統緩衝時間
+				// 等待15秒（增加等待時間），給系統緩衝時間
+				log.Printf("等待15秒後開始新遊戲...")
 				select {
 				case <-d.ctx.Done():
 					return
-				case <-time.After(5 * time.Second):
+				case <-time.After(15 * time.Second):
+					log.Printf("等待結束，現在開始新遊戲...")
 					// 繼續處理
 				}
 
@@ -462,6 +370,8 @@ func (d *AutoDealer) processStage() {
 				// 開始新遊戲
 				d.startNewGame()
 			}()
+		} else {
+			log.Printf("已有正在進行的新遊戲準備，跳過此次操作...")
 		}
 
 	case commonpb.GameStage_GAME_STAGE_NEW_ROUND:
@@ -489,30 +399,20 @@ func (d *AutoDealer) processStage() {
 		go d.drawRegularBalls()
 
 	case commonpb.GameStage_GAME_STAGE_DRAWING_CLOSE:
-		log.Println("常規球抽取已結束，等待進入額外球階段...")
-		// 這個階段是常規球抽取結束後的過渡階段，無需特別操作，只需記錄日誌
+		log.Println("常規球抽取結束階段...")
+		// 這個階段是中間過渡階段，無需特別操作
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_PREPARE:
-		log.Println("準備額外球階段，等待進入額外球側邊選擇階段...")
-		// 這個階段是額外球準備階段，無需特別操作，只需記錄日誌
+		log.Println("額外球準備階段...")
+		// 這個階段是中間過渡階段，無需特別操作
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_SIDE_SELECT_BETTING_START:
-		log.Println("開始選擇額外球側邊...")
-		// 等待一段時間後選擇額外球側邊
-		go func() {
-			// 等待2秒，模擬選擇時間
-			time.Sleep(2 * time.Second)
-			log.Printf("選擇額外球側邊: %s", d.extraBallSide)
-			d.startDrawingExtraBalls()
-		}()
+		log.Println("額外球選邊開始階段...")
+		// 這個階段等待玩家選邊，無需特別操作
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_SIDE_SELECT_BETTING_CLOSED:
-		log.Println("額外球側邊選擇已關閉，等待進入額外球抽取階段...")
-		// 這個階段是額外球側邊選擇結束後的過渡階段，無需特別操作，只需記錄日誌
-
-	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_WAIT_CLAIM:
-		log.Println("等待額外球聲明階段，等待進入額外球抽取階段...")
-		// 這個階段是額外球聲明階段，無需特別操作，只需記錄日誌
+		log.Println("額外球選邊結束階段...")
+		// 這個階段是中間過渡階段，無需特別操作
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_START:
 		log.Println("開始抽取額外球...")
@@ -520,25 +420,16 @@ func (d *AutoDealer) processStage() {
 		go d.drawExtraBalls()
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_CLOSE:
-		log.Println("額外球抽取已結束，等待進入結算階段...")
-		// 這個階段是額外球抽取結束後的過渡階段，無需特別操作，只需記錄日誌
+		log.Println("額外球抽取結束階段...")
+		// 這個階段是中間過渡階段，無需特別操作
 
 	case commonpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT:
-		log.Println("進入支付結算階段，等待進入幸運球或頭獎階段...")
-		// 這個階段是支付結算階段，無需特別操作，只需記錄日誌
-
-	case commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START:
-		log.Println("開始抽取幸運球...")
-		// 開始抽取幸運球
-		go d.drawLuckyBalls()
-
-	case commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_CLOSED:
-		log.Println("幸運球抽取已結束，等待進入頭獎階段...")
-		// 這個階段是幸運球抽取結束後的過渡階段，無需特別操作，只需記錄日誌
+		log.Println("派彩結算階段...")
+		// 這個階段是中間過渡階段，無需特別操作
 
 	case commonpb.GameStage_GAME_STAGE_JACKPOT_START:
-		log.Println("頭獎階段開始，等待進入頭獎抽取階段...")
-		// 這個階段是頭獎階段開始，無需特別操作，只需記錄日誌
+		log.Println("開始JP遊戲階段...")
+		// 這個階段是中間過渡階段，無需特別操作
 
 	case commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START:
 		log.Println("開始抽取JP球...")
@@ -546,40 +437,37 @@ func (d *AutoDealer) processStage() {
 		go d.drawJPBalls()
 
 	case commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_CLOSED:
-		log.Println("JP球抽取已結束，等待進入頭獎結算階段...")
-		// 這個階段是JP球抽取結束後的過渡階段，無需特別操作，只需記錄日誌
+		log.Println("JP球抽取結束階段...")
+		// 這個階段是中間過渡階段，無需特別操作
 
 	case commonpb.GameStage_GAME_STAGE_JACKPOT_SETTLEMENT:
-		log.Println("進入頭獎結算階段，等待進入遊戲結束階段...")
-		// 這個階段是頭獎結算階段，無需特別操作，只需記錄日誌
+		log.Println("JP結算階段...")
+		// 這個階段是中間過渡階段，無需特別操作
+
+	case commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START:
+		log.Println("開始抽取幸運號碼球...")
+		// 開始抽取幸運號碼球
+		go d.drawLuckyBalls()
+
+	case commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_CLOSED:
+		log.Println("幸運號碼球抽取結束階段...")
+		// 這個階段是中間過渡階段，無需特別操作
 
 	case commonpb.GameStage_GAME_STAGE_GAME_OVER:
-		log.Printf("遊戲已結束，等待 %d 秒後開始新遊戲...", d.config.Timing.GameOverWaitSec)
+		log.Println("遊戲結束階段...")
+		log.Println("遊戲完成，等待10秒後重新開始...")
 
-		// 避免多次啟動新遊戲
-		if !d.state.preparingNewGame {
-			d.state.preparingNewGame = true
-
-			// 啟動一個goroutine來處理新遊戲的開始
-			go func() {
-				// 等待指定的秒數
-				select {
-				case <-d.ctx.Done():
-					return
-				case <-time.After(time.Duration(d.config.Timing.GameOverWaitSec) * time.Second):
-					// 繼續處理
-				}
-
-				// 重置標誌
-				d.state.preparingNewGame = false
-
-				// 開始新遊戲
-				d.startNewGame()
-			}()
-		}
-
-	default:
-		log.Printf("未知的遊戲階段: %s", d.state.currentStage)
+		// 等待10秒再開始新一輪遊戲
+		go func() {
+			select {
+			case <-d.ctx.Done():
+				return
+			case <-time.After(10 * time.Second):
+				log.Println("等待結束，開始檢查是否可以開始新遊戲...")
+				// 不需要主動開始新遊戲，因為服務器會自動創建新遊戲
+				// 我們會透過事件訂閱收到新遊戲的通知
+			}
+		}()
 	}
 }
 
@@ -607,56 +495,26 @@ func (d *AutoDealer) handleBallDrawEvent(ball *dealerpb.Ball) {
 
 // startNewGame 開始一個新的遊戲
 func (d *AutoDealer) startNewGame() {
-	log.Println("嘗試開始新遊戲...")
+	log.Println("開始新遊戲...")
 
-	// 重置遊戲狀態
-	d.state.drawnRegularBalls = d.state.drawnRegularBalls[:0]
-	d.state.drawnExtraBalls = d.state.drawnExtraBalls[:0]
-	d.state.drawnJPBalls = d.state.drawnJPBalls[:0]
-	d.state.drawnLuckyBalls = d.state.drawnLuckyBalls[:0]
+	// 使用StartNewRound接口開始新遊戲
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	// 創建請求
 	req := &dealerpb.StartNewRoundRequest{
 		RoomId: d.roomID,
 	}
 
-	// 設置超時上下文
-	ctx, cancel := context.WithTimeout(d.ctx, 10*time.Second)
-	defer cancel()
-
-	// 嘗試最多3次
-	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		select {
-		case <-d.ctx.Done():
-			log.Println("操作被取消，停止嘗試開始新遊戲")
-			return
-		default:
-			// 繼續嘗試
-		}
-
-		log.Printf("開始新遊戲 (嘗試 %d/3)...", attempt)
-
-		// 發送請求
-		resp, err := d.client.StartNewRound(ctx, req)
-		if err != nil {
-			lastErr = err
-			log.Printf("開始新遊戲失敗: %v, 等待重試...", err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		// 成功啟動新遊戲
-		if resp.GameData != nil {
-			log.Printf("成功啟動新遊戲，遊戲ID: %s", resp.GameData.GameId)
-		} else {
-			log.Println("新遊戲已開始，但未返回遊戲數據")
-		}
+	resp, err := d.client.StartNewRound(ctx, req)
+	if err != nil {
+		log.Printf("開始新遊戲失敗: %v", err)
 		return
 	}
 
-	// 所有嘗試都失敗
-	log.Printf("經過多次嘗試後無法開始新遊戲: %v", lastErr)
+	log.Printf("遊戲創建成功，遊戲ID: %s, 階段: %s", resp.GameData.GameId, resp.GameData.Stage.String())
+
+	// 更新自動莊家的狀態
+	d.updateGameState(resp.GameData)
 }
 
 // startDrawing 開始抽球
@@ -670,8 +528,18 @@ func (d *AutoDealer) startDrawing() {
 func (d *AutoDealer) drawRegularBalls() {
 	log.Println("開始抽取常規球...")
 
+	// 清空已抽球列表，確保每次開始新的抽球流程時使用空列表
+	d.stateMutex.Lock()
+	d.state.drawnRegularBalls = []int32{}
+	d.stateMutex.Unlock()
+
+	// 累積的球列表
+	drawnBalls := []*dealerpb.Ball{}
+	// 已成功抽取的球數
+	successCount := 0
+
 	// 抽取常規球
-	for i := 0; i < d.config.Game.RegularBalls.Count; i++ {
+	for successCount < d.config.Game.RegularBalls.Count {
 		// 檢查是否需要停止
 		select {
 		case <-d.ctx.Done():
@@ -680,30 +548,48 @@ func (d *AutoDealer) drawRegularBalls() {
 			// 繼續執行
 		}
 
-		// 生成一個隨機球號
-		ballNumber := d.generateUniqueBallNumber(d.state.drawnRegularBalls, d.config.Game.RegularBalls.MaxValue)
+		// 生成一個隨機球號 (1-75)
+		ballNumber := d.generateUniqueBallNumber(d.state.drawnRegularBalls, 75)
 
 		// 判斷是否為最後一顆球
-		isLast := i == d.config.Game.RegularBalls.Count-1
+		isLast := successCount == d.config.Game.RegularBalls.Count-1
 
-		// 創建抽球請求
+		// 創建新球
 		ball := &dealerpb.Ball{
-			Number: ballNumber,
-			Type:   dealerpb.BallType_BALL_TYPE_REGULAR,
-			IsLast: isLast,
+			Number:    ballNumber,
+			Type:      dealerpb.BallType_BALL_TYPE_REGULAR,
+			IsLast:    isLast,
+			Timestamp: timestamppb.Now(),
 		}
 
+		// 嘗試添加到累積球列表並發送
+		tempBalls := append([]*dealerpb.Ball{}, drawnBalls...)
+		tempBalls = append(tempBalls, ball)
+
+		// 創建抽球請求（包含所有已抽出的球）
 		req := &dealerpb.DrawBallRequest{
 			RoomId: d.roomID,
-			Balls:  []*dealerpb.Ball{ball},
+			Balls:  tempBalls,
 		}
 
 		// 發送請求
 		resp, err := d.client.DrawBall(d.ctx, req)
 		if err != nil {
-			log.Printf("抽取常規球失敗: %v", err)
-			return
+			// 檢查是否是重複球號錯誤
+			if containsString(err.Error(), "請求中包含重複的球號") {
+				log.Printf("抽取常規球出現重複號碼，略過此號碼: %v", err)
+				// 不增加successCount，重新嘗試
+				continue
+			} else {
+				// 其他錯誤則終止
+				log.Printf("抽取常規球失敗: %v", err)
+				return
+			}
 		}
+
+		// 請求成功，更新正式球列表
+		drawnBalls = tempBalls
+		successCount++
 
 		// 更新遊戲狀態
 		if resp.GameData != nil {
@@ -711,28 +597,33 @@ func (d *AutoDealer) drawRegularBalls() {
 		}
 
 		// 添加到已抽球列表
+		d.stateMutex.Lock()
 		d.state.drawnRegularBalls = append(d.state.drawnRegularBalls, ballNumber)
+		d.stateMutex.Unlock()
 
-		log.Printf("抽取常規球成功，號碼: %d, 是否為最後一顆: %v", ballNumber, isLast)
+		log.Printf("抽取常規球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆球", ballNumber, isLast, len(drawnBalls))
 
 		// 暫停一下，讓球抽取看起來更自然
 		time.Sleep(time.Duration(d.config.Timing.RegularBallIntervalMs) * time.Millisecond)
 	}
 }
 
-// startDrawingExtraBalls 開始抽取額外球
-func (d *AutoDealer) startDrawingExtraBalls() {
-	log.Println("準備抽取額外球...")
-
-	// 抽取額外球無需特別請求，直接等待系統推進到抽額外球階段
-}
-
 // drawExtraBalls 抽取額外球
 func (d *AutoDealer) drawExtraBalls() {
 	log.Println("開始抽取額外球...")
 
+	// 清空已抽球列表
+	d.stateMutex.Lock()
+	d.state.drawnExtraBalls = []int32{}
+	d.stateMutex.Unlock()
+
+	// 累積的球列表
+	drawnBalls := []*dealerpb.Ball{}
+	// 已成功抽取的球數
+	successCount := 0
+
 	// 抽取額外球
-	for i := 0; i < d.config.Game.ExtraBalls.Count; i++ {
+	for successCount < d.config.Game.ExtraBalls.Count {
 		// 檢查是否需要停止
 		select {
 		case <-d.ctx.Done():
@@ -741,31 +632,51 @@ func (d *AutoDealer) drawExtraBalls() {
 			// 繼續執行
 		}
 
-		// 生成一個隨機球號
-		ballNumber := d.generateUniqueBallNumber(d.state.drawnExtraBalls, d.config.Game.ExtraBalls.MaxValue)
+		// 生成一個隨機球號 (1-75)，確保和一般球不重複
+		combinedBalls := append([]int32{}, d.state.drawnRegularBalls...)
+		combinedBalls = append(combinedBalls, d.state.drawnExtraBalls...)
+		ballNumber := d.generateUniqueBallNumber(combinedBalls, 75)
 
 		// 判斷是否為最後一顆球
-		isLast := i == d.config.Game.ExtraBalls.Count-1
+		isLast := successCount == d.config.Game.ExtraBalls.Count-1
 
-		// 創建抽球請求
+		// 創建新球
+		ball := &dealerpb.Ball{
+			Number:    ballNumber,
+			Type:      dealerpb.BallType_BALL_TYPE_EXTRA,
+			IsLast:    isLast,
+			Timestamp: timestamppb.Now(),
+		}
+
+		// 嘗試添加到累積球列表並發送
+		tempBalls := append([]*dealerpb.Ball{}, drawnBalls...)
+		tempBalls = append(tempBalls, ball)
+
+		// 創建抽球請求（包含所有已抽出的球）
 		req := &dealerpb.DrawExtraBallRequest{
 			RoomId: d.roomID,
 			Side:   d.extraBallSide,
-			Balls: []*dealerpb.Ball{
-				{
-					Number: ballNumber,
-					Type:   dealerpb.BallType_BALL_TYPE_EXTRA,
-					IsLast: isLast,
-				},
-			},
+			Balls:  tempBalls,
 		}
 
 		// 發送請求
 		resp, err := d.client.DrawExtraBall(d.ctx, req)
 		if err != nil {
-			log.Printf("抽取額外球失敗: %v", err)
-			return
+			// 檢查是否是重複球號錯誤
+			if containsString(err.Error(), "請求中包含重複的球號") {
+				log.Printf("抽取額外球出現重複號碼，略過此號碼: %v", err)
+				// 不增加successCount，重新嘗試
+				continue
+			} else {
+				// 其他錯誤則終止
+				log.Printf("抽取額外球失敗: %v", err)
+				return
+			}
 		}
+
+		// 請求成功，更新正式球列表
+		drawnBalls = tempBalls
+		successCount++
 
 		// 更新遊戲狀態
 		if resp.GameData != nil {
@@ -773,9 +684,11 @@ func (d *AutoDealer) drawExtraBalls() {
 		}
 
 		// 添加到已抽球列表
+		d.stateMutex.Lock()
 		d.state.drawnExtraBalls = append(d.state.drawnExtraBalls, ballNumber)
+		d.stateMutex.Unlock()
 
-		log.Printf("抽取額外球成功，號碼: %d, 是否為最後一顆: %v", ballNumber, isLast)
+		log.Printf("抽取額外球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆額外球", ballNumber, isLast, len(drawnBalls))
 
 		// 暫停一下，讓球抽取看起來更自然
 		time.Sleep(time.Duration(d.config.Timing.ExtraBallIntervalMs) * time.Millisecond)
@@ -786,8 +699,18 @@ func (d *AutoDealer) drawExtraBalls() {
 func (d *AutoDealer) drawLuckyBalls() {
 	log.Println("開始抽取幸運球...")
 
+	// 清空已抽球列表
+	d.stateMutex.Lock()
+	d.state.drawnLuckyBalls = []int32{}
+	d.stateMutex.Unlock()
+
+	// 累積的球列表
+	drawnBalls := []*dealerpb.Ball{}
+	// 已成功抽取的球數
+	successCount := 0
+
 	// 抽取幸運球
-	for i := 0; i < d.config.Game.LuckyBalls.Count; i++ {
+	for successCount < d.config.Game.LuckyBalls.Count {
 		// 檢查是否需要停止
 		select {
 		case <-d.ctx.Done():
@@ -796,30 +719,48 @@ func (d *AutoDealer) drawLuckyBalls() {
 			// 繼續執行
 		}
 
-		// 生成一個隨機球號
-		ballNumber := d.generateUniqueBallNumber(d.state.drawnLuckyBalls, d.config.Game.LuckyBalls.MaxValue)
+		// 生成一個隨機球號 (1-75)，與其他類型球無關
+		ballNumber := d.generateUniqueBallNumber(d.state.drawnLuckyBalls, 75)
 
 		// 判斷是否為最後一顆球
-		isLast := i == d.config.Game.LuckyBalls.Count-1
+		isLast := successCount == d.config.Game.LuckyBalls.Count-1
 
-		// 創建抽球請求
+		// 創建新球
+		ball := &dealerpb.Ball{
+			Number:    ballNumber,
+			Type:      dealerpb.BallType_BALL_TYPE_LUCKY,
+			IsLast:    isLast,
+			Timestamp: timestamppb.Now(),
+		}
+
+		// 嘗試添加到累積球列表並發送
+		tempBalls := append([]*dealerpb.Ball{}, drawnBalls...)
+		tempBalls = append(tempBalls, ball)
+
+		// 創建抽球請求（包含所有已抽出的球）
 		req := &dealerpb.DrawLuckyBallRequest{
 			RoomId: d.roomID,
-			Balls: []*dealerpb.Ball{
-				{
-					Number: ballNumber,
-					Type:   dealerpb.BallType_BALL_TYPE_LUCKY,
-					IsLast: isLast,
-				},
-			},
+			Balls:  tempBalls,
 		}
 
 		// 發送請求
 		resp, err := d.client.DrawLuckyBall(d.ctx, req)
 		if err != nil {
-			log.Printf("抽取幸運球失敗: %v", err)
-			return
+			// 檢查是否是重複球號錯誤
+			if containsString(err.Error(), "請求中包含重複的球號") {
+				log.Printf("抽取幸運球出現重複號碼，略過此號碼: %v", err)
+				// 不增加successCount，重新嘗試
+				continue
+			} else {
+				// 其他錯誤則終止
+				log.Printf("抽取幸運球失敗: %v", err)
+				return
+			}
 		}
+
+		// 請求成功，更新正式球列表
+		drawnBalls = tempBalls
+		successCount++
 
 		// 更新遊戲狀態
 		if resp.GameData != nil {
@@ -827,9 +768,11 @@ func (d *AutoDealer) drawLuckyBalls() {
 		}
 
 		// 添加到已抽球列表
+		d.stateMutex.Lock()
 		d.state.drawnLuckyBalls = append(d.state.drawnLuckyBalls, ballNumber)
+		d.stateMutex.Unlock()
 
-		log.Printf("抽取幸運球成功，號碼: %d, 是否為最後一顆: %v", ballNumber, isLast)
+		log.Printf("抽取幸運球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆幸運球", ballNumber, isLast, len(drawnBalls))
 
 		// 暫停一下，讓球抽取看起來更自然
 		time.Sleep(time.Duration(d.config.Timing.LuckyBallIntervalMs) * time.Millisecond)
@@ -840,8 +783,18 @@ func (d *AutoDealer) drawLuckyBalls() {
 func (d *AutoDealer) drawJPBalls() {
 	log.Println("開始抽取JP球...")
 
+	// 清空已抽球列表
+	d.stateMutex.Lock()
+	d.state.drawnJPBalls = []int32{}
+	d.stateMutex.Unlock()
+
+	// 累積的球列表
+	drawnBalls := []*dealerpb.Ball{}
+	// 已成功抽取的球數
+	successCount := 0
+
 	// 抽取JP球
-	for i := 0; i < d.config.Game.JackpotBalls.Count; i++ {
+	for successCount < d.config.Game.JackpotBalls.Count {
 		// 檢查是否需要停止
 		select {
 		case <-d.ctx.Done():
@@ -850,30 +803,48 @@ func (d *AutoDealer) drawJPBalls() {
 			// 繼續執行
 		}
 
-		// 生成一個隨機球號
-		ballNumber := d.generateUniqueBallNumber(d.state.drawnJPBalls, d.config.Game.JackpotBalls.MaxValue)
+		// 生成一個隨機球號 (1-75)，與其他類型球無關
+		ballNumber := d.generateUniqueBallNumber(d.state.drawnJPBalls, 75)
 
 		// 判斷是否為最後一顆球
-		isLast := i == d.config.Game.JackpotBalls.Count-1
+		isLast := successCount == d.config.Game.JackpotBalls.Count-1
 
-		// 創建抽球請求
+		// 創建新球
+		ball := &dealerpb.Ball{
+			Number:    ballNumber,
+			Type:      dealerpb.BallType_BALL_TYPE_JACKPOT,
+			IsLast:    isLast,
+			Timestamp: timestamppb.Now(),
+		}
+
+		// 嘗試添加到累積球列表並發送
+		tempBalls := append([]*dealerpb.Ball{}, drawnBalls...)
+		tempBalls = append(tempBalls, ball)
+
+		// 創建抽球請求（包含所有已抽出的球）
 		req := &dealerpb.DrawJackpotBallRequest{
 			RoomId: d.roomID,
-			Balls: []*dealerpb.Ball{
-				{
-					Number: ballNumber,
-					Type:   dealerpb.BallType_BALL_TYPE_JACKPOT,
-					IsLast: isLast,
-				},
-			},
+			Balls:  tempBalls,
 		}
 
 		// 發送請求
 		resp, err := d.client.DrawJackpotBall(d.ctx, req)
 		if err != nil {
-			log.Printf("抽取JP球失敗: %v", err)
-			return
+			// 檢查是否是重複球號錯誤
+			if containsString(err.Error(), "請求中包含重複的球號") {
+				log.Printf("抽取JP球出現重複號碼，略過此號碼: %v", err)
+				// 不增加successCount，重新嘗試
+				continue
+			} else {
+				// 其他錯誤則終止
+				log.Printf("抽取JP球失敗: %v", err)
+				return
+			}
 		}
+
+		// 請求成功，更新正式球列表
+		drawnBalls = tempBalls
+		successCount++
 
 		// 更新遊戲狀態
 		if resp.GameData != nil {
@@ -881,9 +852,11 @@ func (d *AutoDealer) drawJPBalls() {
 		}
 
 		// 添加到已抽球列表
+		d.stateMutex.Lock()
 		d.state.drawnJPBalls = append(d.state.drawnJPBalls, ballNumber)
+		d.stateMutex.Unlock()
 
-		log.Printf("抽取JP球成功，號碼: %d, 是否為最後一顆: %v", ballNumber, isLast)
+		log.Printf("抽取JP球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆JP球", ballNumber, isLast, len(drawnBalls))
 
 		// 暫停一下，讓球抽取看起來更自然
 		time.Sleep(time.Duration(d.config.Timing.JackpotBallIntervalMs) * time.Millisecond)
@@ -912,12 +885,17 @@ func (d *AutoDealer) generateUniqueBallNumber(drawnBalls []int32, maxValue int) 
 	}
 }
 
+// containsString 檢查字符串是否包含特定子字符串
+func containsString(s, substr string) bool {
+	return strings.Contains(s, substr)
+}
+
 // 更新 getConfig 函數來正確返回三個值
 func getConfig() (string, string, string) {
-	// 從環境變數獲取伺服器地址，默認為localhost:8080
+	// 從環境變數獲取伺服器地址，默認為localhost:9100
 	serverAddr := os.Getenv("SERVER_ADDR")
 	if serverAddr == "" {
-		serverAddr = "localhost:8080"
+		serverAddr = "localhost:9100"
 	}
 
 	// 從環境變數獲取房間ID，默認為SG01

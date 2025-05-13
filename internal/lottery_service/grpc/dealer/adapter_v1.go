@@ -67,6 +67,19 @@ func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.
 		a.logger.Info("成功創建新遊戲",
 			zap.String("roomID", roomId),
 			zap.String("gameID", gameID))
+
+		// 成功創建遊戲後，自動推進到下一階段
+		err := a.gameManager.AdvanceStageForRoom(ctx, roomId, true)
+		if err != nil {
+			a.logger.Warn("自動推進遊戲階段失敗，但遊戲已創建",
+				zap.String("roomID", roomId),
+				zap.String("gameID", gameID),
+				zap.Error(err))
+		} else {
+			a.logger.Info("已自動推進遊戲到下一階段",
+				zap.String("roomID", roomId),
+				zap.String("gameID", gameID))
+		}
 	}
 
 	// 獲取當前遊戲數據
@@ -149,12 +162,40 @@ func (a *DealerServiceAdapter) DrawBall(ctx context.Context, req *dealerpb.DrawB
 		return nil, fmt.Errorf("找不到指定房間的遊戲")
 	}
 
-	// 驗證遊戲階段是否適合抽取常規球
+	// 如果當前階段不是抽球階段，嘗試將階段推進到抽球階段
 	if currentGame.CurrentStage != gameflow.StageDrawingStart {
-		a.logger.Warn("遊戲階段不允許抽取常規球",
+		a.logger.Warn("遊戲階段不是抽球階段，嘗試自動轉換階段",
 			zap.String("roomId", roomId),
 			zap.String("currentStage", string(currentGame.CurrentStage)))
-		return nil, fmt.Errorf("遊戲階段不允許抽取常規球，當前階段: %s", currentGame.CurrentStage)
+
+		// 根據當前階段選擇合適的推進方式
+		switch currentGame.CurrentStage {
+		case gameflow.StagePreparation, gameflow.StageNewRound, gameflow.StageCardPurchaseOpen, gameflow.StageCardPurchaseClose:
+			// 從早期階段推進到抽球階段
+			for currentGame.CurrentStage != gameflow.StageDrawingStart {
+				err := a.gameManager.AdvanceStageForRoom(ctx, roomId, true)
+				if err != nil {
+					a.logger.Error("自動推進到抽球階段失敗",
+						zap.String("roomId", roomId),
+						zap.String("currentStage", string(currentGame.CurrentStage)),
+						zap.Error(err))
+					return nil, fmt.Errorf("自動推進到抽球階段失敗: %w", err)
+				}
+
+				// 重新獲取最新的遊戲狀態
+				currentGame = a.gameManager.GetCurrentGameByRoom(roomId)
+				if currentGame == nil {
+					return nil, fmt.Errorf("階段推進後無法獲取遊戲狀態")
+				}
+
+				a.logger.Info("成功將階段推進至",
+					zap.String("roomId", roomId),
+					zap.String("newStage", string(currentGame.CurrentStage)))
+			}
+		default:
+			// 對於其他階段，返回錯誤
+			return nil, fmt.Errorf("遊戲階段不允許抽取常規球，當前階段: %s", currentGame.CurrentStage)
+		}
 	}
 
 	// 處理請求中的球
@@ -1274,19 +1315,26 @@ func (a *DealerServiceAdapter) GetGameStatus(ctx context.Context, req *dealerpb.
 		})
 	}
 
-	// 填充額外球
-	if len(currentGame.ExtraBalls) > 0 {
+	// 填充所有額外球，不只是第一個
+	a.logger.Debug("添加已抽出的額外球到響應中",
+		zap.String("roomID", roomID),
+		zap.Int("extraBallCount", len(currentGame.ExtraBalls)))
+
+	for i, ball := range currentGame.ExtraBalls {
 		// 創建 timestamp proto
-		timestamp := currentGame.ExtraBalls[0].Timestamp
+		timestamp := ball.Timestamp
 		protoTimestamp := &timestamppb.Timestamp{
 			Seconds: timestamp.Unix(),
 			Nanos:   int32(timestamp.Nanosecond()),
 		}
 
+		// 設置 IsLast 標誌，只有最後一個球被標記為最後一個
+		isLast := i == len(currentGame.ExtraBalls)-1
+
 		gameData.ExtraBalls = append(gameData.ExtraBalls, &dealerpb.Ball{
-			Number:    int32(currentGame.ExtraBalls[0].Number),
+			Number:    int32(ball.Number),
 			Type:      dealerpb.BallType_BALL_TYPE_EXTRA,
-			IsLast:    currentGame.ExtraBalls[0].IsLast,
+			IsLast:    isLast,
 			Timestamp: protoTimestamp,
 		})
 	}

@@ -45,7 +45,7 @@ fi
 
 # 編譯程序
 echo -e "${GREEN}編譯自動荷官程序...${NC}"
-go build -o autoDealer main.go
+go build -o autoDealerbinary main.go
 
 # 檢查編譯是否成功
 if [ $? -ne 0 ]; then
@@ -54,12 +54,12 @@ if [ $? -ne 0 ]; then
 fi
 
 # 添加執行權限
-chmod +x autoDealer
+chmod +x autoDealerbinary
 
 echo -e "${GREEN}編譯成功，正在啟動自動荷官...${NC}"
 
 # 運行程序
-SERVER_ADDR=$SERVER_ADDR ROOM_ID=$ROOM_ID CONFIG_FILE=$CONFIG_FILE ./autoDealer
+SERVER_ADDR=$SERVER_ADDR ROOM_ID=$ROOM_ID CONFIG_FILE=$CONFIG_FILE ./autoDealerbinary
 
 # 運行結束後
 echo -e "${GREEN}自動荷官已退出${NC}"
