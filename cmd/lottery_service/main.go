@@ -25,6 +25,9 @@ import (
 // 主函數：使用 fx 框架
 // 測試 air 熱重載功能
 func main() {
+	// 初始化和解析命令行參數，這會將設置與環境變量同步
+	config.InitFlags()
+
 	// 建立 logger
 	logger, err := zap.NewProduction()
 	if err != nil {

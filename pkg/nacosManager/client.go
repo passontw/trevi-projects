@@ -150,26 +150,27 @@ func NewNacosClient(config *NacosConfig) (NacosClient, error) {
 
 // ProvideNacosConfig 提供 Nacos 配置，用於 fx
 func ProvideNacosConfig() *NacosConfig {
-	// 嘗試加載 .env 文件
+	// 嘗試加載 .env 文件，但環境變量已經可能被命令行設置覆蓋
 	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning: .env file not found: %v", err)
+		log.Printf("警告: .env 文件未找到或無法加載: %v", err)
+		log.Printf("這是正常的，如果您使用命令行參數或已設置環境變量")
 	}
 
-	// 從環境變量或其他配置源獲取
+	// 從環境變量獲取配置（可能已經被命令行參數更新）
 	config := &NacosConfig{
 		IpAddr:      getEnv("NACOS_HOST", "127.0.0.1"),
-		Port:        uint64(getEnvAsInt("NACOS_PORT", 8488)),
+		Port:        uint64(getEnvAsInt("NACOS_PORT", 8848)),
 		NamespaceId: getEnv("NACOS_NAMESPACE", "public"),
 		Group:       getEnv("NACOS_GROUP", "DEFAULT_GROUP"),
 		DataId:      getEnv("NACOS_DATAID", "application"),
 		RedisDataId: getEnv("NACOS_REDIS_DATAID", "redisconfig.xml"),
 		LogDir:      "/tmp/nacos/log",
 		CacheDir:    "/tmp/nacos/cache",
-		Username:    getEnv("NACOS_USERNAME", "username"),
-		Password:    getEnv("NACOS_PASSWORD", "password"),
+		Username:    getEnv("NACOS_USERNAME", "nacos"),
+		Password:    getEnv("NACOS_PASSWORD", "nacos"),
 	}
 
-	log.Printf("Nacos Config: Host=%s, Port=%d, Namespace=%s, Group=%s, DataId=%s, RedisDataId=%s",
+	log.Printf("Nacos 配置: Host=%s, Port=%d, Namespace=%s, Group=%s, DataId=%s, RedisDataId=%s",
 		config.IpAddr, config.Port, config.NamespaceId, config.Group, config.DataId, config.RedisDataId)
 
 	return config

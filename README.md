@@ -480,7 +480,93 @@ $ GOOS=windows GOARCH=amd64 go build -o build/lottery_service.exe ./cmd/lottery_
 $ GOOS=darwin GOARCH=amd64 go build -o build/lottery_service ./cmd/lottery_service/main.go
 ```
 
-## 八、總結
+## 八、命令行參數
+
+服務支持通過命令行參數覆蓋配置文件中的設定。所有命令行參數均使用小寫加下劃線的形式，與環境變量名稱對應但採用小寫。
+
+### 基本用法
+
+```bash
+# 基本編譯命令
+go build -o ./build/g38_lottery_service ./cmd/lottery_service/main.go
+
+# 運行時指定參數
+./build/g38_lottery_service --nacos_host="10.1.7.31" --nacos_port="8848"
+```
+
+### 可用參數列表
+
+服務支持以下命令行參數：
+
+#### Nacos 相關配置
+
+| 參數名稱 | 說明 | 默認值 |
+|--------|------|-------|
+| `--nacos_host` | Nacos 服務器主機地址 | 10.1.7.31 |
+| `--nacos_port` | Nacos 服務器端口 | 8848 |
+| `--nacos_namespace` | Nacos 命名空間 | g38_develop_game_service |
+| `--nacos_group` | Nacos 組名 | DEFAULT_GROUP |
+| `--nacos_username` | Nacos 用戶名 | nacos |
+| `--nacos_password` | Nacos 密碼 | nacos |
+| `--nacos_dataid` | Nacos 數據 ID | g38_lottery |
+| `--nacos_redis_dataid` | Nacos Redis 配置數據 ID | redisconfig.xml |
+| `--nacos_tidb_dataid` | Nacos TiDB 配置數據 ID | dbconfig.xml |
+| `--enable_nacos` | 是否啟用 Nacos 配置 | true |
+
+#### 服務設定
+
+| 參數名稱 | 說明 | 默認值 |
+|--------|------|-------|
+| `--service_name` | 服務名稱 | g38_lottery_service |
+| `--service_port` | 服務端口 | 8080 |
+| `--server_mode` | 服務器模式 (dev/prod) | dev |
+| `--log_level` | 日誌級別 | debug |
+
+### 使用範例
+
+```bash
+# 使用默認配置運行
+./build/g38_lottery_service
+
+# 指定 Nacos 主機和端口運行
+./build/g38_lottery_service --nacos_host="10.1.7.31" --nacos_port="8848"
+
+# 完整配置運行示例
+./build/g38_lottery_service \
+  --nacos_host="10.1.7.31" \
+  --nacos_port="8848" \
+  --nacos_namespace="g38_develop_game_service" \
+  --nacos_group="DEFAULT_GROUP" \
+  --nacos_username="nacos" \
+  --nacos_password="nacos" \
+  --nacos_dataid="g38_lottery" \
+  --nacos_redis_dataid="redisconfig.xml" \
+  --nacos_tidb_dataid="dbconfig.xml" \
+  --enable_nacos=true \
+  --service_name="g38_lottery_service" \
+  --service_port="8080" \
+  --server_mode="dev" \
+  --log_level="debug"
+
+# 生產環境示例
+./build/g38_lottery_service --server_mode="prod" --log_level="info"
+
+# 查看幫助信息
+./build/g38_lottery_service --help
+```
+
+### 參數優先級
+
+命令行參數的優先級高於環境變量和配置文件：
+
+1. 命令行參數（最高優先級）
+2. 環境變量
+3. .env 文件中的設定
+4. 代碼中的默認值（最低優先級）
+
+使用命令行參數可以方便地在部署時覆蓋默認設定，特別適合在不同環境中快速切換設定。
+
+## 九、總結
 
 賓果抽球遊戲開獎服務是一個基於Golang開發的高效實時開獎系統，通過WebSocket提供雙向通訊能力，使用Redis進行狀態持久化，使用TiDB進行歷史數據儲存。系統支持完整的賓果球遊戲流程，包括常規球抽取、額外球選邊、JP抽球和幸運號碼管理。
 
