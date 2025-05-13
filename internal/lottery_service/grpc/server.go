@@ -9,12 +9,9 @@ import (
 	"time"
 
 	newdealerpb "g38_lottery_service/internal/generated/api/v1/dealer"
-	newlotterypb "g38_lottery_service/internal/generated/api/v1/lottery"
 	"g38_lottery_service/internal/lottery_service/config"
 	"g38_lottery_service/internal/lottery_service/gameflow"
 	"g38_lottery_service/internal/lottery_service/grpc/dealer"
-	"g38_lottery_service/internal/lottery_service/grpc/lottery"
-	oldpb "g38_lottery_service/internal/lottery_service/proto/generated/dealer"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -25,16 +22,13 @@ import (
 
 // GrpcServer 代表 gRPC 伺服器
 type GrpcServer struct {
-	config         *config.AppConfig
-	logger         *zap.Logger
-	server         *grpc.Server
-	dealerSvc      *dealer.DealerService
-	dealerAdapter  *dealer.DealerServiceAdapter
-	lotteryService *lottery.LotteryService
-	lotteryWrapper *lottery.LotteryServiceWrapper
-	gameManager    *gameflow.GameManager
-	listener       net.Listener
-	started        bool
+	config        *config.AppConfig
+	logger        *zap.Logger
+	server        *grpc.Server
+	dealerAdapter *dealer.DealerServiceAdapter
+	gameManager   *gameflow.GameManager
+	listener      net.Listener
+	started       bool
 }
 
 // NewGrpcServer 創建一個新的 gRPC 伺服器
@@ -63,38 +57,22 @@ func NewGrpcServer(
 		grpc.KeepaliveParams(kasp),
 	)
 
-	// 創建 DealerService 實例
-	dealerSvc := dealer.NewDealerService(logger, gameManager)
-
-	// 創建 DealerServiceAdapter 實例，不再需要傳入 dealerSvc
+	// 創建 DealerServiceAdapter 實例
 	dealerAdapter := dealer.NewDealerServiceAdapter(logger, gameManager)
-
-	// 創建 LotteryService 實例
-	lotteryService := lottery.NewLotteryService(logger, gameManager, dealerSvc)
-
-	// 創建 LotteryServiceWrapper 實例
-	lotteryWrapper := lottery.NewLotteryServiceWrapper(logger, lotteryService)
-
-	// 註冊 DealerService (舊版 API)
-	oldpb.RegisterDealerServiceServer(s, dealerSvc)
 
 	// 註冊新的 API 服務
 	newdealerpb.RegisterDealerServiceServer(s, dealerAdapter)
-	newlotterypb.RegisterLotteryServiceServer(s, lotteryWrapper)
 
 	// 啟用 gRPC 反射，用於服務發現
 	reflection.Register(s)
 
 	return &GrpcServer{
-		config:         config,
-		logger:         logger.Named("grpc_server"),
-		server:         s,
-		dealerSvc:      dealerSvc,
-		dealerAdapter:  dealerAdapter,
-		lotteryService: lotteryService,
-		lotteryWrapper: lotteryWrapper,
-		gameManager:    gameManager,
-		started:        false,
+		config:        config,
+		logger:        logger.Named("grpc_server"),
+		server:        s,
+		dealerAdapter: dealerAdapter,
+		gameManager:   gameManager,
+		started:       false,
 	}
 }
 
