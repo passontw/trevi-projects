@@ -54,7 +54,9 @@ RUN --mount=type=cache,target=/go/mod \
 # 構建應用程序 (使用 -ldflags 減小二進制檔案大小)
 RUN --mount=type=cache,target=/go/mod \
     --mount=type=cache,target=/go/cache \
-    go build -ldflags="-s -w" -o lottery_service ./cmd/lottery_service/main.go
+    BUILD_TIME=$(date +%Y/%m/%d-%H:%M:%S) && \
+    GIT_HASH=$(git rev-parse HEAD) && \
+    go build -ldflags="-s -w -X 'main.GitHash=${GIT_HASH}' -X 'main.BuildTime=${BUILD_TIME}'" -o lottery_service ./cmd/lottery_service/main.go
 
 # 最終階段 - 使用更小的基礎映像
 FROM alpine:3.19

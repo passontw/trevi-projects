@@ -22,6 +22,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// 構建信息，通過 ldflags 在編譯時注入
+var (
+	BuildTime string
+	GitHash   string
+)
+
 // 主函數：使用 fx 框架
 // 測試 air 熱重載功能
 func main() {
@@ -81,6 +87,15 @@ func main() {
 	if err := app.Start(startCtx); err != nil {
 		logger.Fatal("Failed to start application", zap.Error(err))
 	}
+
+	// 應用啟動成功後列印構建信息
+	logger.Info("Lottery service initialized successfully",
+		zap.String("BuildTime", BuildTime),
+		zap.String("GitHash", GitHash),
+		zap.String("nacos_addr", config.Args.NacosHost+":"+config.Args.NacosPort),
+		zap.String("nacos_namespace", config.Args.NacosNamespace),
+		zap.String("nacos_group", config.Args.NacosGroup),
+		zap.String("nacos_dataid", config.Args.NacosDataId))
 
 	// 等待系統信號
 	sig := make(chan os.Signal, 1)
