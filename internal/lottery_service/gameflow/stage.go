@@ -30,6 +30,7 @@ const (
 	StageJackpotDrawingStart     GameStage = "JACKPOT_DRAWING_START"
 	StageJackpotDrawingClosed    GameStage = "JACKPOT_DRAWING_CLOSED"
 	StageJackpotSettlement       GameStage = "JACKPOT_SETTLEMENT"
+	StageLuckyPreparation        GameStage = "LUCKY_PREPARATION"
 	StageDrawingLuckyBallsStart  GameStage = "DRAWING_LUCKY_BALLS_START"
 	StageDrawingLuckyBallsClosed GameStage = "DRAWING_LUCKY_BALLS_CLOSED"
 
@@ -64,7 +65,8 @@ var naturalStageTransition = map[GameStage]GameStage{
 	StageJackpotPreparation:               StageJackpotDrawingStart,
 	StageJackpotDrawingStart:              StageJackpotDrawingClosed,
 	StageJackpotDrawingClosed:             StageJackpotSettlement,
-	StageJackpotSettlement:                StageDrawingLuckyBallsStart,
+	StageJackpotSettlement:                StageLuckyPreparation,
+	StageLuckyPreparation:                 StageDrawingLuckyBallsStart,
 	StageDrawingLuckyBallsStart:           StageDrawingLuckyBallsClosed,
 	StageDrawingLuckyBallsClosed:          StageGameOver,
 	StageGameOver:                         StagePreparation,
@@ -201,6 +203,14 @@ func GetStageConfig(stage GameStage) StageConfig {
 			MaxBalls:       0,
 			AllowCanceling: true,
 		},
+		StageLuckyPreparation: {
+			Timeout:        -1,   // 無限，等待荷官手動觸發
+			RequireDealer:  true, // 需要荷官確認
+			RequireGame:    false,
+			AllowDrawBall:  false,
+			MaxBalls:       0,
+			AllowCanceling: true,
+		},
 		StageDrawingLuckyBallsStart: {
 			Timeout:        -1, // 無限，由荷官控制進度
 			RequireDealer:  true,
@@ -246,7 +256,7 @@ func GetStageConfig(stage GameStage) StageConfig {
 func GetNextStage(currentStage GameStage, hasJackpot bool) GameStage {
 	// 特殊轉換規則
 	if currentStage == StagePayoutSettlement && !hasJackpot {
-		return StageDrawingLuckyBallsStart
+		return StageLuckyPreparation
 	}
 
 	// 使用自然轉換表
@@ -266,12 +276,12 @@ func GetNextStageWithGame(currentStage GameStage, game *GameData, luckyBalls []B
 		if game.HasJackpot || areLuckyBallsDrawn(game, luckyBalls) {
 			return StageJackpotPreparation
 		}
-		return StageGameOver
+		return StageLuckyPreparation
 	}
 
 	// 特殊轉換規則
 	if currentStage == StagePayoutSettlement && !game.HasJackpot {
-		return StageDrawingLuckyBallsStart
+		return StageLuckyPreparation
 	}
 
 	// 使用自然轉換表
@@ -299,12 +309,12 @@ func GetNextStageWithGameDetailed(currentStage GameStage, game *GameData, luckyB
 		if game.HasJackpot || checkResult.AllMatched {
 			return StageJackpotPreparation, checkResult
 		}
-		return StageGameOver, checkResult
+		return StageLuckyPreparation, checkResult
 	}
 
 	// 特殊轉換規則
 	if currentStage == StagePayoutSettlement && !game.HasJackpot {
-		return StageDrawingLuckyBallsStart, nil
+		return StageLuckyPreparation, nil
 	}
 
 	// 使用自然轉換表

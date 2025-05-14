@@ -31,11 +31,12 @@ enum GameStage {
   GAME_STAGE_JACKPOT_DRAWING_START = 15;        // 開始頭獎抽獎
   GAME_STAGE_JACKPOT_DRAWING_CLOSED = 16;       // 關閉頭獎抽獎
   GAME_STAGE_JACKPOT_SETTLEMENT = 17;           // 頭獎結算
-  GAME_STAGE_DRAWING_LUCKY_BALLS_START = 18;    // 開始抽取幸運球
-  GAME_STAGE_DRAWING_LUCKY_BALLS_CLOSED = 19;   // 關閉抽取幸運球
+  GAME_STAGE_LUCKY_PREPARATION = 18;            // 準備幸運球階段
+  GAME_STAGE_DRAWING_LUCKY_BALLS_START = 19;    // 開始抽取幸運球
+  GAME_STAGE_DRAWING_LUCKY_BALLS_CLOSED = 20;   // 關閉抽取幸運球
 
   // 結束階段
-  GAME_STAGE_GAME_OVER = 20;  // 遊戲結束
+  GAME_STAGE_GAME_OVER = 21;  // 遊戲結束
 }
 
 // ExtraBallSide 表示額外球選邊

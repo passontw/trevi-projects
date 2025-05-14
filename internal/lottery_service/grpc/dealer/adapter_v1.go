@@ -1828,6 +1828,8 @@ func (a *DealerServiceAdapter) convertGameflowStageToPb(stage gameflow.GameStage
 		return commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_CLOSED
 	case gameflow.StageJackpotSettlement:
 		return commonpb.GameStage_GAME_STAGE_JACKPOT_SETTLEMENT
+	case gameflow.StageLuckyPreparation:
+		return commonpb.GameStage_GAME_STAGE_LUCKY_PREPARATION
 	case gameflow.StageDrawingLuckyBallsStart:
 		return commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START
 	case gameflow.StageDrawingLuckyBallsClosed:
