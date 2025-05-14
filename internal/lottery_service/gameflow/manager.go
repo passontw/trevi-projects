@@ -3,6 +3,7 @@ package gameflow
 import (
 	"context"
 	"fmt"
+	"g38_lottery_service/internal/lottery_service/mq"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ type GameManager struct {
 	onBallDrawn       func(string, Ball)                 // 球抽取事件的回調
 	onStageChanged    func(string, GameStage, GameStage) // 階段變化事件的回調
 	currentGame       *GameData                          // 向後兼容，使用默認房間的遊戲
+	messageProducer   *mq.MessageProducer                // RocketMQ 生產者
 
 	// 多房間相關配置
 	defaultRoom    string   // 默認房間ID
@@ -41,29 +43,40 @@ type GameManager struct {
 }
 
 // NewGameManager 創建新的遊戲管理器
-func NewGameManager(repo GameRepository, logger *zap.Logger) *GameManager {
+func NewGameManager(repo GameRepository, logger *zap.Logger, messageProducer *mq.MessageProducer) *GameManager {
 	// 遊戲各階段默認時間設置
-	stageTimeDefaults := map[GameStage]time.Duration{
-		StagePreparation:                      24 * time.Hour,   // 準備階段默認24小時
-		StageNewRound:                         10 * time.Second, // 新局階段默認10秒
-		StageCardPurchaseOpen:                 12 * time.Second, // 購買卡片開放階段默認12秒，與GetStageConfig保持一致
-		StageCardPurchaseClose:                10 * time.Second, // 購買卡片結束階段默認10秒
-		StageDrawingStart:                     -1,               // 開始抽球階段，注意：此階段不會自動切換，需要荷官確認後才能進入下一階段
-		StageDrawingClose:                     10 * time.Second, // 結束抽球階段默認10秒
-		StageExtraBallPrepare:                 10 * time.Second, // 額外球準備階段默認10秒
-		StageExtraBallSideSelectBettingStart:  12 * time.Second, // 額外球選邊開始階段默認12秒
-		StageExtraBallSideSelectBettingClosed: 10 * time.Second, // 額外球選邊結束階段默認10秒
-		StageExtraBallWaitClaim:               30 * time.Second, // 額外球等待認領階段默認30秒
-		StageExtraBallDrawingStart:            -1,               // 額外球開始抽取階段，注意：此階段不會自動切換，需要荷官確認後才能進入下一階段
-		StageExtraBallDrawingClose:            10 * time.Second, // 額外球結束抽取階段默認10秒
-		StagePayoutSettlement:                 30 * time.Second, // 派彩結算階段默認30秒
-		StageJackpotPreparation:               30 * time.Second, // JP準備階段默認30秒
-		StageJackpotDrawingStart:              -1,               // JP開始抽球階段，注意：此階段不會自動切換，需要荷官或遊戲端確認（有人中獎）後才能進入下一階段
-		StageJackpotDrawingClosed:             10 * time.Second, // JP結束抽球階段默認10秒
-		StageJackpotSettlement:                30 * time.Second, // JP結算階段默認30秒
-		StageDrawingLuckyBallsStart:           -1,               // 幸運號碼球開始抽取階段，注意：此階段不會自動切換，需要荷官確認後才能進入下一階段
-		StageDrawingLuckyBallsClosed:          10 * time.Second, // 幸運號碼球結束抽取階段默認10秒
-		StageGameOver:                         1 * time.Hour,    // 遊戲結束階段默認1小時
+	// 初始化一個空的 stageTimeDefaults 映射
+	stageTimeDefaults := make(map[GameStage]time.Duration)
+
+	// 定義所有需要設定的階段
+	stages := []GameStage{
+		StagePreparation,
+		StageNewRound,
+		StageCardPurchaseOpen,
+		StageCardPurchaseClose,
+		StageDrawingStart,
+		StageDrawingClose,
+		StageExtraBallPrepare,
+		StageExtraBallSideSelectBettingStart,
+		StageExtraBallSideSelectBettingClosed,
+		StageExtraBallWaitClaim,
+		StageExtraBallDrawingStart,
+		StageExtraBallDrawingClose,
+		StagePayoutSettlement,
+		StageJackpotPreparation,
+		StageJackpotDrawingStart,
+		StageJackpotDrawingClosed,
+		StageJackpotSettlement,
+		StageLuckyPreparation,
+		StageDrawingLuckyBallsStart,
+		StageDrawingLuckyBallsClosed,
+		StageGameOver,
+	}
+
+	// 使用 GetStageConfig 中的 Timeout 填充 stageTimeDefaults
+	for _, stage := range stages {
+		config := GetStageConfig(stage)
+		stageTimeDefaults[stage] = config.Timeout
 	}
 
 	return &GameManager{
@@ -77,6 +90,7 @@ func NewGameManager(repo GameRepository, logger *zap.Logger) *GameManager {
 		defaultRoom:       "SG01",
 		supportedRooms:    []string{"SG01", "SG02"}, // 初始支持的房間列表
 		onBallDrawn:       nil,                      // 初始化為空
+		messageProducer:   messageProducer,          // 儲存 RocketMQ 生產者
 	}
 }
 
@@ -1218,5 +1232,66 @@ func (m *GameManager) handleStageChanged(roomID string, oldStage, newStage GameS
 	// 觸發階段變化事件
 	if m.onStageChanged != nil {
 		m.onStageChanged(game.GameID, oldStage, newStage)
+	}
+
+	// 專門處理 CARD_PURCHASE_CLOSE 和 EXTRA_BALL_SIDE_SELECT_BETTING_CLOSED 階段
+	if newStage == StageCardPurchaseClose || newStage == StageExtraBallSideSelectBettingClosed {
+		m.logger.Info("【重要】檢測到特殊階段變化，但不發送到 RocketMQ",
+			zap.String("gameID", game.GameID),
+			zap.String("roomID", roomID),
+			zap.String("oldStage", string(oldStage)),
+			zap.String("newStage", string(newStage)))
+		return // 直接返回，不發送訊息到 RocketMQ
+	}
+
+	// 發送階段變化消息到 RocketMQ
+	if m.messageProducer != nil && m.messageProducer.IsEnabled() {
+		// 構建遊戲狀態快照
+		gameStatus := BuildGameStatusResponse(game)
+
+		// 將狀態快照轉換為 map
+		statusMap, err := mq.StructToMap(gameStatus)
+		if err != nil {
+			m.logger.Error("無法將遊戲狀態轉換為 map",
+				zap.String("gameID", game.GameID),
+				zap.Error(err))
+		} else {
+			// 準備發送階段變化消息
+			m.logger.Info("準備發送階段變化消息",
+				zap.String("gameID", game.GameID),
+				zap.String("oldStage", string(oldStage)),
+				zap.String("newStage", string(newStage)))
+
+			// 添加階段變化相關資訊
+			payload := map[string]interface{}{
+				"game_id":      game.GameID,
+				"room_id":      roomID,
+				"message_type": "stage_change",
+				"old_stage":    string(oldStage),
+				"new_stage":    string(newStage),
+				"timestamp":    time.Now().Unix(),
+				"game_status":  statusMap,
+			}
+
+			// 發送消息到指定 topic
+			err := m.messageProducer.SendMessage("roommsg_to_livesvr", payload)
+			if err != nil {
+				m.logger.Error("發送階段變化消息失敗",
+					zap.String("gameID", game.GameID),
+					zap.String("topic", "roommsg_to_livesvr"),
+					zap.Error(err))
+			} else {
+				m.logger.Info("已發送階段變化消息",
+					zap.String("gameID", game.GameID),
+					zap.String("topic", "roommsg_to_livesvr"),
+					zap.String("oldStage", string(oldStage)),
+					zap.String("newStage", string(newStage)))
+			}
+		}
+	} else {
+		m.logger.Warn("無法發送階段變化消息，因為 MessageProducer 未啟用或未初始化",
+			zap.String("gameID", game.GameID),
+			zap.String("oldStage", string(oldStage)),
+			zap.String("newStage", string(newStage)))
 	}
 }

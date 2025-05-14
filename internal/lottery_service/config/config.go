@@ -98,6 +98,17 @@ type RocketMQConfig struct {
 	ConsumerGroup string   `json:"consumerGroup"`
 }
 
+// RocketMQXMLConfig 是 RocketMQ XML 配置的結構
+type RocketMQXMLConfig struct {
+	XMLName  xml.Name `xml:"config"`
+	RocketMQ struct {
+		NameSrv struct {
+			Host string `xml:"host,attr"`
+			Port string `xml:"port,attr"`
+		} `xml:"namesrv"`
+	} `xml:"rocketmq"`
+}
+
 // RedisXMLConfig 是 Redis XML 配置的結構
 type RedisXMLConfig struct {
 	XMLName xml.Name `xml:"config"`
@@ -360,6 +371,30 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 				}
 			} else {
 				log.Printf("警告: 從 Nacos 獲取的 TiDB XML 配置為空")
+			}
+		}
+
+		// 獲取 RocketMQ XML 配置
+		rocketMQDataId := getEnv("NACOS_ROCKETMQ_DATAID", "rocketmq.xml")
+		log.Printf("將使用 RocketMQ 配置 DataId: %s", rocketMQDataId)
+
+		if rocketMQDataId != "" {
+			log.Printf("嘗試從 Nacos 獲取 RocketMQ XML 配置 (DataId: %s)...", rocketMQDataId)
+			rocketMQXmlContent, err := nacosClient.GetConfig(rocketMQDataId, config.Nacos.Group)
+			if err != nil {
+				log.Printf("警告: 無法從 Nacos 獲取 RocketMQ XML 配置: %v", err)
+			} else if rocketMQXmlContent != "" {
+				log.Printf("已從 Nacos 獲取 RocketMQ XML 配置，長度: %d 字節", len(rocketMQXmlContent))
+				log.Printf("RocketMQ XML 配置內容摘要: %s", rocketMQXmlContent[:min(100, len(rocketMQXmlContent))])
+
+				// 解析並應用 RocketMQ XML 配置
+				if err := parseRocketMQXmlConfig(rocketMQXmlContent, config); err != nil {
+					log.Printf("警告: 解析 RocketMQ XML 配置失敗: %v", err)
+				} else {
+					log.Printf("成功應用 RocketMQ XML 配置")
+				}
+			} else {
+				log.Printf("警告: 從 Nacos 獲取的 RocketMQ XML 配置為空")
 			}
 		}
 
@@ -1000,6 +1035,44 @@ func parseTiDBXmlConfig(xmlContent string, cfg *AppConfig, serviceName string) e
 			availableServices = append(availableServices, db.Name)
 		}
 		log.Printf("可用的服務名稱: %v", availableServices)
+	}
+
+	return nil
+}
+
+// parseRocketMQXmlConfig 解析 RocketMQ XML 配置
+func parseRocketMQXmlConfig(xmlContent string, cfg *AppConfig) error {
+	var rocketConfig RocketMQXMLConfig
+	if err := xml.Unmarshal([]byte(xmlContent), &rocketConfig); err != nil {
+		return fmt.Errorf("解析 RocketMQ XML 配置失敗: %w", err)
+	}
+
+	// 日誌輸出解析結果
+	log.Printf("從 XML 解析 RocketMQ 配置: Host=%s, Port=%s",
+		rocketConfig.RocketMQ.NameSrv.Host,
+		rocketConfig.RocketMQ.NameSrv.Port)
+
+	// 只有當 host 和 port 都有值時才設置 NameServers
+	if rocketConfig.RocketMQ.NameSrv.Host != "" {
+		host := rocketConfig.RocketMQ.NameSrv.Host
+		port := rocketConfig.RocketMQ.NameSrv.Port
+		if port == "" {
+			port = "9876" // 使用默認端口
+		}
+
+		// 確保配置已初始化
+		if cfg.RocketMQ.NameServers == nil {
+			cfg.RocketMQ.NameServers = make([]string, 0)
+		}
+
+		// 設置 NameServers
+		nameServer := fmt.Sprintf("%s:%s", host, port)
+		cfg.RocketMQ.NameServers = []string{nameServer}
+		cfg.RocketMQ.Enabled = true
+
+		log.Printf("成功設置 RocketMQ NameServer: %s", nameServer)
+	} else {
+		log.Println("RocketMQ XML 配置中未找到 NameServer 主機資訊")
 	}
 
 	return nil

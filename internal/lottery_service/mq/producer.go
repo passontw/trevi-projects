@@ -34,18 +34,28 @@ func init() {
 
 	// 檢查 RocketMQ 配置是否可能有問題
 	hostnames := []string{
-		"172.237.27.51",
 		"localhost",
 		"127.0.0.1",
+		"172.19.0.3",  // Docker 容器 IP
+		"rmq-namesrv", // Docker 服務名稱
+		"rmq-broker",  // Docker 服務名稱
 	}
 
+	// 嘗試連接 NameServer (9876 端口) 和 Broker (10911 端口)
+	ports := []string{"9876", "10911"}
+
 	for _, hostname := range hostnames {
-		// 嘗試建立連接到預設 RocketMQ 端口
-		conn, err := net.DialTimeout("tcp", hostname+":9876", time.Second*1)
-		if err == nil {
-			// 成功建立連接，關閉並返回
-			conn.Close()
-			return
+		for _, port := range ports {
+			// 嘗試建立連接到 RocketMQ 端口
+			address := hostname + ":" + port
+			fmt.Printf("嘗試連接到 RocketMQ: %s\n", address)
+			conn, err := net.DialTimeout("tcp", address, time.Second*2)
+			if err == nil {
+				// 成功建立連接，關閉並返回
+				conn.Close()
+				fmt.Printf("成功連接到 RocketMQ: %s\n", address)
+				return
+			}
 		}
 	}
 
@@ -67,19 +77,29 @@ func NewMessageProducer(logger *zap.Logger, config *config.AppConfig) (*MessageP
 	// 日誌標記
 	l := logger.With(zap.String("component", "rocketmq_producer"))
 
-	// 驗證配置
+	// 日誌輸出當前配置信息
+	if config.RocketMQ.Enabled {
+		l.Info("RocketMQ 已啟用",
+			zap.Strings("nameServers", config.RocketMQ.NameServers),
+			zap.String("producerGroup", config.RocketMQ.ProducerGroup))
+	} else {
+		l.Warn("RocketMQ 未啟用，將以禁用狀態創建生產者")
+		return &MessageProducer{
+			producer: nil,
+			logger:   l,
+			config:   config,
+			disabled: true,
+		}, nil
+	}
+
+	// 測試 NameServers 的連接性
 	if len(config.RocketMQ.NameServers) == 0 {
-		l.Error("RocketMQ NameServers not configured")
+		l.Error("RocketMQ NameServers 配置為空")
 		return nil, fmt.Errorf("RocketMQ NameServers 配置為空")
 	}
 
-	if config.RocketMQ.ProducerGroup == "" {
-		l.Warn("RocketMQ producer group not configured, using default")
-		config.RocketMQ.ProducerGroup = "lottery-producer-group"
-	}
-
-	// 檢查並修正 NameServers 地址格式
-	validNameServers := make([]string, 0, len(config.RocketMQ.NameServers))
+	// 檢查並測試每個 NameServer 的連接
+	workingNameServers := make([]string, 0)
 	for _, server := range config.RocketMQ.NameServers {
 		// 確保地址包含端口
 		if !strings.Contains(server, ":") {
@@ -87,43 +107,90 @@ func NewMessageProducer(logger *zap.Logger, config *config.AppConfig) (*MessageP
 			server = server + ":9876"
 		}
 
-		// 嘗試解析地址
-		host, portStr, err := net.SplitHostPort(server)
-		if err != nil {
-			l.Error("NameServer 地址格式無效", zap.String("server", server), zap.Error(err))
-			continue
-		}
+		// 嘗試連接
+		l.Debug("測試連接到 NameServer", zap.String("address", server))
+		conn, err := net.DialTimeout("tcp", server, time.Second*3)
+		if err == nil {
+			conn.Close()
+			l.Info("成功連接到 NameServer", zap.String("address", server))
+			workingNameServers = append(workingNameServers, server)
+		} else {
+			l.Warn("無法連接到 NameServer", zap.String("server", server), zap.Error(err))
 
-		// 檢查 IP 地址是否有效
-		if net.ParseIP(host) == nil && host != "localhost" {
-			// 嘗試通過 DNS 解析主機名
-			ips, err := net.LookupIP(host)
-			if err != nil || len(ips) == 0 {
-				l.Error("無法解析 NameServer 主機名", zap.String("host", host), zap.Error(err))
+			// 嘗試解析主機名
+			host, portStr, err := net.SplitHostPort(server)
+			if err != nil {
+				l.Error("NameServer 地址格式無效", zap.String("server", server), zap.Error(err))
 				continue
 			}
 
-			// 使用解析後的 IP 地址替換主機名
-			server = ips[0].String() + ":" + portStr
-			l.Info("已將主機名解析為 IP 地址", zap.String("host", host), zap.String("ip", ips[0].String()))
-		}
+			// 嘗試使用 IP 而不是主機名
+			if net.ParseIP(host) == nil && host != "localhost" {
+				// 嘗試通過 DNS 解析主機名
+				ips, err := net.LookupIP(host)
+				if err != nil || len(ips) == 0 {
+					l.Error("無法解析 NameServer 主機名", zap.String("host", host), zap.Error(err))
 
-		validNameServers = append(validNameServers, server)
+					// 嘗試一些可能的主機替代方案
+					alternativeHosts := []string{"localhost", "127.0.0.1", "rmq-namesrv", "rmq-broker"}
+					for _, altHost := range alternativeHosts {
+						altServer := altHost + ":" + portStr
+						l.Debug("嘗試連接到替代 NameServer", zap.String("address", altServer))
+						conn, err := net.DialTimeout("tcp", altServer, time.Second*2)
+						if err == nil {
+							conn.Close()
+							l.Info("成功連接到替代 NameServer", zap.String("address", altServer))
+							workingNameServers = append(workingNameServers, altServer)
+							break
+						}
+					}
+					continue
+				}
+
+				// 使用解析後的 IP 地址替換主機名
+				ipServer := ips[0].String() + ":" + portStr
+				l.Info("已將主機名解析為 IP 地址", zap.String("host", host), zap.String("ip", ips[0].String()))
+
+				// 測試 IP 連接
+				conn, err := net.DialTimeout("tcp", ipServer, time.Second*2)
+				if err == nil {
+					conn.Close()
+					l.Info("成功連接到解析後的 NameServer IP", zap.String("address", ipServer))
+					workingNameServers = append(workingNameServers, ipServer)
+				} else {
+					l.Warn("無法連接到解析後的 NameServer IP", zap.String("server", ipServer), zap.Error(err))
+				}
+			}
+		}
+	}
+
+	// 如果沒有找到可用的 NameServers，嘗試使用本地 localhost:9876
+	if len(workingNameServers) == 0 {
+		localServer := "localhost:9876"
+		l.Debug("嘗試連接到本地 NameServer", zap.String("address", localServer))
+		conn, err := net.DialTimeout("tcp", localServer, time.Second*2)
+		if err == nil {
+			conn.Close()
+			l.Info("成功連接到本地 NameServer", zap.String("address", localServer))
+			workingNameServers = append(workingNameServers, localServer)
+		}
 	}
 
 	// 檢查是否有有效的 NameServers
-	if len(validNameServers) == 0 {
-		l.Error("沒有有效的 RocketMQ NameServers 地址")
-		return nil, fmt.Errorf("沒有有效的 RocketMQ NameServers 地址")
+	if len(workingNameServers) == 0 {
+		l.Error("沒有可用的 RocketMQ NameServers 地址")
+		return nil, fmt.Errorf("沒有可用的 RocketMQ NameServers 地址")
 	}
 
 	// 使用有效的 NameServers 替換原配置
-	config.RocketMQ.NameServers = validNameServers
+	config.RocketMQ.NameServers = workingNameServers
+	l.Info("使用以下有效的 NameServers", zap.Strings("nameServers", config.RocketMQ.NameServers))
 
-	// 日誌信息
-	l.Info("Initializing RocketMQ producer",
-		zap.Strings("nameServers", config.RocketMQ.NameServers),
-		zap.String("producerGroup", config.RocketMQ.ProducerGroup))
+	// 驗證 ProducerGroup 配置
+	if config.RocketMQ.ProducerGroup == "" {
+		l.Warn("RocketMQ producer group not configured, using default")
+		config.RocketMQ.ProducerGroup = "lottery-producer-group"
+	}
 
 	// 創建生產者選項
 	opts := []producer.Option{
@@ -289,6 +356,14 @@ func (p *MessageProducer) SendGameSnapshot(gameID string, snapshot map[string]in
 	})
 }
 
+// IsEnabled 檢查生產者是否啟用
+func (p *MessageProducer) IsEnabled() bool {
+	if p == nil {
+		return false
+	}
+	return !p.disabled && p.producer != nil
+}
+
 // Module 提供 FX 模塊
 var Module = fx.Options(
 	// 註冊 MessageProducer
@@ -301,9 +376,10 @@ var Module = fx.Options(
 			disableRocketMQ := false
 			if v, exists := os.LookupEnv("DISABLE_ROCKETMQ"); exists {
 				disableRocketMQ = strings.ToLower(v) == "true"
+				l.Info("從環境變量檢測到 RocketMQ 設置", zap.Bool("DISABLE_ROCKETMQ", disableRocketMQ))
 			}
 
-			// 如果環境變量中明確禁用，則創建模擬生產者並返回
+			// 環境變量設置優先於配置文件，如果環境變量明確禁用，則忽略配置
 			if disableRocketMQ {
 				l.Warn("DISABLE_ROCKETMQ 環境變量設為 true，RocketMQ 功能已禁用")
 				return &MessageProducer{
@@ -312,6 +388,102 @@ var Module = fx.Options(
 					config:   config,
 					disabled: true,
 				}, nil
+			}
+
+			// 檢查配置中是否啟用 RocketMQ
+			if !config.RocketMQ.Enabled {
+				l.Warn("配置中 RocketMQ 未啟用", zap.Bool("enabled", config.RocketMQ.Enabled))
+				return &MessageProducer{
+					producer: nil,
+					logger:   l,
+					config:   config,
+					disabled: true,
+				}, nil
+			}
+
+			// 檢查 NameServers 配置是否有效
+			if len(config.RocketMQ.NameServers) == 0 {
+				l.Error("RocketMQ NameServers 未配置，將禁用 RocketMQ")
+				return &MessageProducer{
+					producer: nil,
+					logger:   l,
+					config:   config,
+					disabled: true,
+				}, nil
+			}
+
+			// 嘗試檢測可用的 namesrv 和 broker 地址
+			testAddresses := []struct {
+				Type    string
+				Address string
+			}{
+				{"namesrv", "localhost:9876"},
+				{"broker", "localhost:10911"},
+				{"namesrv", "rmq-namesrv:9876"},
+				{"broker", "rmq-broker:10911"},
+				{"namesrv", "172.19.0.2:9876"}, // docker network namesrv
+				{"broker", "172.19.0.3:10911"}, // docker network broker
+			}
+
+			// 添加配置中的 NameServers
+			for _, server := range config.RocketMQ.NameServers {
+				if !strings.Contains(server, ":") {
+					server = server + ":9876" // 添加默認端口
+				}
+				testAddresses = append(testAddresses, struct {
+					Type    string
+					Address string
+				}{"namesrv", server})
+			}
+
+			// 測試連接
+			var namesrvOK, brokerOK bool
+			var workingNamesrv, workingBroker string
+
+			for _, test := range testAddresses {
+				l.Debug("嘗試連接到 "+test.Type, zap.String("address", test.Address))
+
+				conn, err := net.DialTimeout("tcp", test.Address, time.Second*3)
+				if err == nil {
+					conn.Close()
+					l.Info("成功連接到 "+test.Type, zap.String("address", test.Address))
+
+					if test.Type == "namesrv" && !namesrvOK {
+						namesrvOK = true
+						workingNamesrv = test.Address
+					} else if test.Type == "broker" && !brokerOK {
+						brokerOK = true
+						workingBroker = test.Address
+					}
+				} else {
+					l.Debug("無法連接到 "+test.Type,
+						zap.String("address", test.Address),
+						zap.Error(err))
+				}
+			}
+
+			// 檢查連接結果
+			if !namesrvOK {
+				l.Error("無法連接到任何 RocketMQ NameServer，將禁用 RocketMQ")
+				return &MessageProducer{
+					producer: nil,
+					logger:   l,
+					config:   config,
+					disabled: true,
+				}, nil
+			}
+
+			if !brokerOK {
+				l.Warn("成功連接到 NameServer，但無法連接到 Broker，RocketMQ 功能可能受限")
+				l.Info("請確保 broker.conf 中的 brokerIP1 設置正確")
+			}
+
+			// 更新 NameServers 配置
+			config.RocketMQ.NameServers = []string{workingNamesrv}
+			l.Info("將使用以下 NameServer", zap.String("address", workingNamesrv))
+
+			if brokerOK {
+				l.Info("Broker 連接正常", zap.String("address", workingBroker))
 			}
 
 			// 嘗試創建 RocketMQ 生產者
@@ -333,6 +505,7 @@ var Module = fx.Options(
 				}, nil
 			}
 
+			l.Info("RocketMQ 生產者初始化成功")
 			return producer, nil
 		},
 	),
@@ -347,3 +520,13 @@ var Module = fx.Options(
 		})
 	}),
 )
+
+// contains 檢查字符串切片是否包含特定字符串
+func contains(slice []string, str string) bool {
+	for _, item := range slice {
+		if item == str {
+			return true
+		}
+	}
+	return false
+}

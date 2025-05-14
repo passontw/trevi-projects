@@ -3,6 +3,7 @@ package gameflow
 import (
 	"context"
 
+	"g38_lottery_service/internal/lottery_service/mq"
 	"g38_lottery_service/pkg/databaseManager"
 	redis "g38_lottery_service/pkg/redisManager"
 
@@ -31,9 +32,9 @@ func ProvideGameRepository(compositeRepo *CompositeRepository) GameRepository {
 }
 
 // ProvideGameManager 提供遊戲流程管理器
-func ProvideGameManager(repo GameRepository, logger *zap.Logger) (*GameManager, error) {
+func ProvideGameManager(repo GameRepository, logger *zap.Logger, messageProducer *mq.MessageProducer) (*GameManager, error) {
 	// 創建管理器
-	manager := NewGameManager(repo, logger)
+	manager := NewGameManager(repo, logger, messageProducer)
 	return manager, nil
 }
 

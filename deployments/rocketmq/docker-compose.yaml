@@ -59,7 +59,7 @@ services:
     platform: linux/amd64
     container_name: rmq-dashboard
     ports:
-      - "8080:8080"
+      - "18080:8080"
     environment:
       - JAVA_OPTS=-Drocketmq.namesrv.addr=namesrv:9876 -Dcom.rocketmq.sendMessageWithVIPChannel=false
     depends_on:
