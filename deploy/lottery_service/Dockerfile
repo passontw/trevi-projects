@@ -14,6 +14,10 @@ ENV GO111MODULE=on \
     # 平行下載以提高速度
     GOMAXPROCS=8
 
+# 增加構建參數來接收 Git 相關信息
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
 # 安裝必要工具 (合併命令減少層數)
 RUN --mount=type=cache,target=/var/cache/apt \
     apt-get update && \
@@ -54,9 +58,7 @@ RUN --mount=type=cache,target=/go/mod \
 # 構建應用程序 (使用 -ldflags 減小二進制檔案大小)
 RUN --mount=type=cache,target=/go/mod \
     --mount=type=cache,target=/go/cache \
-    BUILD_TIME=$(date +%Y/%m/%d-%H:%M:%S) && \
-    GIT_HASH=$(git rev-parse HEAD) && \
-    go build -ldflags="-s -w -X 'main.GitHash=${GIT_HASH}' -X 'main.BuildTime=${BUILD_TIME}'" -o lottery_service ./cmd/lottery_service/main.go
+    go build -ldflags="-s -w -X 'main.GitHash=${GIT_COMMIT}' -X 'main.BuildTime=${BUILD_TIME}'" -o lottery_service ./cmd/lottery_service/main.go
 
 # 最終階段 - 使用更小的基礎映像
 FROM alpine:3.19

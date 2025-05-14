@@ -206,9 +206,19 @@ pipeline {
                     env.LATEST_IMAGE_NAME = "${env.HARBOR_REGISTRY}/${env.HARBOR_PROJECT}/${env.IMAGE_NAME}:latest"
                     echo "Building image: ${env.FULL_IMAGE_NAME}"
                     
+                    // 獲取 Git Commit 和構建時間
+                    def gitCommit = sh(script: "git rev-parse HEAD", returnStdout: true).trim()
+                    def buildTime = sh(script: "date +%Y/%m/%d-%H:%M:%S", returnStdout: true).trim()
+                    
+                    echo "Git Commit: ${gitCommit}"
+                    echo "Build Time: ${buildTime}"
+                    
                     // 使用 --no-cache 選項確保每次構建都是乾淨的，並啟用詳細輸出
+                    // 添加構建參數將 Git Commit ID 傳入 Docker 構建
                     sh """
                         docker build -t ${env.FULL_IMAGE_NAME} . -f ${env.DOCKERFILE_PATH} \\
+                            --build-arg GIT_COMMIT="${gitCommit}" \\
+                            --build-arg BUILD_TIME="${buildTime}" \\
                             --no-cache --progress=plain
                     """
                     
