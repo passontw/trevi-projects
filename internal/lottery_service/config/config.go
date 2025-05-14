@@ -447,7 +447,6 @@ func createDefaultConfig() *AppConfig {
 	}
 }
 
-
 // restoreWebSocketPorts 恢復 WebSocket 端口和 gRPC 端口
 func restoreWebSocketPorts(config *AppConfig, dealerWsPort int, grpcPort int, apiPort int) {
 	// 檢查荷官WebSocket端口是否需要恢復
