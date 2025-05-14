@@ -59,14 +59,15 @@ type GameData struct {
 	RegularBalls []Ball    `json:"regular_balls"`      // 常規球
 	ExtraBalls   []Ball    `json:"extra_balls"`        // 額外球
 
-	SelectedSide   ExtraBallSide `json:"selected_side"`     // 選擇的額外球一側
-	ExtraBallCount int           `json:"extra_ball_count"`  // 額外球數量，範圍是1~3
-	HasJackpot     bool          `json:"has_jackpot"`       // 是否有JP
-	Jackpot        *JackpotGame  `json:"jackpot,omitempty"` // JP遊戲數據
-	IsCancelled    bool          `json:"is_cancelled"`      // 是否已取消
-	CancelReason   string        `json:"cancel_reason"`     // 取消原因
-	CancelTime     time.Time     `json:"cancel_time"`       // 取消時間
-	LastUpdateTime time.Time     `json:"last_update_time"`  // 最後更新時間
+	SelectedSide    ExtraBallSide `json:"selected_side"`     // 選擇的額外球一側
+	ExtraBallCount  int           `json:"extra_ball_count"`  // 額外球數量，範圍是1~3
+	HasJackpot      bool          `json:"has_jackpot"`       // 是否有JP
+	Jackpot         *JackpotGame  `json:"jackpot,omitempty"` // JP遊戲數據
+	IsCancelled     bool          `json:"is_cancelled"`      // 是否已取消
+	CancelReason    string        `json:"cancel_reason"`     // 取消原因
+	CancelTime      time.Time     `json:"cancel_time"`       // 取消時間
+	LastUpdateTime  time.Time     `json:"last_update_time"`  // 最後更新時間
+	StageExpireTime time.Time     `json:"stage_expire_time"` // 當前階段預期結束時間
 }
 
 // 建立一個新的遊戲

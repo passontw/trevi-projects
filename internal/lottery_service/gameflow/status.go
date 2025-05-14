@@ -28,10 +28,11 @@ type GameStatusGameInfo struct {
 }
 
 type GameStatusTimeline struct {
-	CurrentTime    string `json:"currentTime"`
-	StateStartTime string `json:"stateStartTime"`
-	RemainingTime  int    `json:"remainingTime"`
-	MaxTimeout     int    `json:"maxTimeout"`
+	CurrentTime     string `json:"currentTime"`
+	StateStartTime  string `json:"stateStartTime"`
+	RemainingTime   int    `json:"remainingTime"`
+	MaxTimeout      int    `json:"maxTimeout"`
+	StageExpireTime string `json:"stageExpireTime"` // ISO8601格式的階段過期時間
 }
 
 type GameStatusDrawnBall struct {
@@ -142,11 +143,39 @@ func BuildGameStatusResponse(game *GameData) *GameStatusResponse {
 	var totalWin int64 = 0
 
 	// 6. Timeline
+	now := time.Now()
+	var remainingTime int
+	var stageExpireTimeStr string
+
+	// 處理階段過期時間
+	if !game.StageExpireTime.IsZero() {
+		stageExpireTimeStr = game.StageExpireTime.Format(time.RFC3339)
+
+		// 計算剩餘時間（秒）
+		if game.StageExpireTime.After(now) {
+			remainingTime = int(time.Until(game.StageExpireTime).Seconds())
+		} else {
+			remainingTime = 0
+		}
+	} else {
+		// 如果沒有設置過期時間，使用默認值
+		stageExpireTimeStr = ""
+		remainingTime = 0
+	}
+
+	// 獲取該階段的最大超時時間（以秒為單位）
+	config := GetStageConfig(game.CurrentStage)
+	maxTimeout := 0
+	if config.Timeout > 0 {
+		maxTimeout = int(config.Timeout.Seconds())
+	}
+
 	timeline := GameStatusTimeline{
-		CurrentTime:    time.Now().Format(time.RFC3339),
-		StateStartTime: game.LastUpdateTime.Format(time.RFC3339),
-		RemainingTime:  0, // TODO: 計算剩餘秒數
-		MaxTimeout:     0, // TODO: 取自階段設定
+		CurrentTime:     now.Format(time.RFC3339),
+		StateStartTime:  game.LastUpdateTime.Format(time.RFC3339),
+		RemainingTime:   remainingTime,
+		MaxTimeout:      maxTimeout,
+		StageExpireTime: stageExpireTimeStr,
 	}
 
 	// 7. GameInfo

@@ -24,6 +24,7 @@ type GameModel struct {
 	JackpotAmount         float64    `gorm:"column:jackpot_amount;type:decimal(18,2);default:0"`
 	ExtraBallCount        int        `gorm:"column:extra_ball_count;type:int;not null;default:3"`
 	CurrentStateStartTime time.Time  `gorm:"column:current_state_start_time;type:timestamp;not null"`
+	StageExpireTime       *time.Time `gorm:"column:stage_expire_time;type:timestamp;null"`
 	MaxTimeout            int        `gorm:"column:max_timeout;type:int;not null;default:60"`
 	TotalCards            int        `gorm:"column:total_cards;type:int;default:0"`
 	TotalPlayers          int        `gorm:"column:total_players;type:int;default:0"`
@@ -34,8 +35,11 @@ type GameModel struct {
 	CancelledBy           string     `gorm:"column:cancelled_by;type:varchar(50);null"`
 	CancelReason          string     `gorm:"column:cancel_reason;type:varchar(255);null"`
 	GameSnapshot          string     `gorm:"column:game_snapshot;type:json;null"`
-	CreatedAt             time.Time  `gorm:"column:created_at;type:timestamp;not null;default:CURRENT_TIMESTAMP"`
-	UpdatedAt             time.Time  `gorm:"column:updated_at;type:timestamp;not null;default:CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"`
+
+	// GORM 默認字段
+	CreatedAt time.Time  `gorm:"column:created_at;type:timestamp;not null"`
+	UpdatedAt time.Time  `gorm:"column:updated_at;type:timestamp;not null"`
+	DeletedAt *time.Time `gorm:"column:deleted_at;type:timestamp;null"`
 }
 
 // 設置表名
@@ -490,6 +494,7 @@ func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID strin
 	// 構建遊戲數據
 	game := &GameData{
 		GameID:         gameModel.GameID,
+		RoomID:         gameModel.RoomID,
 		CurrentStage:   GameStage(gameModel.State),
 		StartTime:      gameModel.StartTime,
 		HasJackpot:     gameModel.HasJackpot,
@@ -508,6 +513,11 @@ func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID strin
 	// 設置取消時間
 	if gameModel.CancelTime != nil {
 		game.CancelTime = *gameModel.CancelTime
+	}
+
+	// 設置階段過期時間
+	if gameModel.StageExpireTime != nil {
+		game.StageExpireTime = *gameModel.StageExpireTime
 	}
 
 	// 創建 Jackpot 結構體 (如果需要)
@@ -586,6 +596,11 @@ func convertGameDataToGameModel(game *GameData) GameModel {
 
 	if !game.CancelTime.IsZero() {
 		model.CancelTime = &game.CancelTime
+	}
+
+	// 設置階段過期時間
+	if !game.StageExpireTime.IsZero() {
+		model.StageExpireTime = &game.StageExpireTime
 	}
 
 	// 統計數據預設為0，實際應用中可根據需要從其他地方獲取

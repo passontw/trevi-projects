@@ -27,7 +27,7 @@ enum GameStage {
 
   // 派彩與JP流程階段
   GAME_STAGE_PAYOUT_SETTLEMENT = 13;            // 派彩結算
-  GAME_STAGE_JACKPOT_START = 14;                // 開始頭獎
+  GAME_STAGE_JACKPOT_PREPARATION = 14;          // JP準備階段
   GAME_STAGE_JACKPOT_DRAWING_START = 15;        // 開始頭獎抽獎
   GAME_STAGE_JACKPOT_DRAWING_CLOSED = 16;       // 關閉頭獎抽獎
   GAME_STAGE_JACKPOT_SETTLEMENT = 17;           // 頭獎結算

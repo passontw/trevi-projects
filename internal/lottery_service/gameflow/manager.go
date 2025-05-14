@@ -29,6 +29,7 @@ type GameManager struct {
 	currentGames      map[string]*GameData               // 以房間ID為鍵的遊戲映射
 	gameTimers        map[string]*time.Timer             // 以遊戲ID為鍵的計時器映射
 	stageTimeDefaults map[GameStage]time.Duration        // 各階段默認時間
+	stageTargetTimes  map[string]time.Time               // 以遊戲ID為鍵的目標時間戳映射
 	onGameCreated     func(string)                       // 遊戲創建時的回調
 	onGameCancelled   func(string, string)               // 遊戲取消時的回調
 	onGameOver        func(string)                       // 遊戲結束時的回調
@@ -87,6 +88,7 @@ func NewGameManager(repo GameRepository, logger *zap.Logger, messageProducer *mq
 		currentGames:      make(map[string]*GameData),
 		gameTimers:        make(map[string]*time.Timer),
 		stageTimeDefaults: stageTimeDefaults,
+		stageTargetTimes:  make(map[string]time.Time),
 		defaultRoom:       "SG01",
 		supportedRooms:    []string{"SG01", "SG02"}, // 初始支持的房間列表
 		onBallDrawn:       nil,                      // 初始化為空
@@ -146,6 +148,9 @@ func (m *GameManager) Start(ctx context.Context) error {
 
 	// 確保所有房間都已初始化，這裡會再次檢查並完成未初始化的房間
 	m.ensureAllRoomsInitialized(ctx)
+
+	// 啟動定時檢查過期階段的機制
+	go m.startStageExpirationChecker(ctx)
 
 	// 輸出初始化狀態總結
 	m.logInitializationSummary()
@@ -657,6 +662,17 @@ func (m *GameManager) setupTimerForGame(ctx context.Context, game *GameData, roo
 	// 創建定時器ID
 	timerID := fmt.Sprintf("%s_%s", roomID, game.GameID)
 
+	// 計算目標過期時間
+	targetExpireTime := time.Now().Add(duration)
+
+	// 保存到時間戳映射
+	m.stageMutex.Lock()
+	m.stageTargetTimes[game.GameID] = targetExpireTime
+
+	// 更新遊戲的 StageExpireTime
+	game.StageExpireTime = targetExpireTime
+	m.stageMutex.Unlock()
+
 	// 如果已存在計時器，先取消它
 	if existingTimer, exists := m.gameTimers[timerID]; exists {
 		existingTimer.Stop()
@@ -673,7 +689,7 @@ func (m *GameManager) setupTimerForGame(ctx context.Context, game *GameData, roo
 		zap.String("gameID", game.GameID),
 		zap.String("stage", string(game.CurrentStage)),
 		zap.Duration("duration", duration),
-		zap.String("expectedExpiry", time.Now().Add(duration).Format(time.RFC3339)))
+		zap.String("expectedExpiry", targetExpireTime.Format(time.RFC3339)))
 
 	timer := time.AfterFunc(duration, func() {
 		// 創建獨立的上下文，不受原始請求上下文的影響
@@ -735,6 +751,14 @@ func (m *GameManager) setupTimerForGame(ctx context.Context, game *GameData, roo
 		zap.String("roomID", roomID),
 		zap.String("gameID", game.GameID),
 		zap.String("timerID", timerID))
+
+	// 儲存更新後的遊戲資料（包含 StageExpireTime）
+	if err := m.repo.SaveGame(ctx, game); err != nil {
+		m.logger.Error("保存遊戲過期時間失敗",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.Error(err))
+	}
 }
 
 // prepareForNextGameInRoom 為特定房間準備下一局遊戲
@@ -1294,4 +1318,107 @@ func (m *GameManager) handleStageChanged(roomID string, oldStage, newStage GameS
 			zap.String("oldStage", string(oldStage)),
 			zap.String("newStage", string(newStage)))
 	}
+}
+
+// startStageExpirationChecker 啟動階段過期檢查器
+func (m *GameManager) startStageExpirationChecker(ctx context.Context) {
+	m.logger.Info("啟動階段過期檢查器")
+
+	// 每秒檢查一次過期階段
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			m.logger.Info("階段過期檢查器停止")
+			return
+		case <-ticker.C:
+			m.checkAndUpdateExpiredStages(ctx)
+		}
+	}
+}
+
+// checkAndUpdateExpiredStages 檢查並更新過期的階段
+func (m *GameManager) checkAndUpdateExpiredStages(ctx context.Context) {
+	now := time.Now()
+	m.stageMutex.RLock()
+
+	// 檢查所有房間的當前遊戲
+	for roomID, game := range m.currentGames {
+		// 如果遊戲處於 GameOver 或 Preparation 階段，跳過
+		if game.CurrentStage == StageGameOver || game.CurrentStage == StagePreparation {
+			continue
+		}
+
+		// 檢查是否有過期時間
+		if game.StageExpireTime.IsZero() {
+			continue
+		}
+
+		// 如果階段已過期，釋放讀鎖並嘗試更新階段
+		if now.After(game.StageExpireTime) {
+			m.stageMutex.RUnlock()
+
+			m.logger.Info("檢測到階段過期，嘗試自動推進階段",
+				zap.String("roomID", roomID),
+				zap.String("gameID", game.GameID),
+				zap.String("stage", string(game.CurrentStage)),
+				zap.String("expireTime", game.StageExpireTime.Format(time.RFC3339)),
+				zap.String("currentTime", now.Format(time.RFC3339)))
+
+			// 使用獨立的上下文來推進階段
+			advanceCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+			// 定義重試邏輯的函數
+			retryAdvanceStage := func() error {
+				// 添加重試邏輯
+				maxRetries := 3
+				var lastErr error
+
+				for attempt := 1; attempt <= maxRetries; attempt++ {
+					// 推進到下一階段
+					if err := m.AdvanceStageForRoom(advanceCtx, roomID, true); err != nil {
+						lastErr = err
+						m.logger.Warn("推進階段失敗，準備重試",
+							zap.String("roomID", roomID),
+							zap.String("gameID", game.GameID),
+							zap.Int("attempt", attempt),
+							zap.Int("maxRetries", maxRetries),
+							zap.Error(err))
+
+						// 如果不是最後一次嘗試，稍等一下再重試
+						if attempt < maxRetries {
+							time.Sleep(time.Duration(attempt*200) * time.Millisecond)
+							continue
+						}
+						return fmt.Errorf("重試 %d 次後，推進階段仍然失敗: %w", maxRetries, lastErr)
+					}
+					// 成功推進階段，跳出循環
+					m.logger.Info("成功推進階段",
+						zap.String("roomID", roomID),
+						zap.String("gameID", game.GameID),
+						zap.Int("attempt", attempt))
+					return nil
+				}
+				return lastErr
+			}
+
+			// 執行重試邏輯
+			if err := retryAdvanceStage(); err != nil {
+				m.logger.Error("經過多次重試後，自動推進階段失敗",
+					zap.String("roomID", roomID),
+					zap.String("gameID", game.GameID),
+					zap.Error(err))
+			}
+
+			cancel()
+
+			// 重新獲取讀鎖並繼續檢查其他遊戲
+			m.stageMutex.RLock()
+			continue
+		}
+	}
+
+	m.stageMutex.RUnlock()
 }

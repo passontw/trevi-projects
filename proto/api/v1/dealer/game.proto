@@ -26,12 +26,13 @@ message GameData {
   string cancel_reason = 13;             // 取消原因
   google.protobuf.Timestamp cancel_time = 14;    // 取消時間
   google.protobuf.Timestamp last_update_time = 15; // 最後更新時間
+  google.protobuf.Timestamp stage_expire_time = 16; // 當前階段預期結束時間
   
   // 額外一些必要的欄位，可以用於相容現有代碼
-  GameStatus status = 16;                // 遊戲狀態
-  int64 created_at = 17;                 // 創建時間（Unix 時間戳）
-  int64 updated_at = 18;                 // 更新時間（Unix 時間戳）
-  string dealer_id = 19;                 // 莊家ID
+  GameStatus status = 17;                // 遊戲狀態
+  int64 created_at = 18;                 // 創建時間（Unix 時間戳）
+  int64 updated_at = 19;                 // 更新時間（Unix 時間戳）
+  string dealer_id = 20;                 // 莊家ID
 }
 
 // JackpotGame 代表樂透遊戲的大獎相關資訊
