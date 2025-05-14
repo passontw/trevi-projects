@@ -47,7 +47,7 @@ func InitFlags() {
 	flag.StringVar(&Args.NacosGroup, "nacos_group", getEnv("NACOS_GROUP", "DEFAULT_GROUP"), "Nacos group")
 	flag.StringVar(&Args.NacosUsername, "nacos_username", getEnv("NACOS_USERNAME", "nacos"), "Nacos username")
 	flag.StringVar(&Args.NacosPassword, "nacos_password", getEnv("NACOS_PASSWORD", "nacos"), "Nacos password")
-	flag.StringVar(&Args.NacosDataId, "nacos_dataid", getEnv("NACOS_DATAID", "g38_lottery"), "Nacos data ID")
+	flag.StringVar(&Args.NacosDataId, "nacos_dataid", getEnv("NACOS_DATAID", "lotterysvr.xml"), "Nacos data ID")
 	flag.StringVar(&Args.NacosRedisDataId, "nacos_redis_dataid", getEnv("NACOS_REDIS_DATAID", "redisconfig.xml"), "Nacos Redis config data ID")
 	flag.StringVar(&Args.NacosTidbDataId, "nacos_tidb_dataid", getEnv("NACOS_TIDB_DATAID", "dbconfig.xml"), "Nacos TiDB config data ID")
 

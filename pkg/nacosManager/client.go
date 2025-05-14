@@ -162,7 +162,7 @@ func ProvideNacosConfig() *NacosConfig {
 		Port:        uint64(getEnvAsInt("NACOS_PORT", 8848)),
 		NamespaceId: getEnv("NACOS_NAMESPACE", "public"),
 		Group:       getEnv("NACOS_GROUP", "DEFAULT_GROUP"),
-		DataId:      getEnv("NACOS_DATAID", "application"),
+		DataId:      getEnv("NACOS_DATAID", "lotterysvr.xml"),
 		RedisDataId: getEnv("NACOS_REDIS_DATAID", "redisconfig.xml"),
 		LogDir:      "/tmp/nacos/log",
 		CacheDir:    "/tmp/nacos/cache",
