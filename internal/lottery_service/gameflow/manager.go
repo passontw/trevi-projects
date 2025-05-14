@@ -493,20 +493,8 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 					zap.Ints("extraBalls", extraBallNumbers),
 					zap.Int("jackpotAmount", 500000)) // 使用默認值
 
-				// 設置 JP 相關資訊到 Jackpot 字段
-				if game.Jackpot == nil {
-					game.Jackpot = &JackpotGame{
-						ID:         fmt.Sprintf("jp_%s", uuid.New().String()),
-						StartTime:  time.Now(),
-						DrawnBalls: make([]Ball, 0),
-						LuckyBalls: make([]Ball, 0),
-						Amount:     500000,
-						Active:     true,
-					}
-				}
-				// 更新 JP 信息
-				game.Jackpot.Active = true
-				game.Jackpot.Amount = 500000
+				// 將 Jackpot.Active 設置為 true，初始化會在 StageJackpotPreparation 階段進行
+				game.HasJackpot = true
 			} else {
 				m.logger.Info("幸運球檢查完成，未符合 Jackpot 條件",
 					zap.String("roomID", roomID),
@@ -516,6 +504,41 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 					zap.Ints("extraBalls", extraBallNumbers))
 			}
 		}
+	} else if previousStage == StageJackpotPreparation {
+		// 初始化 Jackpot，此時已知 Jackpot 條件已符合
+		if game.HasJackpot {
+			// 設置 JP 相關資訊到 Jackpot 字段
+			if game.Jackpot == nil {
+				game.Jackpot = &JackpotGame{
+					ID:         fmt.Sprintf("jp_%s", uuid.New().String()),
+					StartTime:  time.Now(),
+					DrawnBalls: make([]Ball, 0),
+					LuckyBalls: make([]Ball, 0),
+					Amount:     500000,
+					Active:     true,
+				}
+			} else {
+				// 更新 JP 信息
+				game.Jackpot.Active = true
+				game.Jackpot.Amount = 500000
+			}
+
+			// 保存 Jackpot 信息到 Redis
+			if err := m.repo.SaveGame(ctx, game); err != nil {
+				m.logger.Error("保存 Jackpot 信息到 Redis 失敗",
+					zap.String("roomID", roomID),
+					zap.String("gameID", game.GameID),
+					zap.Error(err))
+			} else {
+				m.logger.Info("已初始化 Jackpot 並保存到 Redis",
+					zap.String("roomID", roomID),
+					zap.String("gameID", game.GameID),
+					zap.String("jackpotID", game.Jackpot.ID),
+					zap.Int("jackpotAmount", int(game.Jackpot.Amount)))
+			}
+		}
+
+		nextStage = GetNextStage(previousStage, game.HasJackpot)
 	} else {
 		// 其他階段使用標準轉換
 		nextStage = GetNextStage(previousStage, game.HasJackpot)
@@ -991,16 +1014,9 @@ func (m *GameManager) UpdateJackpotBalls(ctx context.Context, roomID string, bal
 		return err
 	}
 
-	// 確保 Jackpot 存在
+	// 確保 Jackpot 已初始化
 	if game.Jackpot == nil {
-		game.Jackpot = &JackpotGame{
-			ID:         fmt.Sprintf("jackpot_%s", time.Now().Format("20060102150405")),
-			StartTime:  time.Now(),
-			DrawnBalls: make([]Ball, 0),
-			LuckyBalls: make([]Ball, 0),
-			Active:     true,
-			Amount:     500000, // 默認JP金額
-		}
+		return fmt.Errorf("Jackpot 尚未初始化，請確保在 StageJackpotPreparation 階段已正確初始化")
 	}
 
 	// 檢查是否重複

@@ -59,4 +59,4 @@ tmp/
 # 忽略所有 .pb.go 文件
 *.pb.go
 
-
+autoDealerbinary

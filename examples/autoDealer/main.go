@@ -504,11 +504,12 @@ func (d *AutoDealer) processStage() {
 
 	case commonpb.GameStage_GAME_STAGE_LUCKY_PREPARATION:
 		log.Println("幸運球準備階段，等待3秒...")
-		// 這個階段是中間過渡階段，等待3秒後自動推進到抽取階段
+		// 這個階段是中間過渡階段，等待3秒後主動觸發幸運球抽取階段
 		go func() {
 			time.Sleep(3 * time.Second)
-			log.Println("幸運球準備階段結束，等待進入幸運球抽取階段...")
-			// 系統會自動進入幸運球抽取階段
+			log.Println("幸運球準備階段結束，主動觸發幸運球抽取階段...")
+			// 主動調用API來進入幸運球抽取階段
+			d.startDrawLuckyBalls()
 		}()
 
 	case commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START:
@@ -631,7 +632,32 @@ func (d *AutoDealer) drawRegularBalls() {
 		}
 
 		// 生成一個隨機球號 (1-75)
-		ballNumber := d.generateUniqueBallNumber(d.state.drawnRegularBalls, 75)
+		ballNumber := d.generateUniqueBallNumber(d.state.drawnRegularBalls, d.config.Game.RegularBalls.MaxValue)
+
+		// 檢查是否生成成功
+		if ballNumber == -1 {
+			log.Printf("無法生成不重複的常規球號，可能已達到最大數量或系統出錯，中止抽球")
+
+			// 如果已經抽出至少一個球，將最後一個設置為最後一顆球
+			if len(drawnBalls) > 0 {
+				log.Printf("將已抽出的 %d 個常規球中的最後一個設置為最後一顆", len(drawnBalls))
+				drawnBalls[len(drawnBalls)-1].IsLast = true
+
+				// 發送更新請求
+				req := &dealerpb.DrawBallRequest{
+					RoomId: d.roomID,
+					Balls:  drawnBalls,
+				}
+
+				if _, err := d.client.DrawBall(d.ctx, req); err != nil {
+					log.Printf("更新最後一個常規球狀態失敗: %v", err)
+				} else {
+					log.Printf("已成功將常規球 %d 標記為最後一顆", drawnBalls[len(drawnBalls)-1].Number)
+				}
+			}
+
+			return
+		}
 
 		// 判斷是否為最後一顆球
 		isLast := successCount == d.config.Game.RegularBalls.Count-1
@@ -695,7 +721,7 @@ func (d *AutoDealer) drawRegularBalls() {
 		d.state.drawnRegularBalls = append(d.state.drawnRegularBalls, ballNumber)
 		d.stateMutex.Unlock()
 
-		log.Printf("抽取常規球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆球", ballNumber, isLast, len(drawnBalls))
+		log.Printf("抽取常規球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆常規球", ballNumber, isLast, len(drawnBalls))
 
 		// 如果這是最後一顆球，則不再抽取更多球
 		if isLast {
@@ -745,7 +771,33 @@ func (d *AutoDealer) drawExtraBalls() {
 		// 生成一個隨機球號 (1-75)，確保和一般球不重複
 		combinedBalls := append([]int32{}, d.state.drawnRegularBalls...)
 		combinedBalls = append(combinedBalls, d.state.drawnExtraBalls...)
-		ballNumber := d.generateUniqueBallNumber(combinedBalls, 75)
+		ballNumber := d.generateUniqueBallNumber(combinedBalls, d.config.Game.ExtraBalls.MaxValue)
+
+		// 檢查是否生成成功
+		if ballNumber == -1 {
+			log.Printf("無法生成不重複的額外球號，可能已達到最大數量或系統出錯，中止抽球")
+
+			// 如果已經抽出至少一個球，將最後一個設置為最後一顆球
+			if len(drawnBalls) > 0 {
+				log.Printf("將已抽出的 %d 個額外球中的最後一個設置為最後一顆", len(drawnBalls))
+				drawnBalls[len(drawnBalls)-1].IsLast = true
+
+				// 發送更新請求
+				req := &dealerpb.DrawExtraBallRequest{
+					RoomId: d.roomID,
+					Side:   d.extraBallSide,
+					Balls:  drawnBalls,
+				}
+
+				if _, err := d.client.DrawExtraBall(d.ctx, req); err != nil {
+					log.Printf("更新最後一個額外球狀態失敗: %v", err)
+				} else {
+					log.Printf("已成功將額外球 %d 標記為最後一顆", drawnBalls[len(drawnBalls)-1].Number)
+				}
+			}
+
+			return
+		}
 
 		// 判斷是否為最後一顆球
 		isLast := successCount == d.config.Game.ExtraBalls.Count-1
@@ -827,18 +879,57 @@ func (d *AutoDealer) drawExtraBalls() {
 func (d *AutoDealer) drawLuckyBalls() {
 	log.Println("開始抽取幸運球...")
 
-	// 清空已抽球列表
+	// 檢查遊戲階段是否適合抽取幸運球
 	d.stateMutex.Lock()
-	d.state.drawnLuckyBalls = []int32{}
+	currentStage := d.state.currentStage
 	d.stateMutex.Unlock()
 
-	// 累積的球列表
-	drawnBalls := []*dealerpb.Ball{}
-	// 已成功抽取的球數
-	successCount := 0
+	if currentStage != commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START {
+		log.Printf("當前階段不是抽取幸運球階段: %s", currentStage.String())
+		return
+	}
 
-	// 抽取幸運球
-	for successCount < d.config.Game.LuckyBalls.Count {
+	// 獲取當前已抽球數量
+	d.stateMutex.Lock()
+	currentDrawnCount := len(d.state.drawnLuckyBalls)
+	hasLastBall := false
+
+	// 檢查是否已有最後一顆球
+	if d.state.currentGameData != nil && d.state.currentGameData.Jackpot != nil {
+		for _, ball := range d.state.currentGameData.Jackpot.LuckyBalls {
+			if ball.IsLast {
+				hasLastBall = true
+				break
+			}
+		}
+	}
+	d.stateMutex.Unlock()
+
+	// 如果已經完成所有抽球或已有最後一顆球，則直接返回
+	if currentDrawnCount >= d.config.Game.LuckyBalls.Count || hasLastBall {
+		log.Printf("幸運球已抽取完成：當前數量=%d，已有最後一球=%v", currentDrawnCount, hasLastBall)
+		return
+	}
+
+	log.Printf("當前已抽取 %d 個幸運球，目標數量: %d", currentDrawnCount, d.config.Game.LuckyBalls.Count)
+
+	// 創建一個映射來追蹤所有已嘗試和已存在的球號
+	attemptedNumbers := make(map[int32]bool)
+	existingNumbers := make(map[int32]bool)
+
+	// 記錄已存在的幸運球號碼
+	d.stateMutex.Lock()
+	for _, ballNum := range d.state.drawnLuckyBalls {
+		existingNumbers[ballNum] = true
+	}
+	d.stateMutex.Unlock()
+
+	// 計算還需要抽取的球數量
+	remainingBalls := d.config.Game.LuckyBalls.Count - currentDrawnCount
+	log.Printf("準備抽取剩餘 %d 個幸運球", remainingBalls)
+
+	// 抽取剩餘的幸運球
+	for i := 0; i < remainingBalls; i++ {
 		// 檢查是否需要停止
 		select {
 		case <-d.ctx.Done():
@@ -847,7 +938,7 @@ func (d *AutoDealer) drawLuckyBalls() {
 			// 繼續執行
 		}
 
-		// 檢查遊戲階段是否仍然是抽球階段
+		// 再次檢查遊戲階段是否仍然是抽球階段
 		d.stateMutex.Lock()
 		currentStage := d.state.currentStage
 		d.stateMutex.Unlock()
@@ -857,39 +948,67 @@ func (d *AutoDealer) drawLuckyBalls() {
 			return
 		}
 
-		// 生成一個隨機球號 (1-75)，與其他類型球無關
-		ballNumber := d.generateUniqueBallNumber(d.state.drawnLuckyBalls, 75)
+		// 確定是否為最後一個球
+		isLast := (i == remainingBalls-1)
 
-		// 判斷是否為最後一顆球
-		isLast := successCount == d.config.Game.LuckyBalls.Count-1
+		// 生成一個隨機球號，確保不與已有的球號重複
+		var ballNumber int32
+		maxAttempts := d.config.Game.LuckyBalls.MaxValue // 最多嘗試所有可能的球號
 
-		// 創建新球
-		ball := &dealerpb.Ball{
-			Number:    ballNumber,
-			Type:      dealerpb.BallType_BALL_TYPE_LUCKY,
-			IsLast:    isLast,
-			Timestamp: timestamppb.Now(),
+		// 嘗試生成不重複的球號
+		for attempts := 0; attempts < maxAttempts; attempts++ {
+			// 生成1至MaxValue的隨機數
+			newBallNumber := int32(rand.Intn(d.config.Game.LuckyBalls.MaxValue) + 1)
+
+			// 確保不與已有球號重複且未嘗試過
+			if !existingNumbers[newBallNumber] && !attemptedNumbers[newBallNumber] {
+				ballNumber = newBallNumber
+				break
+			}
+
+			// 標記該球號已被嘗試
+			attemptedNumbers[newBallNumber] = true
+
+			// 如果已嘗試了所有可能的球號
+			if len(attemptedNumbers) >= d.config.Game.LuckyBalls.MaxValue {
+				log.Printf("警告：已嘗試所有可能的球號，無法找到不重複的幸運球號")
+				return
+			}
 		}
 
-		// 嘗試添加到累積球列表並發送
-		tempBalls := append([]*dealerpb.Ball{}, drawnBalls...)
-		tempBalls = append(tempBalls, ball)
+		// 如果無法生成有效的球號
+		if ballNumber == 0 {
+			log.Printf("無法生成不重複的幸運球號，請檢查邏輯")
+			return
+		}
 
-		// 創建抽球請求（包含所有已抽出的球）
+		// 創建請求
 		req := &dealerpb.DrawLuckyBallRequest{
 			RoomId: d.roomID,
-			Balls:  tempBalls,
+			Balls: []*dealerpb.Ball{
+				{
+					Number:    ballNumber,
+					Type:      dealerpb.BallType_BALL_TYPE_LUCKY,
+					IsLast:    isLast,
+					Timestamp: timestamppb.Now(),
+				},
+			},
 		}
+
+		log.Printf("抽取幸運球: %d, isLast=%v", ballNumber, isLast)
 
 		// 發送請求
 		resp, err := d.client.DrawLuckyBall(d.ctx, req)
 		if err != nil {
-			// 檢查是否是重複球號錯誤
-			if containsString(err.Error(), "請求中包含重複的球號") {
-				log.Printf("抽取幸運球出現重複號碼，略過此號碼: %v", err)
-				// 不增加successCount，重新嘗試
+			// 檢查是否是球號重複的錯誤
+			if strings.Contains(err.Error(), "重複") {
+				log.Printf("球號 %d 重複，嘗試另一個球號: %v", ballNumber, err)
+				// 標記這個球號為已存在，避免再次嘗試
+				existingNumbers[ballNumber] = true
+				// 減少計數器，以便重新嘗試這個位置
+				i--
 				continue
-			} else if containsString(err.Error(), "當前階段") && containsString(err.Error(), "不允許替換球") {
+			} else if strings.Contains(err.Error(), "階段") || strings.Contains(err.Error(), "狀態") {
 				// 階段已經變更，停止抽球
 				log.Printf("遊戲階段已變更，無法繼續抽球: %v", err)
 				return
@@ -900,37 +1019,34 @@ func (d *AutoDealer) drawLuckyBalls() {
 			}
 		}
 
-		// 請求成功，更新正式球列表
-		drawnBalls = tempBalls
-		successCount++
-
 		// 更新遊戲狀態
-		if resp.GameData != nil {
+		if resp != nil && resp.GameData != nil {
+			d.updateGameState(resp.GameData)
+			log.Printf("成功抽取幸運球 %d，當前已有 %d 個幸運球",
+				ballNumber, len(resp.GameData.Jackpot.LuckyBalls))
+
+			// 標記這個球號為已存在
+			existingNumbers[ballNumber] = true
+
+			// 將球號添加到已抽取列表
 			d.stateMutex.Lock()
-			d.state.currentStage = resp.GameData.Stage
+			d.state.drawnLuckyBalls = append(d.state.drawnLuckyBalls, ballNumber)
 			d.stateMutex.Unlock()
 
-			// 檢查是否階段已變更
+			// 如果階段已經改變，結束抽取
 			if resp.GameData.Stage != commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START {
-				log.Printf("抽球後遊戲階段已變更為 %s，停止抽取幸運球", resp.GameData.Stage.String())
+				log.Printf("遊戲階段已改變為 %s，停止抽取幸運球", resp.GameData.Stage.String())
+				return
+			}
+
+			// 如果是最後一個球，結束抽取
+			if isLast {
+				log.Printf("最後一個幸運球已抽取完成")
 				return
 			}
 		}
 
-		// 添加到已抽球列表
-		d.stateMutex.Lock()
-		d.state.drawnLuckyBalls = append(d.state.drawnLuckyBalls, ballNumber)
-		d.stateMutex.Unlock()
-
-		log.Printf("抽取幸運球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆幸運球", ballNumber, isLast, len(drawnBalls))
-
-		// 如果這是最後一顆球，則不再抽取更多球
-		if isLast {
-			log.Println("已抽取完最後一顆幸運球，完成抽球流程")
-			return
-		}
-
-		// 暫停一下，讓球抽取看起來更自然
+		// 抽球間隔
 		time.Sleep(time.Duration(d.config.Timing.LuckyBallIntervalMs) * time.Millisecond)
 	}
 }
@@ -970,7 +1086,32 @@ func (d *AutoDealer) drawJPBalls() {
 		}
 
 		// 生成一個隨機球號 (1-75)，與其他類型球無關
-		ballNumber := d.generateUniqueBallNumber(d.state.drawnJPBalls, 75)
+		ballNumber := d.generateUniqueBallNumber(d.state.drawnJPBalls, d.config.Game.JackpotBalls.MaxValue)
+
+		// 檢查是否生成成功
+		if ballNumber == -1 {
+			log.Printf("無法生成不重複的JP球號，可能已達到最大數量或系統出錯，中止抽球")
+
+			// 如果已經抽出至少一個球，將最後一個設置為最後一顆球
+			if len(drawnBalls) > 0 {
+				log.Printf("將已抽出的 %d 個JP球中的最後一個設置為最後一顆", len(drawnBalls))
+				drawnBalls[len(drawnBalls)-1].IsLast = true
+
+				// 發送更新請求
+				req := &dealerpb.DrawJackpotBallRequest{
+					RoomId: d.roomID,
+					Balls:  drawnBalls,
+				}
+
+				if _, err := d.client.DrawJackpotBall(d.ctx, req); err != nil {
+					log.Printf("更新最後一個JP球狀態失敗: %v", err)
+				} else {
+					log.Printf("已成功將JP球 %d 標記為最後一顆", drawnBalls[len(drawnBalls)-1].Number)
+				}
+			}
+
+			return
+		}
 
 		// 判斷是否為最後一顆球
 		isLast := successCount == d.config.Game.JackpotBalls.Count-1
@@ -1049,24 +1190,45 @@ func (d *AutoDealer) drawJPBalls() {
 
 // generateUniqueBallNumber 生成一個不重複的球號
 func (d *AutoDealer) generateUniqueBallNumber(drawnBalls []int32, maxValue int) int32 {
-	for {
+	// 檢查是否所有數字都已經被抽出（無法生成新的不重複數字）
+	if len(drawnBalls) >= maxValue {
+		log.Printf("警告：所有可用的球號 (1-%d) 已經被抽完，無法生成新的不重複球號", maxValue)
+		return -1 // 返回一個特殊值表示無法生成
+	}
+
+	// 創建一個已抽出球號的映射，用於快速檢查
+	drawnMap := make(map[int32]bool)
+	for _, ball := range drawnBalls {
+		drawnMap[ball] = true
+	}
+
+	// 最多嘗試次數，避免無限循環
+	maxAttempts := maxValue * 2
+	attempts := 0
+
+	for attempts < maxAttempts {
 		// 生成一個1到maxValue的隨機數
 		n := int32(rand.Intn(maxValue) + 1)
 
-		// 檢查是否已經抽過
-		exists := false
-		for _, ball := range drawnBalls {
-			if ball == n {
-				exists = true
-				break
-			}
-		}
-
-		// 如果不重複，返回這個數
-		if !exists {
+		// 使用映射檢查是否已抽過，比循環檢查更高效
+		if !drawnMap[n] {
 			return n
 		}
+
+		attempts++
 	}
+
+	// 如果多次嘗試後仍未找到不重複的數字，改用順序查找方法
+	log.Printf("警告：隨機生成不重複球號失敗，嘗試順序查找可用球號...")
+	for i := int32(1); i <= int32(maxValue); i++ {
+		if !drawnMap[i] {
+			return i
+		}
+	}
+
+	// 理論上不會執行到這裡，因為之前已經檢查過是否所有數字都被抽出
+	log.Printf("嚴重錯誤：無法生成不重複的球號（1-%d），可能存在邏輯錯誤", maxValue)
+	return -1
 }
 
 // containsString 檢查字符串是否包含特定子字符串

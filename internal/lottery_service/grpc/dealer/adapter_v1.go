@@ -980,20 +980,36 @@ func (a *DealerServiceAdapter) DrawLuckyBall(ctx context.Context, req *dealerpb.
 		}
 	}
 
+	// 創建一個映射來存儲現有的幸運球號碼，用於檢查重複
+	existingLuckyBallNumbers := make(map[int]bool)
+	if currentGame.Jackpot != nil {
+		for _, ball := range currentGame.Jackpot.LuckyBalls {
+			existingLuckyBallNumbers[ball.Number] = true
+		}
+	}
+
 	// 處理預定義球或生成隨機球
 	if req.Balls != nil && len(req.Balls) > 0 {
 		a.logger.Info("檢測到請求中包含預定義的幸運球",
 			zap.Int("球數量", len(req.Balls)),
 			zap.String("roomID", roomID))
 
-		// 檢查預定義球是否有重複球號
-		numberSet := make(map[int]bool)
+		// 檢查預定義球是否有重複球號（內部檢查）
+		newBallNumberSet := make(map[int]bool)
 		for _, ball := range req.Balls {
 			num := int(ball.Number)
-			if numberSet[num] {
+
+			// 檢查球號是否在請求內部重複
+			if newBallNumberSet[num] {
 				return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("預定義球中包含重複球號: %d", num))
 			}
-			numberSet[num] = true
+
+			// 檢查球號是否與現有幸運球重複
+			if existingLuckyBallNumbers[num] {
+				return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("球號 %d 與已存在的幸運球重複", num))
+			}
+
+			newBallNumberSet[num] = true
 		}
 
 		// 檢查是否超過最大球數
@@ -1025,6 +1041,9 @@ func (a *DealerServiceAdapter) DrawLuckyBall(ctx context.Context, req *dealerpb.
 					zap.Error(err))
 				return nil, fmt.Errorf("添加預定義幸運球失敗: %w", err)
 			}
+
+			// 將成功添加的球號添加到現有球號集合中
+			existingLuckyBallNumbers[ball.Number] = true
 		}
 
 		// 檢查是否有 isLast 為 true 的球，如果有，自動進入下一階段
@@ -1062,6 +1081,25 @@ func (a *DealerServiceAdapter) DrawLuckyBall(ctx context.Context, req *dealerpb.
 			return nil, fmt.Errorf("生成隨機數失敗: %w", err)
 		}
 		ballNumber := int(n.Int64()) + 1
+
+		// 嘗試找到一個不重複的球號
+		maxAttempts := 75 // 最多嘗試75次（所有可能的球號）
+		attempts := 0
+		for existingLuckyBallNumbers[ballNumber] && attempts < maxAttempts {
+			n, err := rand.Int(rand.Reader, big.NewInt(75))
+			if err != nil {
+				a.logger.Error("生成隨機數失敗", zap.Error(err))
+				return nil, fmt.Errorf("生成隨機數失敗: %w", err)
+			}
+			ballNumber = int(n.Int64()) + 1
+			attempts++
+		}
+
+		// 如果嘗試了所有可能的球號仍找不到不重複的球號
+		if existingLuckyBallNumbers[ballNumber] {
+			a.logger.Error("無法生成不重複的幸運球號", zap.Int("attempts", attempts))
+			return nil, fmt.Errorf("無法生成不重複的幸運球號，已嘗試 %d 次", attempts)
+		}
 
 		// 檢查是否是最後一個幸運號碼球
 		isLast := false

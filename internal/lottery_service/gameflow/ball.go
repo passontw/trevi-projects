@@ -198,17 +198,9 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 		if game.CurrentStage != StageJackpotDrawingStart {
 			return nil, fmt.Errorf("Jackpot球只能在 %s 階段抽取", StageJackpotDrawingStart)
 		}
-		// 確保 Jackpot 存在
+		// 確保 Jackpot 已初始化
 		if game.Jackpot == nil {
-			// 如果 Jackpot 不存在，初始化它
-			game.Jackpot = &JackpotGame{
-				ID:         fmt.Sprintf("jackpot_%s", time.Now().Format("20060102150405")),
-				StartTime:  time.Now(),
-				DrawnBalls: make([]Ball, 0),
-				LuckyBalls: make([]Ball, 0),
-				Active:     true,
-				Amount:     500000, // 默認JP金額
-			}
+			return nil, fmt.Errorf("Jackpot 尚未初始化，請確保在 StageJackpotPreparation 階段已正確初始化")
 		}
 		if IsBallDuplicate(number, game.Jackpot.DrawnBalls) {
 			return nil, fmt.Errorf("重複的Jackpot球號: %d", number)
@@ -218,15 +210,9 @@ func AddBall(game *GameData, number int, ballType BallType, isLast bool) (*Ball,
 		if game.CurrentStage != StageDrawingLuckyBallsStart {
 			return nil, fmt.Errorf("幸運號碼球只能在 %s 階段抽取", StageDrawingLuckyBallsStart)
 		}
-		// 幸運號碼球現在應該直接添加到 Jackpot.LuckyBalls
+		// 確保 Jackpot 已初始化
 		if game.Jackpot == nil {
-			// 如果 Jackpot 不存在，初始化它
-			game.Jackpot = &JackpotGame{
-				ID:         fmt.Sprintf("jackpot_%s", time.Now().Format("20060102150405")),
-				StartTime:  time.Now(),
-				LuckyBalls: make([]Ball, 0),
-				DrawnBalls: make([]Ball, 0),
-			}
+			return nil, fmt.Errorf("Jackpot 尚未初始化，無法添加幸運號碼球，請確保在 StageJackpotPreparation 階段已正確初始化")
 		}
 		if IsBallDuplicate(number, game.Jackpot.LuckyBalls) {
 			return nil, fmt.Errorf("重複的幸運號碼球號: %d", number)

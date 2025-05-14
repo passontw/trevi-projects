@@ -8,7 +8,6 @@ import (
 
 	"g38_lottery_service/pkg/databaseManager"
 
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -532,14 +531,9 @@ func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID strin
 			game.ExtraBalls = append(game.ExtraBalls, gameBall)
 		case "JACKPOT":
 			gameBall.Type = BallTypeJackpot
-			// 如果遊戲有JP，初始化Jackpot結構
+			// 如果遊戲有JP，但 Jackpot 為 nil，返回錯誤
 			if game.HasJackpot && game.Jackpot == nil {
-				game.Jackpot = &JackpotGame{
-					ID:         fmt.Sprintf("jackpot_%s", uuid.New().String()),
-					StartTime:  game.StartTime,
-					DrawnBalls: make([]Ball, 0),
-					LuckyBalls: make([]Ball, 0),
-				}
+				return nil, fmt.Errorf("遊戲有 Jackpot 標記，但 Jackpot 結構未初始化")
 			}
 			// 將JP球加入到Jackpot的DrawnBalls中
 			if game.Jackpot != nil {
@@ -557,15 +551,10 @@ func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID strin
 		}
 	}
 
-	// 如果有幸運號碼球，確保 Jackpot 存在並添加幸運球
+	// 如果有幸運號碼球，確保 Jackpot 存在
 	if len(luckyBalls) > 0 {
 		if game.Jackpot == nil {
-			game.Jackpot = &JackpotGame{
-				ID:         fmt.Sprintf("jackpot_%s", uuid.New().String()),
-				StartTime:  game.StartTime,
-				DrawnBalls: make([]Ball, 0),
-				LuckyBalls: make([]Ball, 0),
-			}
+			return nil, fmt.Errorf("發現幸運號碼球，但 Jackpot 結構未初始化")
 		}
 		game.Jackpot.LuckyBalls = luckyBalls
 	}
