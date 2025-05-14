@@ -462,7 +462,7 @@ func (d *AutoDealer) processStage() {
 			// 系統會自動進入下一階段
 		}()
 
-	case commonpb.GameStage_GAME_STAGE_JACKPOT_START:
+	case commonpb.GameStage_GAME_STAGE_JACKPOT_PREPARATION:
 		log.Println("JP準備階段...")
 		// 播放開始JP遊戲動效（停留3秒）+ 看JP卡倒數計時（停留5秒）
 		go func() {
@@ -474,8 +474,10 @@ func (d *AutoDealer) processStage() {
 			log.Println("JP卡倒數計時...")
 			time.Sleep(5 * time.Second)
 
-			log.Println("JP準備階段結束，等待進入JP抽球階段...")
-			// 系統會自動進入JP抽球階段
+			log.Println("JP準備階段結束，準備調用 StartJackpotRound 啟動頭獎回合...")
+
+			// 調用 StartJackpotRound 啟動頭獎回合
+			d.startJackpotRound()
 		}()
 
 	case commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START:
@@ -1278,6 +1280,30 @@ func (d *AutoDealer) startDrawLuckyBalls() {
 	}
 
 	log.Printf("幸運球階段開始成功，當前階段: %s", resp.GameData.Stage.String())
+
+	// 更新自動莊家的狀態
+	d.updateGameState(resp.GameData)
+}
+
+// startJackpotRound 開始頭獎回合
+func (d *AutoDealer) startJackpotRound() {
+	log.Println("開始頭獎回合...")
+
+	// 使用StartJackpotRound接口開始頭獎回合
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req := &dealerpb.StartJackpotRoundRequest{
+		RoomId: d.roomID,
+	}
+
+	resp, err := d.client.StartJackpotRound(ctx, req)
+	if err != nil {
+		log.Printf("開始頭獎回合失敗: %v", err)
+		return
+	}
+
+	log.Printf("頭獎回合開始成功，當前階段: %s", resp.GameData.Stage.String())
 
 	// 更新自動莊家的狀態
 	d.updateGameState(resp.GameData)
