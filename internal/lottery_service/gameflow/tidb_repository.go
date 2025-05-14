@@ -37,9 +37,8 @@ type GameModel struct {
 	GameSnapshot          string     `gorm:"column:game_snapshot;type:json;null"`
 
 	// GORM 默認字段
-	CreatedAt time.Time  `gorm:"column:created_at;type:timestamp;not null"`
-	UpdatedAt time.Time  `gorm:"column:updated_at;type:timestamp;not null"`
-	DeletedAt *time.Time `gorm:"column:deleted_at;type:timestamp;null"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamp;not null"`
+	UpdatedAt time.Time `gorm:"column:updated_at;type:timestamp;not null"`
 }
 
 // 設置表名
@@ -500,7 +499,7 @@ func (r *TiDBRepository) rebuildGameDataFromDB(ctx context.Context, gameID strin
 		HasJackpot:     gameModel.HasJackpot,
 		IsCancelled:    gameModel.Cancelled,
 		CancelReason:   gameModel.CancelReason,
-		LastUpdateTime: gameModel.UpdatedAt,
+		LastUpdateTime: gameModel.CurrentStateStartTime,
 		RegularBalls:   make([]Ball, 0),
 		ExtraBalls:     make([]Ball, 0),
 	}
@@ -585,8 +584,8 @@ func convertGameDataToGameModel(game *GameData) GameModel {
 		MaxTimeout:            60, // 默認值，可根據實際情況調整
 		Cancelled:             game.IsCancelled,
 		CancelReason:          game.CancelReason,
-		CreatedAt:             game.StartTime,
-		UpdatedAt:             game.LastUpdateTime,
+		CreatedAt:             game.StartTime,      // 設置創建時間為遊戲開始時間
+		UpdatedAt:             game.LastUpdateTime, // 設置更新時間為最後更新時間
 	}
 
 	// 設置非必需欄位

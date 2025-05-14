@@ -1169,14 +1169,27 @@ func (m *GameManager) GetAllOpenRooms(ctx context.Context) []string {
 // ResetGameForRoom 將特定房間的遊戲重置到初始狀態
 // 這會保存當前遊戲到 TiDB，刪除舊遊戲並創建一個新的遊戲在 StagePreparation 階段
 func (m *GameManager) ResetGameForRoom(ctx context.Context, roomID string) (*GameData, error) {
+	m.logger.Info("開始重置遊戲",
+		zap.String("roomID", roomID),
+		zap.String("function", "ResetGameForRoom"))
+
 	m.stageMutex.Lock()
 
 	// 獲取指定房間的當前遊戲
 	game, exists := m.currentGames[roomID]
 	if !exists || game == nil {
 		m.stageMutex.Unlock()
+		m.logger.Error("找不到指定房間的遊戲",
+			zap.String("roomID", roomID),
+			zap.String("function", "ResetGameForRoom"))
 		return nil, ErrGameNotFound
 	}
+
+	m.logger.Info("找到當前遊戲，準備保存歷史記錄",
+		zap.String("roomID", roomID),
+		zap.String("gameID", game.GameID),
+		zap.String("currentStage", string(game.CurrentStage)),
+		zap.String("function", "ResetGameForRoom"))
 
 	// 儲存當前遊戲到歷史記錄
 	if err := m.repo.SaveGameHistory(ctx, game); err != nil {
@@ -1185,6 +1198,11 @@ func (m *GameManager) ResetGameForRoom(ctx context.Context, roomID string) (*Gam
 			zap.String("gameID", game.GameID),
 			zap.Error(err))
 		// 繼續執行，不要因為歷史記錄保存失敗而中斷操作
+	} else {
+		m.logger.Info("已成功保存遊戲歷史記錄",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.String("function", "ResetGameForRoom"))
 	}
 
 	// 刪除當前遊戲
@@ -1193,9 +1211,18 @@ func (m *GameManager) ResetGameForRoom(ctx context.Context, roomID string) (*Gam
 			zap.String("roomID", roomID),
 			zap.Error(err))
 		// 繼續執行，不要因為刪除失敗而中斷操作
+	} else {
+		m.logger.Info("已成功刪除當前遊戲",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.String("function", "ResetGameForRoom"))
 	}
 
 	// 清除當前遊戲記錄
+	oldGameID := ""
+	if game != nil {
+		oldGameID = game.GameID
+	}
 	delete(m.currentGames, roomID)
 
 	// 如果是默認房間，同時更新 currentGame 以保持向後兼容
@@ -1204,23 +1231,43 @@ func (m *GameManager) ResetGameForRoom(ctx context.Context, roomID string) (*Gam
 	}
 
 	// 釋放锁，以便創建新遊戲
+	m.logger.Info("準備創建新遊戲",
+		zap.String("roomID", roomID),
+		zap.String("function", "ResetGameForRoom"))
 	m.stageMutex.Unlock()
 
 	// 創建新遊戲
 	gameID, err := m.CreateNewGameForRoom(ctx, roomID)
 	if err != nil {
+		m.logger.Error("重置遊戲時創建新遊戲失敗",
+			zap.String("roomID", roomID),
+			zap.Error(err),
+			zap.String("function", "ResetGameForRoom"))
 		return nil, fmt.Errorf("重置遊戲時創建新遊戲失敗: %w", err)
 	}
+
+	m.logger.Info("已成功創建新遊戲",
+		zap.String("roomID", roomID),
+		zap.String("gameID", gameID),
+		zap.String("function", "ResetGameForRoom"))
 
 	// 再次獲取锁，以便讀取新創建的遊戲
 	m.stageMutex.Lock()
 	newGame := m.currentGames[roomID]
 	m.stageMutex.Unlock()
 
+	if newGame == nil {
+		m.logger.Error("無法獲取新創建的遊戲",
+			zap.String("roomID", roomID),
+			zap.String("gameID", gameID),
+			zap.String("function", "ResetGameForRoom"))
+		return nil, fmt.Errorf("無法獲取新創建的遊戲")
+	}
+
 	// 記錄重置操作
 	m.logger.Info("已重置房間遊戲狀態",
 		zap.String("roomID", roomID),
-		zap.String("oldGameID", game.GameID),
+		zap.String("oldGameID", oldGameID),
 		zap.String("newGameID", gameID))
 
 	return newGame, nil

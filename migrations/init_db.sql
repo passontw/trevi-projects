@@ -14,6 +14,7 @@ CREATE TABLE games (
     
     -- 遊戲進度相關
     current_state_start_time TIMESTAMP NOT NULL,  -- 當前狀態開始時間
+    stage_expire_time TIMESTAMP NULL,             -- 當前階段預期結束時間
     max_timeout INT NOT NULL DEFAULT 60,          -- 當前狀態最大持續時間(秒)
     
     -- 統計相關

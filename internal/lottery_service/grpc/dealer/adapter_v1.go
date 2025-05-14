@@ -1224,11 +1224,25 @@ func (a *DealerServiceAdapter) CancelGame(ctx context.Context, req *dealerpb.Can
 		return nil, fmt.Errorf("找不到指定房間的遊戲")
 	}
 
+	a.logger.Info("準備取消遊戲",
+		zap.String("roomID", roomID),
+		zap.String("gameID", currentGame.GameID),
+		zap.String("currentStage", string(currentGame.CurrentStage)))
+
 	// 取消遊戲
-	_, err := a.gameManager.ResetGameForRoom(ctx, roomID)
+	newGame, err := a.gameManager.ResetGameForRoom(ctx, roomID)
 	if err != nil {
+		a.logger.Error("取消遊戲失敗",
+			zap.String("roomID", roomID),
+			zap.String("gameID", currentGame.GameID),
+			zap.Error(err))
 		return nil, fmt.Errorf("無法取消遊戲: %w", err)
 	}
+
+	a.logger.Info("成功取消遊戲",
+		zap.String("roomID", roomID),
+		zap.String("oldGameID", currentGame.GameID),
+		zap.String("newGameID", newGame.GameID))
 
 	// 構建遊戲數據
 	gameData := &dealerpb.GameData{
@@ -1285,6 +1299,12 @@ func (a *DealerServiceAdapter) CancelGame(ctx context.Context, req *dealerpb.Can
 	newResp := &dealerpb.CancelGameResponse{
 		GameData: gameData,
 	}
+
+	a.logger.Info("準備返回取消遊戲回應",
+		zap.String("roomID", roomID),
+		zap.String("gameID", gameData.GameId),
+		zap.String("stage", gameData.Stage.String()),
+		zap.String("status", gameData.Status.String()))
 
 	return newResp, nil
 }
