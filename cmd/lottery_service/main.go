@@ -42,6 +42,10 @@ func main() {
 	}
 	defer logger.Sync()
 
+	logger.Info("Lottery service initialized",
+		zap.String("BuildTime", BuildTime),
+		zap.String("GitHash", GitHash))
+
 	app := fx.New(
 		// 註冊 Nacos 模塊
 		nacosManager.Module,
