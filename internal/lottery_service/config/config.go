@@ -179,46 +179,6 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 	return defaultValue
 }
 
-// ===== JSON 處理函數 =====
-
-// isValidJson 檢查字符串是否為有效的 JSON
-func isValidJson(str string) bool {
-	var js interface{}
-	return json.Unmarshal([]byte(str), &js) == nil
-}
-
-// preprocessJsonContent 預處理 JSON 內容，移除註釋和處理特殊字符
-func preprocessJsonContent(content string) string {
-	if content == "" {
-		return "{}"
-	}
-
-	// 如果內容以 / 開頭，可能是註釋或非 JSON 格式
-	if len(content) > 0 && content[0] == '/' {
-		log.Println("檢測到疑似非 JSON 內容，將返回空 JSON 對象")
-		return "{}"
-	}
-
-	// 移除行內註釋（//...）和處理空行
-	lines := []string{}
-	for _, line := range strings.Split(content, "\n") {
-		// 查找行內註釋的位置
-		commentIdx := strings.Index(line, "//")
-		if commentIdx >= 0 {
-			// 只保留註釋前的內容
-			line = line[:commentIdx]
-		}
-
-		// 只添加非空行
-		if strings.TrimSpace(line) != "" {
-			lines = append(lines, line)
-		}
-	}
-
-	// 重新組合內容
-	return strings.Join(lines, "\n")
-}
-
 // ===== Nacos 相關函數 =====
 
 // uploadConfigToNacos 上傳配置到 Nacos
@@ -309,19 +269,17 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 			return nil, fmt.Errorf("無法從 Nacos 獲取配置: %w", err)
 		}
 
-		// 預處理 JSON 內容
-		content = preprocessJsonContent(content)
-
-		// 檢查 JSON 有效性
-		if !isValidJson(content) {
-			log.Printf("從 Nacos 獲取的配置不是有效的 JSON")
-			return nil, fmt.Errorf("從 Nacos 獲取的配置不是有效的 JSON")
+		// 檢測配置格式並解析
+		configMap, err := nacosManager.DetectAndParseConfig(content)
+		if err != nil {
+			log.Printf("檢測或解析配置格式失敗: %v", err)
+			return nil, fmt.Errorf("無法解析從 Nacos 獲取的配置: %w", err)
 		}
 
-		// 嘗試解析配置
-		if err := parseNacosConfig(content, config); err != nil {
-			log.Printf("解析 Nacos 配置失敗: %v", err)
-			return nil, fmt.Errorf("解析 Nacos 配置失敗: %w", err)
+		// 將配置映射到 AppConfig 結構
+		if err := mapJsonMapToAppConfig(configMap, config); err != nil {
+			log.Printf("映射配置到應用配置失敗: %v", err)
+			return nil, fmt.Errorf("映射配置到應用配置失敗: %w", err)
 		}
 
 		log.Println("成功從 Nacos 獲取配置並合併")
@@ -489,60 +447,6 @@ func createDefaultConfig() *AppConfig {
 	}
 }
 
-// parseNacosConfig 解析從 Nacos 獲取的配置
-func parseNacosConfig(content string, config *AppConfig) error {
-	// 保存原始的WebSocket端口設置
-	dealerWsPort := config.Server.DealerWsPort
-	grpcPort := config.Server.GrpcPort
-	apiPort := config.Server.Port
-
-	// 預處理 JSON 內容，處理註釋和換行符
-	processedContent := preprocessJsonContent(content)
-
-	// 檢查 JSON 有效性
-	if !isValidJson(processedContent) {
-		return fmt.Errorf("從 Nacos 獲取的配置不是有效的 JSON")
-	}
-
-	// 解析 JSON，使用 json.Number 保留數值精確性
-	var jsonMap map[string]interface{}
-	decoder := json.NewDecoder(strings.NewReader(processedContent))
-	decoder.UseNumber() // 使用 json.Number 而不是 float64
-	if err := decoder.Decode(&jsonMap); err != nil {
-		return fmt.Errorf("解析 Nacos 配置失敗: %w", err)
-	}
-
-	// 打印 Nacos 中的 API_PORT 配置
-	if apiPortValue, ok := jsonMap["API_PORT"]; ok {
-		log.Printf("從 Nacos 獲取的 API_PORT 配置: %v (類型: %T)", apiPortValue, apiPortValue)
-	} else {
-		log.Printf("Nacos 配置中未找到 API_PORT 設定")
-	}
-
-	// 打印 Nacos 中的 DEALER_WS_PORT 配置
-	if dealerPort, ok := jsonMap["DEALER_WS_PORT"]; ok {
-		log.Printf("從 Nacos 獲取的 DEALER_WS_PORT 配置: %v (類型: %T)", dealerPort, dealerPort)
-	} else {
-		log.Printf("Nacos 配置中未找到 DEALER_WS_PORT 設定")
-	}
-
-	// 打印 Nacos 中的 GRPC_PORT 配置
-	if grpcPortValue, ok := jsonMap["GRPC_PORT"]; ok {
-		log.Printf("從 Nacos 獲取的 GRPC_PORT 配置: %v (類型: %T)", grpcPortValue, grpcPortValue)
-	} else {
-		log.Printf("Nacos 配置中未找到 GRPC_PORT 設定")
-	}
-
-	// 將配置映射到 AppConfig 結構
-	if err := mapJsonToAppConfig(jsonMap, config); err != nil {
-		return fmt.Errorf("映射 Nacos 配置到應用配置失敗: %w", err)
-	}
-
-	// 恢復 WebSocket 端口設置（如果 Nacos 配置中未提供或無效）
-	restoreWebSocketPorts(config, dealerWsPort, grpcPort, apiPort)
-
-	return nil
-}
 
 // restoreWebSocketPorts 恢復 WebSocket 端口和 gRPC 端口
 func restoreWebSocketPorts(config *AppConfig, dealerWsPort int, grpcPort int, apiPort int) {
@@ -1078,6 +982,44 @@ func parseRocketMQXmlConfig(xmlContent string, cfg *AppConfig) error {
 	return nil
 }
 
+// mapJsonMapToAppConfig 將 map[string]interface{} 格式的配置映射到 AppConfig 結構
+// 這是為了支持XML和JSON兩種格式的配置解析
+func mapJsonMapToAppConfig(configMap map[string]interface{}, config *AppConfig) error {
+	// 保存原始的WebSocket端口設置，以便後續還原
+	dealerWsPort := config.Server.DealerWsPort
+	grpcPort := config.Server.GrpcPort
+	apiPort := config.Server.Port
+
+	// 打印關鍵配置項
+	if apiPortValue, ok := configMap["API_PORT"]; ok {
+		log.Printf("從配置獲取的 API_PORT: %v (類型: %T)", apiPortValue, apiPortValue)
+	} else {
+		log.Printf("配置中未找到 API_PORT 設定")
+	}
+
+	if dealerPort, ok := configMap["DEALER_WS_PORT"]; ok {
+		log.Printf("從配置獲取的 DEALER_WS_PORT: %v (類型: %T)", dealerPort, dealerPort)
+	} else {
+		log.Printf("配置中未找到 DEALER_WS_PORT 設定")
+	}
+
+	if grpcPortValue, ok := configMap["GRPC_PORT"]; ok {
+		log.Printf("從配置獲取的 GRPC_PORT: %v (類型: %T)", grpcPortValue, grpcPortValue)
+	} else {
+		log.Printf("配置中未找到 GRPC_PORT 設定")
+	}
+
+	// 將配置映射到 AppConfig 結構
+	if err := mapJsonToAppConfig(configMap, config); err != nil {
+		return fmt.Errorf("映射配置到應用配置失敗: %w", err)
+	}
+
+	// 恢復 WebSocket 端口設置（如果配置中未提供或無效）
+	restoreWebSocketPorts(config, dealerWsPort, grpcPort, apiPort)
+
+	return nil
+}
+
 // ===== 依賴注入相關函數 =====
 
 // ProvideAppConfig 提供應用配置，用於 fx 依賴注入
@@ -1092,11 +1034,6 @@ func RegisterService(config *AppConfig, nacosClient nacosManager.NacosClient) er
 		return nil
 	}
 
-	// 嘗試將當前配置上傳到 Nacos（如果尚不存在或無效）
-	if err := ensureValidConfigInNacos(config, nacosClient); err != nil {
-		log.Printf("確保 Nacos 中有有效配置時發生錯誤: %v", err)
-	}
-
 	// 註冊服務實例
 	success, err := registerServiceInstance(config, nacosClient)
 	if err != nil {
@@ -1108,94 +1045,6 @@ func RegisterService(config *AppConfig, nacosClient nacosManager.NacosClient) er
 			config.Server.ServiceName, config.Server.ServiceID)
 	} else {
 		log.Printf("註冊服務到 Nacos 失敗")
-	}
-
-	return nil
-}
-
-// ensureValidConfigInNacos 確保 Nacos 中存在有效配置
-func ensureValidConfigInNacos(config *AppConfig, nacosClient nacosManager.NacosClient) error {
-	content, err := nacosClient.GetConfig(config.Nacos.DataId, config.Nacos.Group)
-	if err != nil || content == "" || !isValidJson(content) {
-		// 如果有內容但不是有效的 JSON，嘗試修復
-		if content != "" && !isValidJson(content) {
-			log.Println("檢測到 Nacos 中的配置不是有效的 JSON，嘗試修復...")
-
-			// 預處理 JSON 內容
-			fixedContent := preprocessJsonContent(content)
-
-			// 檢查修復後的內容是否有效
-			if isValidJson(fixedContent) {
-				log.Println("成功修復 Nacos 配置，會使用修復後的配置")
-
-				// 解析修復後的 JSON
-				var tmpConfig map[string]interface{}
-				if err := json.Unmarshal([]byte(fixedContent), &tmpConfig); err == nil {
-					// 上傳修復後的配置
-					return uploadFixedConfig(config, nacosClient, tmpConfig)
-				}
-			}
-		}
-
-		log.Println("檢測到 Nacos 中不存在有效的配置，將上傳默認配置...")
-		return uploadDefaultConfig(config, nacosClient)
-	}
-
-	return nil
-}
-
-// uploadFixedConfig 上傳修復後的配置
-func uploadFixedConfig(config *AppConfig, nacosClient nacosManager.NacosClient, fixedConfig map[string]interface{}) error {
-	// 構建完整配置
-	jsonBytes, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-
-	var baseConfig map[string]interface{}
-	if err := json.Unmarshal(jsonBytes, &baseConfig); err != nil {
-		return err
-	}
-
-	// 合併修復後的配置
-	for k, v := range fixedConfig {
-		// 添加頂層配置項
-		baseConfig[k] = v
-	}
-
-	// 序列化為 JSON
-	mergedBytes, err := json.MarshalIndent(baseConfig, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// 上傳到 Nacos
-	success, err := uploadConfigToNacos(nacosClient, config.Nacos.DataId, config.Nacos.Group, string(mergedBytes))
-	if err != nil {
-		return err
-	}
-
-	if success {
-		log.Println("成功將修復後的配置上傳到 Nacos")
-	}
-
-	return nil
-}
-
-// uploadDefaultConfig 上傳默認配置
-func uploadDefaultConfig(config *AppConfig, nacosClient nacosManager.NacosClient) error {
-	configJson, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return fmt.Errorf("序列化配置失敗: %w", err)
-	}
-
-	success, err := uploadConfigToNacos(nacosClient, config.Nacos.DataId, config.Nacos.Group, string(configJson))
-	if err != nil {
-		return fmt.Errorf("上傳配置到 Nacos 失敗: %w", err)
-	}
-
-	if success {
-		log.Println("成功將默認配置上傳到 Nacos")
 	}
 
 	return nil
@@ -1227,52 +1076,3 @@ var Module = fx.Module("config",
 		RegisterService,
 	),
 )
-
-// initNacosConfig 初始化 Nacos 配置
-func initNacosConfig(config *AppConfig) error {
-	if os.Getenv("G38_SKIP_NACOS") == "1" {
-		log.Printf("檢測到環境變量 G38_SKIP_NACOS=1，跳過 Nacos 配置")
-		return nil
-	}
-
-	// 保存原始的WebSocket端口設置
-	dealerWsPort := config.Server.DealerWsPort
-	grpcPort := config.Server.GrpcPort
-	apiPort := config.Server.Port
-
-	// 檢查是否設置了 Nacos 環境變量
-	nacosIp := os.Getenv("NACOS_SERVER_IP")
-	if nacosIp == "" {
-		log.Printf("未設置 NACOS_SERVER_IP 環境變量，使用默認值")
-		nacosIp = "127.0.0.1" // 默認值
-	}
-
-	nacosPort := os.Getenv("NACOS_SERVER_PORT")
-	if nacosPort == "" {
-		log.Printf("未設置 NACOS_SERVER_PORT 環境變量，使用默認值")
-		nacosPort = "8848" // 默認值
-	}
-
-	// 從 Nacos 獲取配置
-	dataId := "g38_lottery"
-	content, err := getNacosConfig(nacosIp, nacosPort, dataId)
-	if err != nil {
-		log.Printf("從 Nacos 獲取配置失敗: %v", err)
-		log.Printf("使用本地默認配置")
-		return nil
-	}
-
-	// 解析 Nacos 配置
-	if err := parseNacosConfig(content, config); err != nil {
-		log.Printf("解析 Nacos 配置失敗: %v", err)
-		log.Printf("使用本地默認配置")
-
-		// 恢復端口設置
-		restoreWebSocketPorts(config, dealerWsPort, grpcPort, apiPort)
-	}
-
-	log.Printf("Nacos 初始配置設置完成，最終設置: DealerWsPort=%d, GrpcPort=%d, ApiPort=%d",
-		config.Server.DealerWsPort, config.Server.GrpcPort, config.Server.Port)
-
-	return nil
-}
