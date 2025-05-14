@@ -274,7 +274,7 @@ func convertStringToGameStage(stage string) common.GameStage {
 	case "PAYOUT_SETTLEMENT":
 		return common.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT
 	case "JACKPOT_START":
-		return common.GameStage_GAME_STAGE_JACKPOT_START
+		return common.GameStage_GAME_STAGE_JACKPOT_PREPARATION
 	case "GAME_OVER":
 		return common.GameStage_GAME_STAGE_GAME_OVER
 	default:

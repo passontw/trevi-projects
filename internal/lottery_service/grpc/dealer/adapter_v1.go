@@ -48,14 +48,13 @@ func GenerateRandomString(length int) string {
 
 // StartNewRound 處理開始新一輪遊戲的請求
 func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.StartNewRoundRequest) (*dealerpb.StartNewRoundResponse, error) {
-	a.logger.Info("收到開始新回合的請求 (新 API)")
-
 	// 檢查 room_id 是否為空
 	if req.RoomId == "" {
 		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
 	}
 
 	roomId := req.RoomId
+	a.logger.Info("收到開始新回合的請求", zap.String("roomID", roomId))
 
 	// 嘗試在遊戲管理器中創建新遊戲
 	gameID, err := a.gameManager.CreateNewGameForRoom(ctx, roomId)
@@ -63,52 +62,33 @@ func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.
 		a.logger.Error("創建新遊戲失敗",
 			zap.String("roomID", roomId),
 			zap.Error(err))
+		return nil, status.Error(codes.Internal, fmt.Sprintf("創建新遊戲失敗: %v", err))
+	}
+
+	a.logger.Info("成功創建新遊戲",
+		zap.String("roomID", roomId),
+		zap.String("gameID", gameID))
+
+	// 成功創建遊戲後，自動推進到下一階段
+	err = a.gameManager.AdvanceStageForRoom(ctx, roomId, true)
+	if err != nil {
+		a.logger.Warn("自動推進遊戲階段失敗，但遊戲已創建",
+			zap.String("roomID", roomId),
+			zap.String("gameID", gameID),
+			zap.Error(err))
 	} else {
-		a.logger.Info("成功創建新遊戲",
+		a.logger.Info("已自動推進遊戲到下一階段",
 			zap.String("roomID", roomId),
 			zap.String("gameID", gameID))
-
-		// 成功創建遊戲後，自動推進到下一階段
-		err := a.gameManager.AdvanceStageForRoom(ctx, roomId, true)
-		if err != nil {
-			a.logger.Warn("自動推進遊戲階段失敗，但遊戲已創建",
-				zap.String("roomID", roomId),
-				zap.String("gameID", gameID),
-				zap.Error(err))
-		} else {
-			a.logger.Info("已自動推進遊戲到下一階段",
-				zap.String("roomID", roomId),
-				zap.String("gameID", gameID))
-		}
 	}
 
 	// 獲取當前遊戲數據
 	currentGame := a.gameManager.GetCurrentGameByRoom(roomId)
-
-	// 如果無法從遊戲管理器獲取遊戲，則使用模擬數據
 	if currentGame == nil {
-		// 構建基本的遊戲數據
-		gameData := &dealerpb.GameData{
-			GameId:       fmt.Sprintf("G%s", GenerateRandomString(8)),
-			RoomId:       roomId,
-			Stage:        commonpb.GameStage_GAME_STAGE_JACKPOT_START,
-			Status:       dealerpb.GameStatus_GAME_STATUS_CREATED,
-			DealerId:     "system",
-			CreatedAt:    time.Now().Unix(),
-			UpdatedAt:    time.Now().Unix(),
-			RegularBalls: []*dealerpb.Ball{},
-			ExtraBalls:   []*dealerpb.Ball{},
-			Jackpot: &dealerpb.JackpotGame{
-				LuckyBalls: []*dealerpb.Ball{},
-				DrawnBalls: []*dealerpb.Ball{},
-			},
-		}
-
-		resp := &dealerpb.StartNewRoundResponse{
-			GameData: gameData,
-		}
-
-		return resp, nil
+		a.logger.Error("無法獲取當前遊戲數據",
+			zap.String("roomID", roomId),
+			zap.String("gameID", gameID))
+		return nil, status.Error(codes.Internal, "無法獲取當前遊戲數據")
 	}
 
 	// 根據遊戲階段確定狀態
@@ -140,6 +120,11 @@ func (a *DealerServiceAdapter) StartNewRound(ctx context.Context, req *dealerpb.
 	resp := &dealerpb.StartNewRoundResponse{
 		GameData: gameData,
 	}
+
+	a.logger.Info("遊戲創建和初始化成功，準備返回響應",
+		zap.String("roomID", roomId),
+		zap.String("gameID", gameData.GameId),
+		zap.String("stage", gameData.Stage.String()))
 
 	return resp, nil
 }
@@ -1505,7 +1490,7 @@ func (a *DealerServiceAdapter) StartJackpotRound(ctx context.Context, req *deale
 	gameData := &dealerpb.GameData{
 		GameId:       "jackpot_" + roomID,
 		RoomId:       roomID,
-		Stage:        commonpb.GameStage_GAME_STAGE_JACKPOT_START,
+		Stage:        commonpb.GameStage_GAME_STAGE_JACKPOT_PREPARATION,
 		Status:       dealerpb.GameStatus_GAME_STATUS_IN_PROGRESS,
 		DealerId:     "system",
 		CreatedAt:    createdAt.Unix(),
@@ -1879,7 +1864,7 @@ func (a *DealerServiceAdapter) convertGameflowStageToPb(stage gameflow.GameStage
 	case gameflow.StagePayoutSettlement:
 		return commonpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT
 	case gameflow.StageJackpotPreparation:
-		return commonpb.GameStage_GAME_STAGE_JACKPOT_START
+		return commonpb.GameStage_GAME_STAGE_JACKPOT_PREPARATION
 	case gameflow.StageJackpotDrawingStart:
 		return commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START
 	case gameflow.StageJackpotDrawingClosed:

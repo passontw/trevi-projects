@@ -444,8 +444,8 @@ func (m *GameManager) GetCurrentGame() *GameData {
 
 // GetCurrentGameByRoom 獲取特定房間的當前遊戲
 func (m *GameManager) GetCurrentGameByRoom(roomID string) *GameData {
-	m.stageMutex.Lock()
-	defer m.stageMutex.Unlock()
+	m.stageMutex.RLock()
+	defer m.stageMutex.RUnlock()
 
 	if game, exists := m.currentGames[roomID]; exists {
 		return game
@@ -592,8 +592,16 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 		return fmt.Errorf("保存遊戲狀態失敗: %w", err)
 	}
 
-	// 設置階段計時器
-	if autoAdvance && nextStage != StageGameOver {
+	// 如果是遊戲結束或不自動推進，提前釋放鎖
+	if nextStage == StageGameOver || !autoAdvance {
+		if !autoAdvance {
+			m.logger.Info("不自動推進階段，需手動觸發",
+				zap.String("roomID", roomID),
+				zap.String("gameID", game.GameID),
+				zap.String("stage", string(nextStage)))
+		}
+		m.stageMutex.Unlock()
+	} else if autoAdvance {
 		// 計算此階段的時間
 		stageDuration := m.calculateStageDuration(nextStage)
 		m.logger.Info("設置階段計時器",
@@ -602,16 +610,13 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 			zap.String("stage", string(nextStage)),
 			zap.Duration("duration", stageDuration),
 			zap.String("expectedExpiry", time.Now().Add(stageDuration).Format(time.RFC3339)))
-		m.setupTimerForGame(ctx, game, roomID, stageDuration)
-	} else if !autoAdvance {
-		m.logger.Info("不自動推進階段，需手動觸發",
-			zap.String("roomID", roomID),
-			zap.String("gameID", game.GameID),
-			zap.String("stage", string(nextStage)))
-	}
 
-	// 釋放鎖，因為我們已經完成了關鍵部分
-	m.stageMutex.Unlock()
+		// 釋放鎖
+		m.stageMutex.Unlock()
+
+		// 使用非阻塞方式設置計時器
+		m.setupTimerForGameAsync(game, roomID, stageDuration)
+	}
 
 	m.logger.Info("階段已變更，完成推進",
 		zap.String("roomID", roomID),
@@ -654,7 +659,8 @@ func (m *GameManager) setupStageTimer(ctx context.Context, game *GameData, roomI
 
 	// 計算此階段的時間
 	stageDuration := m.calculateStageDuration(game.CurrentStage)
-	m.setupTimerForGame(ctx, game, roomID, stageDuration)
+	// 使用非阻塞方式設置計時器
+	m.setupTimerForGameAsync(game, roomID, stageDuration)
 }
 
 // setupTimerForGame 為特定遊戲設置計時器
@@ -752,13 +758,40 @@ func (m *GameManager) setupTimerForGame(ctx context.Context, game *GameData, roo
 		zap.String("gameID", game.GameID),
 		zap.String("timerID", timerID))
 
-	// 儲存更新後的遊戲資料（包含 StageExpireTime）
-	if err := m.repo.SaveGame(ctx, game); err != nil {
-		m.logger.Error("保存遊戲過期時間失敗",
-			zap.String("roomID", roomID),
-			zap.String("gameID", game.GameID),
-			zap.Error(err))
-	}
+	// 將遊戲資料儲存操作移到goroutine中進行，避免阻塞API請求
+	gameCopy := *game // 創建一個副本以避免競態條件
+	go func() {
+		// 創建背景上下文用於數據儲存
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := m.repo.SaveGame(bgCtx, &gameCopy); err != nil {
+			m.logger.Error("後台保存遊戲過期時間失敗",
+				zap.String("roomID", roomID),
+				zap.String("gameID", gameCopy.GameID),
+				zap.Error(err))
+		} else {
+			m.logger.Debug("後台成功保存遊戲過期時間",
+				zap.String("roomID", roomID),
+				zap.String("gameID", gameCopy.GameID))
+		}
+	}()
+}
+
+// setupTimerForGameAsync 為特定遊戲設置計時器(非阻塞版本)
+func (m *GameManager) setupTimerForGameAsync(game *GameData, roomID string, duration time.Duration) {
+	// 創建一個副本避免競態條件
+	gameCopy := *game
+
+	// 在後台執行計時器設置
+	go func() {
+		// 創建後台上下文
+		bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// 調用原始方法設置計時器
+		m.setupTimerForGame(bgCtx, &gameCopy, roomID, duration)
+	}()
 }
 
 // prepareForNextGameInRoom 為特定房間準備下一局遊戲

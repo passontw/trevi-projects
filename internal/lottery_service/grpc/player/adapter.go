@@ -66,10 +66,12 @@ func ConvertGameDataToNewPb(gameData *gameflow.GameData) *dealerPb.GameData {
 		Status:       GetGameStatusFromStage(gameStage),
 		RegularBalls: drawnBalls,
 		ExtraBalls:   extraBalls,
-		LuckyBalls:   luckyBalls,
-		CreatedAt:    ConvertTimestampToUnix(gameData.StartTime),
-		UpdatedAt:    updatedAt,
-		DealerId:     "system", // 使用默認值
+		Jackpot: &dealerPb.JackpotGame{
+			LuckyBalls: luckyBalls,
+		},
+		CreatedAt: ConvertTimestampToUnix(gameData.StartTime),
+		UpdatedAt: updatedAt,
+		DealerId:  "system", // 使用默認值
 	}
 }
 
@@ -135,7 +137,7 @@ func ConvertGameStageToCommonPb(stage gameflow.GameStage) commonpb.GameStage {
 	case gameflow.StagePayoutSettlement:
 		return commonpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT
 	case gameflow.StageJackpotPreparation:
-		return commonpb.GameStage_GAME_STAGE_JACKPOT_START
+		return commonpb.GameStage_GAME_STAGE_JACKPOT_PREPARATION
 	case gameflow.StageJackpotDrawingStart:
 		return commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START
 	case gameflow.StageJackpotDrawingClosed:
