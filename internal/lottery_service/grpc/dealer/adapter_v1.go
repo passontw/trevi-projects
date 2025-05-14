@@ -1840,3 +1840,153 @@ func (a *DealerServiceAdapter) convertGameflowStageToPb(stage gameflow.GameStage
 		return commonpb.GameStage_GAME_STAGE_UNSPECIFIED
 	}
 }
+
+// StartDrawLuckyBall 處理開始抽取幸運球階段的請求
+func (a *DealerServiceAdapter) StartDrawLuckyBall(ctx context.Context, req *dealerpb.StartDrawLuckyBallRequest) (*dealerpb.StartDrawLuckyBallResponse, error) {
+	// 檢查 room_id 是否為空
+	if req.RoomId == "" {
+		return nil, status.Error(codes.InvalidArgument, "room_id 不能為空")
+	}
+
+	roomID := req.RoomId
+	a.logger.Info("收到開始抽取幸運球階段請求", zap.String("roomID", roomID))
+
+	// 從遊戲管理器獲取當前遊戲數據
+	currentGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if currentGame == nil {
+		a.logger.Warn("找不到指定房間的遊戲", zap.String("roomID", roomID))
+		return nil, fmt.Errorf("找不到指定房間的遊戲")
+	}
+
+	// 檢查當前遊戲階段
+	// 只有在 StageLuckyPreparation 階段才能推進到 StageDrawingLuckyBallsStart 階段
+	if currentGame.CurrentStage != gameflow.StageLuckyPreparation {
+		a.logger.Warn("當前遊戲階段不適合開始抽取幸運球",
+			zap.String("roomID", roomID),
+			zap.String("currentStage", string(currentGame.CurrentStage)))
+
+		// 如果是在幸運球抽取階段或更後面的階段，則直接返回當前狀態
+		if currentGame.CurrentStage == gameflow.StageDrawingLuckyBallsStart ||
+			currentGame.CurrentStage == gameflow.StageDrawingLuckyBallsClosed ||
+			currentGame.CurrentStage == gameflow.StageGameOver {
+			a.logger.Info("已經在幸運球相關階段，直接返回當前狀態",
+				zap.String("roomID", roomID),
+				zap.String("currentStage", string(currentGame.CurrentStage)))
+		} else {
+			// 不在正確的階段，返回錯誤
+			return nil, fmt.Errorf("遊戲階段必須是幸運球準備階段才能開始抽取幸運球，當前階段: %s", currentGame.CurrentStage)
+		}
+	} else {
+		// 只有在 StageLuckyPreparation 階段才推進到 StageDrawingLuckyBallsStart 階段
+		err := a.gameManager.AdvanceStageForRoom(ctx, roomID, true)
+		if err != nil {
+			a.logger.Error("推進到幸運球抽取階段失敗",
+				zap.String("roomID", roomID),
+				zap.Error(err))
+			return nil, fmt.Errorf("推進到幸運球抽取階段失敗: %w", err)
+		}
+	}
+
+	// 獲取更新後的遊戲狀態
+	updatedGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	if updatedGame == nil {
+		a.logger.Error("無法獲取更新後的遊戲狀態",
+			zap.String("roomID", roomID))
+		return nil, fmt.Errorf("無法獲取更新後的遊戲狀態")
+	}
+
+	// 構建遊戲數據
+	gameData := &dealerpb.GameData{
+		GameId:       updatedGame.GameID,
+		RoomId:       roomID,
+		Stage:        a.convertGameflowStageToPb(updatedGame.CurrentStage),
+		Status:       dealerpb.GameStatus_GAME_STATUS_IN_PROGRESS,
+		DealerId:     "system",
+		CreatedAt:    updatedGame.StartTime.Unix(),
+		UpdatedAt:    time.Now().Unix(),
+		RegularBalls: []*dealerpb.Ball{},
+		ExtraBalls:   []*dealerpb.Ball{},
+		Jackpot: &dealerpb.JackpotGame{
+			LuckyBalls: []*dealerpb.Ball{},
+			DrawnBalls: []*dealerpb.Ball{},
+		},
+	}
+
+	// 添加已抽出的常規球到響應中
+	for _, ball := range updatedGame.RegularBalls {
+		// 創建 timestamp proto
+		timestamp := ball.Timestamp
+		protoTimestamp := &timestamppb.Timestamp{
+			Seconds: timestamp.Unix(),
+			Nanos:   int32(timestamp.Nanosecond()),
+		}
+
+		gameData.RegularBalls = append(gameData.RegularBalls, &dealerpb.Ball{
+			Number:    int32(ball.Number),
+			Type:      dealerpb.BallType_BALL_TYPE_REGULAR,
+			IsLast:    ball.IsLast,
+			Timestamp: protoTimestamp,
+		})
+	}
+
+	// 添加已抽出的額外球到響應中
+	for _, ball := range updatedGame.ExtraBalls {
+		// 創建 timestamp proto
+		timestamp := ball.Timestamp
+		protoTimestamp := &timestamppb.Timestamp{
+			Seconds: timestamp.Unix(),
+			Nanos:   int32(timestamp.Nanosecond()),
+		}
+
+		gameData.ExtraBalls = append(gameData.ExtraBalls, &dealerpb.Ball{
+			Number:    int32(ball.Number),
+			Type:      dealerpb.BallType_BALL_TYPE_EXTRA,
+			IsLast:    ball.IsLast,
+			Timestamp: protoTimestamp,
+		})
+	}
+
+	// 如果有頭獎球，添加到響應中
+	if updatedGame.Jackpot != nil {
+		// 添加頭獎球
+		for _, ball := range updatedGame.Jackpot.DrawnBalls {
+			// 創建 timestamp proto
+			timestamp := ball.Timestamp
+			protoTimestamp := &timestamppb.Timestamp{
+				Seconds: timestamp.Unix(),
+				Nanos:   int32(timestamp.Nanosecond()),
+			}
+
+			gameData.Jackpot.DrawnBalls = append(gameData.Jackpot.DrawnBalls, &dealerpb.Ball{
+				Number:    int32(ball.Number),
+				Type:      dealerpb.BallType_BALL_TYPE_JACKPOT,
+				IsLast:    ball.IsLast,
+				Timestamp: protoTimestamp,
+			})
+		}
+
+		// 添加幸運球
+		for _, ball := range updatedGame.Jackpot.LuckyBalls {
+			// 創建 timestamp proto
+			timestamp := ball.Timestamp
+			protoTimestamp := &timestamppb.Timestamp{
+				Seconds: timestamp.Unix(),
+				Nanos:   int32(timestamp.Nanosecond()),
+			}
+
+			gameData.Jackpot.LuckyBalls = append(gameData.Jackpot.LuckyBalls, &dealerpb.Ball{
+				Number:    int32(ball.Number),
+				Type:      dealerpb.BallType_BALL_TYPE_LUCKY,
+				IsLast:    ball.IsLast,
+				Timestamp: protoTimestamp,
+			})
+		}
+	}
+
+	// 構建回應
+	resp := &dealerpb.StartDrawLuckyBallResponse{
+		GameData: gameData,
+	}
+
+	return resp, nil
+}

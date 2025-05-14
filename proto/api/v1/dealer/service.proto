@@ -26,6 +26,9 @@ service DealerService {
   // DrawLuckyBall 抽取幸運球
   rpc DrawLuckyBall(DrawLuckyBallRequest) returns (DrawLuckyBallResponse);
   
+  // StartDrawLuckyBall 開始抽取幸運球階段
+  rpc StartDrawLuckyBall(StartDrawLuckyBallRequest) returns (StartDrawLuckyBallResponse);
+  
   // CancelGame 取消遊戲
   rpc CancelGame(CancelGameRequest) returns (CancelGameResponse);
   
@@ -107,6 +110,18 @@ message DrawLuckyBallRequest {
 
 // DrawLuckyBallResponse 抽取幸運球的響應
 message DrawLuckyBallResponse {
+  // game_data 遊戲數據
+  GameData game_data = 1;
+}
+
+// StartDrawLuckyBallRequest 開始幸運球抽取階段的請求
+message StartDrawLuckyBallRequest {
+  // room_id 房間ID
+  string room_id = 1;
+}
+
+// StartDrawLuckyBallResponse 開始幸運球抽取階段的響應
+message StartDrawLuckyBallResponse {
   // game_data 遊戲數據
   GameData game_data = 1;
 }
