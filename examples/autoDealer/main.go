@@ -375,16 +375,21 @@ func (d *AutoDealer) processStage() {
 		}
 
 	case commonpb.GameStage_GAME_STAGE_NEW_ROUND:
-		log.Println("遊戲開始新回合...")
-		// 在這個階段不需要特別操作，等待進入購買卡片階段
+		log.Println("遊戲開始新回合，2秒後進入購卡階段...")
+		// 播放開始主遊戲動效（停留2秒）
+		go func() {
+			time.Sleep(2 * time.Second)
+			log.Println("播放開始主遊戲動效結束，繼續等待進入下一階段...")
+			// 系統會自動切換到卡片購買階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_CARD_PURCHASE_OPEN:
 		log.Println("開放購買卡片階段...")
 		// 等待一段時間後自動抽球
 		go func() {
-			// 等待配置的卡片購買時間
-			log.Printf("等待 %d 秒卡片購買時間...", d.config.Timing.CardPurchaseDurationSec)
-			time.Sleep(time.Duration(d.config.Timing.CardPurchaseDurationSec) * time.Second)
+			// 等待配置的卡片購買時間（21秒）
+			log.Printf("等待 21 秒卡片購買時間...")
+			time.Sleep(21 * time.Second)
 			log.Println("卡片購買時間結束，準備開始抽球...")
 			d.startDrawing()
 		}()
@@ -399,20 +404,40 @@ func (d *AutoDealer) processStage() {
 		go d.drawRegularBalls()
 
 	case commonpb.GameStage_GAME_STAGE_DRAWING_CLOSE:
-		log.Println("常規球抽取結束階段...")
-		// 這個階段是中間過渡階段，無需特別操作
+		log.Println("常規球抽取結束階段，等待3秒查看結果...")
+		// 看出球結果（停留3秒）
+		go func() {
+			time.Sleep(3 * time.Second)
+			log.Println("查看常規球結果結束，等待進入下一階段...")
+			// 系統會自動進入下一階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_PREPARE:
-		log.Println("額外球準備階段...")
-		// 這個階段是中間過渡階段，無需特別操作
+		log.Println("額外球準備階段，播放額外球動效3秒...")
+		// 播放額外球動效（停留3秒）
+		go func() {
+			time.Sleep(3 * time.Second)
+			log.Println("額外球動效播放結束，等待進入下一階段...")
+			// 系統會自動切換到額外球選邊階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_SIDE_SELECT_BETTING_START:
 		log.Println("額外球選邊開始階段...")
-		// 這個階段等待玩家選邊，無需特別操作
+		// 額外球選邊倒數計時與LED RNG表演（停留5秒）
+		go func() {
+			time.Sleep(5 * time.Second)
+			log.Println("額外球選邊倒數時間結束，等待進入下一階段...")
+			// 系統會自動切換到選邊結束階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_SIDE_SELECT_BETTING_CLOSED:
 		log.Println("額外球選邊結束階段...")
-		// 這個階段是中間過渡階段，無需特別操作
+		// 看額外球RNG結果（停留2秒）
+		go func() {
+			time.Sleep(2 * time.Second)
+			log.Println("查看額外球RNG結果結束，等待進入下一階段...")
+			// 系統會自動切換到額外球抽取階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_START:
 		log.Println("開始抽取額外球...")
@@ -421,15 +446,37 @@ func (d *AutoDealer) processStage() {
 
 	case commonpb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_CLOSE:
 		log.Println("額外球抽取結束階段...")
-		// 這個階段是中間過渡階段，無需特別操作
+		// 看出球結果（停留3秒）
+		go func() {
+			time.Sleep(3 * time.Second)
+			log.Println("查看額外球結果結束，等待進入下一階段...")
+			// 系統會自動進入下一階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT:
 		log.Println("派彩結算階段...")
-		// 這個階段是中間過渡階段，無需特別操作
+		// 看LED結算（停留 10秒）含客戶端表演
+		go func() {
+			time.Sleep(10 * time.Second)
+			log.Println("派彩結算顯示結束，等待進入下一階段...")
+			// 系統會自動進入下一階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_JACKPOT_START:
-		log.Println("開始JP遊戲階段...")
-		// 這個階段是中間過渡階段，無需特別操作
+		log.Println("JP準備階段...")
+		// 播放開始JP遊戲動效（停留3秒）+ 看JP卡倒數計時（停留5秒）
+		go func() {
+			// 播放JP遊戲動效
+			log.Println("播放開始JP遊戲動效...")
+			time.Sleep(3 * time.Second)
+
+			// JP卡倒數計時
+			log.Println("JP卡倒數計時...")
+			time.Sleep(5 * time.Second)
+
+			log.Println("JP準備階段結束，等待進入JP抽球階段...")
+			// 系統會自動進入JP抽球階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START:
 		log.Println("開始抽取JP球...")
@@ -438,11 +485,31 @@ func (d *AutoDealer) processStage() {
 
 	case commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_CLOSED:
 		log.Println("JP球抽取結束階段...")
-		// 這個階段是中間過渡階段，無需特別操作
+		// 看出球結果（停留3秒）
+		go func() {
+			time.Sleep(3 * time.Second)
+			log.Println("查看JP球結果結束，等待進入下一階段...")
+			// 系統會自動進入下一階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_JACKPOT_SETTLEMENT:
 		log.Println("JP結算階段...")
-		// 這個階段是中間過渡階段，無需特別操作
+		// 看LED結算（停留 10秒）含客戶端表演
+		go func() {
+			time.Sleep(10 * time.Second)
+			log.Println("JP結算顯示結束，觸發幸運球準備階段...")
+			// JP結算階段結束後，自動觸發幸運球抽取開始
+			d.startDrawLuckyBalls()
+		}()
+
+	case commonpb.GameStage_GAME_STAGE_LUCKY_PREPARATION:
+		log.Println("幸運球準備階段，等待3秒...")
+		// 這個階段是中間過渡階段，等待3秒後自動推進到抽取階段
+		go func() {
+			time.Sleep(3 * time.Second)
+			log.Println("幸運球準備階段結束，等待進入幸運球抽取階段...")
+			// 系統會自動進入幸運球抽取階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START:
 		log.Println("開始抽取幸運號碼球...")
@@ -451,7 +518,12 @@ func (d *AutoDealer) processStage() {
 
 	case commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_CLOSED:
 		log.Println("幸運號碼球抽取結束階段...")
-		// 這個階段是中間過渡階段，無需特別操作
+		// 看出球結果（停留3秒）
+		go func() {
+			time.Sleep(3 * time.Second)
+			log.Println("查看幸運球結果結束，等待進入遊戲結束階段...")
+			// 系統會自動進入遊戲結束階段
+		}()
 
 	case commonpb.GameStage_GAME_STAGE_GAME_OVER:
 		log.Println("遊戲結束階段...")
@@ -548,6 +620,16 @@ func (d *AutoDealer) drawRegularBalls() {
 			// 繼續執行
 		}
 
+		// 檢查遊戲階段是否仍然是抽球階段
+		d.stateMutex.Lock()
+		currentStage := d.state.currentStage
+		d.stateMutex.Unlock()
+
+		if currentStage != commonpb.GameStage_GAME_STAGE_DRAWING_START {
+			log.Printf("遊戲階段已變更為 %s，停止抽取常規球", currentStage.String())
+			return
+		}
+
 		// 生成一個隨機球號 (1-75)
 		ballNumber := d.generateUniqueBallNumber(d.state.drawnRegularBalls, 75)
 
@@ -580,6 +662,10 @@ func (d *AutoDealer) drawRegularBalls() {
 				log.Printf("抽取常規球出現重複號碼，略過此號碼: %v", err)
 				// 不增加successCount，重新嘗試
 				continue
+			} else if containsString(err.Error(), "當前階段") && containsString(err.Error(), "不允許替換球") {
+				// 階段已經變更，停止抽球
+				log.Printf("遊戲階段已變更，無法繼續抽球: %v", err)
+				return
 			} else {
 				// 其他錯誤則終止
 				log.Printf("抽取常規球失敗: %v", err)
@@ -593,7 +679,15 @@ func (d *AutoDealer) drawRegularBalls() {
 
 		// 更新遊戲狀態
 		if resp.GameData != nil {
+			d.stateMutex.Lock()
 			d.state.currentStage = resp.GameData.Stage
+			d.stateMutex.Unlock()
+
+			// 檢查是否階段已變更
+			if resp.GameData.Stage != commonpb.GameStage_GAME_STAGE_DRAWING_START {
+				log.Printf("抽球後遊戲階段已變更為 %s，停止抽取常規球", resp.GameData.Stage.String())
+				return
+			}
 		}
 
 		// 添加到已抽球列表
@@ -602,6 +696,12 @@ func (d *AutoDealer) drawRegularBalls() {
 		d.stateMutex.Unlock()
 
 		log.Printf("抽取常規球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆球", ballNumber, isLast, len(drawnBalls))
+
+		// 如果這是最後一顆球，則不再抽取更多球
+		if isLast {
+			log.Println("已抽取完最後一顆常規球，完成抽球流程")
+			return
+		}
 
 		// 暫停一下，讓球抽取看起來更自然
 		time.Sleep(time.Duration(d.config.Timing.RegularBallIntervalMs) * time.Millisecond)
@@ -630,6 +730,16 @@ func (d *AutoDealer) drawExtraBalls() {
 			return
 		default:
 			// 繼續執行
+		}
+
+		// 檢查遊戲階段是否仍然是抽球階段
+		d.stateMutex.Lock()
+		currentStage := d.state.currentStage
+		d.stateMutex.Unlock()
+
+		if currentStage != commonpb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_START {
+			log.Printf("遊戲階段已變更為 %s，停止抽取額外球", currentStage.String())
+			return
 		}
 
 		// 生成一個隨機球號 (1-75)，確保和一般球不重複
@@ -667,6 +777,10 @@ func (d *AutoDealer) drawExtraBalls() {
 				log.Printf("抽取額外球出現重複號碼，略過此號碼: %v", err)
 				// 不增加successCount，重新嘗試
 				continue
+			} else if containsString(err.Error(), "當前階段") && containsString(err.Error(), "不允許替換球") {
+				// 階段已經變更，停止抽球
+				log.Printf("遊戲階段已變更，無法繼續抽球: %v", err)
+				return
 			} else {
 				// 其他錯誤則終止
 				log.Printf("抽取額外球失敗: %v", err)
@@ -680,7 +794,15 @@ func (d *AutoDealer) drawExtraBalls() {
 
 		// 更新遊戲狀態
 		if resp.GameData != nil {
+			d.stateMutex.Lock()
 			d.state.currentStage = resp.GameData.Stage
+			d.stateMutex.Unlock()
+
+			// 檢查是否階段已變更
+			if resp.GameData.Stage != commonpb.GameStage_GAME_STAGE_EXTRA_BALL_DRAWING_START {
+				log.Printf("抽球後遊戲階段已變更為 %s，停止抽取額外球", resp.GameData.Stage.String())
+				return
+			}
 		}
 
 		// 添加到已抽球列表
@@ -689,6 +811,12 @@ func (d *AutoDealer) drawExtraBalls() {
 		d.stateMutex.Unlock()
 
 		log.Printf("抽取額外球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆額外球", ballNumber, isLast, len(drawnBalls))
+
+		// 如果這是最後一顆球，則不再抽取更多球
+		if isLast {
+			log.Println("已抽取完最後一顆額外球，完成抽球流程")
+			return
+		}
 
 		// 暫停一下，讓球抽取看起來更自然
 		time.Sleep(time.Duration(d.config.Timing.ExtraBallIntervalMs) * time.Millisecond)
@@ -717,6 +845,16 @@ func (d *AutoDealer) drawLuckyBalls() {
 			return
 		default:
 			// 繼續執行
+		}
+
+		// 檢查遊戲階段是否仍然是抽球階段
+		d.stateMutex.Lock()
+		currentStage := d.state.currentStage
+		d.stateMutex.Unlock()
+
+		if currentStage != commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START {
+			log.Printf("遊戲階段已變更為 %s，停止抽取幸運球", currentStage.String())
+			return
 		}
 
 		// 生成一個隨機球號 (1-75)，與其他類型球無關
@@ -751,6 +889,10 @@ func (d *AutoDealer) drawLuckyBalls() {
 				log.Printf("抽取幸運球出現重複號碼，略過此號碼: %v", err)
 				// 不增加successCount，重新嘗試
 				continue
+			} else if containsString(err.Error(), "當前階段") && containsString(err.Error(), "不允許替換球") {
+				// 階段已經變更，停止抽球
+				log.Printf("遊戲階段已變更，無法繼續抽球: %v", err)
+				return
 			} else {
 				// 其他錯誤則終止
 				log.Printf("抽取幸運球失敗: %v", err)
@@ -764,7 +906,15 @@ func (d *AutoDealer) drawLuckyBalls() {
 
 		// 更新遊戲狀態
 		if resp.GameData != nil {
+			d.stateMutex.Lock()
 			d.state.currentStage = resp.GameData.Stage
+			d.stateMutex.Unlock()
+
+			// 檢查是否階段已變更
+			if resp.GameData.Stage != commonpb.GameStage_GAME_STAGE_DRAWING_LUCKY_BALLS_START {
+				log.Printf("抽球後遊戲階段已變更為 %s，停止抽取幸運球", resp.GameData.Stage.String())
+				return
+			}
 		}
 
 		// 添加到已抽球列表
@@ -773,6 +923,12 @@ func (d *AutoDealer) drawLuckyBalls() {
 		d.stateMutex.Unlock()
 
 		log.Printf("抽取幸運球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆幸運球", ballNumber, isLast, len(drawnBalls))
+
+		// 如果這是最後一顆球，則不再抽取更多球
+		if isLast {
+			log.Println("已抽取完最後一顆幸運球，完成抽球流程")
+			return
+		}
 
 		// 暫停一下，讓球抽取看起來更自然
 		time.Sleep(time.Duration(d.config.Timing.LuckyBallIntervalMs) * time.Millisecond)
@@ -801,6 +957,16 @@ func (d *AutoDealer) drawJPBalls() {
 			return
 		default:
 			// 繼續執行
+		}
+
+		// 檢查遊戲階段是否仍然是抽球階段
+		d.stateMutex.Lock()
+		currentStage := d.state.currentStage
+		d.stateMutex.Unlock()
+
+		if currentStage != commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START {
+			log.Printf("遊戲階段已變更為 %s，停止抽取JP球", currentStage.String())
+			return
 		}
 
 		// 生成一個隨機球號 (1-75)，與其他類型球無關
@@ -835,6 +1001,10 @@ func (d *AutoDealer) drawJPBalls() {
 				log.Printf("抽取JP球出現重複號碼，略過此號碼: %v", err)
 				// 不增加successCount，重新嘗試
 				continue
+			} else if containsString(err.Error(), "當前階段") && containsString(err.Error(), "不允許替換球") {
+				// 階段已經變更，停止抽球
+				log.Printf("遊戲階段已變更，無法繼續抽球: %v", err)
+				return
 			} else {
 				// 其他錯誤則終止
 				log.Printf("抽取JP球失敗: %v", err)
@@ -848,7 +1018,15 @@ func (d *AutoDealer) drawJPBalls() {
 
 		// 更新遊戲狀態
 		if resp.GameData != nil {
+			d.stateMutex.Lock()
 			d.state.currentStage = resp.GameData.Stage
+			d.stateMutex.Unlock()
+
+			// 檢查是否階段已變更
+			if resp.GameData.Stage != commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START {
+				log.Printf("抽球後遊戲階段已變更為 %s，停止抽取JP球", resp.GameData.Stage.String())
+				return
+			}
 		}
 
 		// 添加到已抽球列表
@@ -857,6 +1035,12 @@ func (d *AutoDealer) drawJPBalls() {
 		d.stateMutex.Unlock()
 
 		log.Printf("抽取JP球成功，號碼: %d, 是否為最後一顆: %v, 累計已抽出 %d 顆JP球", ballNumber, isLast, len(drawnBalls))
+
+		// 如果這是最後一顆球，則不再抽取更多球
+		if isLast {
+			log.Println("已抽取完最後一顆JP球，完成抽球流程")
+			return
+		}
 
 		// 暫停一下，讓球抽取看起來更自然
 		time.Sleep(time.Duration(d.config.Timing.JackpotBallIntervalMs) * time.Millisecond)
@@ -911,6 +1095,30 @@ func getConfig() (string, string, string) {
 	}
 
 	return serverAddr, roomID, configFile
+}
+
+// startDrawLuckyBalls 開始幸運球階段
+func (d *AutoDealer) startDrawLuckyBalls() {
+	log.Println("開始幸運球階段...")
+
+	// 使用StartDrawLuckyBall接口開始幸運球階段
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req := &dealerpb.StartDrawLuckyBallRequest{
+		RoomId: d.roomID,
+	}
+
+	resp, err := d.client.StartDrawLuckyBall(ctx, req)
+	if err != nil {
+		log.Printf("開始幸運球階段失敗: %v", err)
+		return
+	}
+
+	log.Printf("幸運球階段開始成功，當前階段: %s", resp.GameData.Stage.String())
+
+	// 更新自動莊家的狀態
+	d.updateGameState(resp.GameData)
 }
 
 func main() {

@@ -22,7 +22,7 @@
     "extra_ball_interval_ms": 1000,
     "jackpot_ball_interval_ms": 1000,
     "lucky_ball_interval_ms": 700,
-    "card_purchase_duration_sec": 5,
-    "game_over_wait_sec": 5
+    "card_purchase_duration_sec": 21,
+    "game_over_wait_sec": 10
   }
 } 
