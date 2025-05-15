@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"g38_lottery_service/internal/lottery_service/mq"
-	"g38_lottery_service/pkg/databaseManager"
 
+	"git.trevi.cc/server/go_gamecommon/db"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -16,7 +16,7 @@ func ProvideRedisRepository(logger *zap.Logger) *RedisRepository {
 }
 
 // ProvideTiDBRepository 提供 TiDB 實現的持久化儲存庫
-func ProvideTiDBRepository(dbManager databaseManager.DatabaseManager, logger *zap.Logger) *TiDBRepository {
+func ProvideTiDBRepository(dbManager *db.DBMgr, logger *zap.Logger) *TiDBRepository {
 	return NewTiDBRepository(dbManager, logger)
 }
 

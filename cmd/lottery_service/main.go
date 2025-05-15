@@ -14,7 +14,6 @@ import (
 	"g38_lottery_service/internal/lottery_service/grpc"
 	"g38_lottery_service/internal/lottery_service/mq"
 	"g38_lottery_service/internal/lottery_service/service"
-	"g38_lottery_service/pkg/databaseManager"
 
 	"git.trevi.cc/server/go_gamecommon/cache"
 	"git.trevi.cc/server/go_gamecommon/db"
@@ -250,29 +249,30 @@ func main() {
 	}
 	defer cache.RedisClose()
 
-	// 構建 MySQL 配置
-	var mysqlConfig *databaseManager.MySQLConfig
-	for _, dbConfig := range dbConfigs {
-		if dbConfig.Name == "g38_lottery_service" || dbConfig.Name == "lottery" {
-			// 找到彩票服務的數據庫配置
-			mysqlConfig = &databaseManager.MySQLConfig{
-				Host:      dbConfig.Host,
-				Port:      dbConfig.Port,
-				User:      dbConfig.Username,
-				Password:  dbConfig.Password,
-				Name:      dbConfig.Name,
-				Charset:   "utf8mb4",
-				ParseTime: true,
-				Loc:       "Local",
+	// 尋找並初始化對應的數據庫
+	var dbMgr *db.DBMgr
+
+	for _, cfg := range dbConfigs {
+		if cfg.Name == "g38_lottery_service" || cfg.Name == "lottery" {
+			dbMgr, err = db.NewDBMgr(cfg)
+			if err != nil {
+				log.Error("初始化數據庫失敗", zap.Error(err))
+				panic(err)
 			}
+			log.Info("數據庫連線成功",
+				zap.String("name", cfg.Name),
+				zap.String("type", cfg.Type),
+				zap.String("host", cfg.Host),
+				zap.Int("port", cfg.Port))
 			break
 		}
 	}
 
-	if mysqlConfig == nil {
+	if dbMgr == nil {
 		log.Error("未找到彩票服務的數據庫配置")
 		panic("未找到彩票服務的數據庫配置")
 	}
+	defer dbMgr.Close()
 
 	// 構建應用程序
 	app := fx.New(
@@ -280,9 +280,8 @@ func main() {
 		fx.Supply(appConfig),
 		fx.Supply(dnsresolver),
 
-		// 提供數據庫配置
-		fx.Supply(mysqlConfig),
-		fx.Provide(databaseManager.ProvideMySQLDatabaseManager),
+		// 提供數據庫管理器
+		fx.Supply(dbMgr),
 
 		// 註冊模塊
 		mq.Module,

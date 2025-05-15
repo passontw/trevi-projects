@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"g38_lottery_service/pkg/databaseManager"
-
+	"git.trevi.cc/server/go_gamecommon/db"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -124,7 +123,7 @@ type TiDBRepository struct {
 }
 
 // NewTiDBRepository 創建新的 TiDB 遊戲數據存儲庫
-func NewTiDBRepository(dbManager databaseManager.DatabaseManager, logger *zap.Logger) *TiDBRepository {
+func NewTiDBRepository(dbManager *db.DBMgr, logger *zap.Logger) *TiDBRepository {
 	// 設置自定義 logger
 	repoLogger := logger.With(zap.String("component", "tidb_repository"))
 
