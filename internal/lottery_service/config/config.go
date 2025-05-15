@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1060,15 +1061,95 @@ func ParseConfig(data []byte) (*AppConfig, error) {
 func detectAndParseConfig(data string) (map[string]interface{}, error) {
 	var result map[string]interface{}
 
-	// 嘗試解析為 JSON
-	if err := json.Unmarshal([]byte(data), &result); err == nil {
+	// 檢查是否為 XML 格式的內容
+	if strings.HasPrefix(strings.TrimSpace(data), "<?xml") {
+		log.Printf("檢測到 XML 格式配置，嘗試解析...")
+
+		// 創建 XML 配置解析器
+		type XMLConfig struct {
+			XMLName xml.Name
+			Items   []xml.Name `xml:",any"`
+			Content string     `xml:",innerxml"`
+		}
+
+		var xmlConfig XMLConfig
+		if err := xml.Unmarshal([]byte(data), &xmlConfig); err != nil {
+			log.Printf("XML 初步解析失敗: %v", err)
+			return nil, fmt.Errorf("XML 解析失敗: %w", err)
+		}
+
+		// 手動解析 XML 內容為 map
+		result = make(map[string]interface{})
+
+		// 使用正則表達式匹配所有標籤和值
+		pattern := `<([^>/]+)>([^<]+)</([^>]+)>`
+		re := regexp.MustCompile(pattern)
+		matches := re.FindAllStringSubmatch(data, -1)
+
+		for _, match := range matches {
+			if len(match) >= 3 {
+				key := strings.TrimSpace(match[1])
+				value := strings.TrimSpace(match[2])
+				log.Printf("從 XML 提取鍵值對: %s = %s", key, value)
+
+				// 嘗試轉換值到適當的類型
+				if intVal, err := strconv.Atoi(value); err == nil {
+					result[key] = intVal
+				} else if boolVal, err := strconv.ParseBool(value); err == nil && (value == "true" || value == "false") {
+					result[key] = boolVal
+				} else {
+					result[key] = value
+				}
+			}
+		}
+
+		if len(result) == 0 {
+			log.Printf("警告: XML 解析後未找到任何鍵值對")
+			return nil, fmt.Errorf("XML 解析後未找到有效配置項")
+		}
+
+		log.Printf("成功從 XML 解析了 %d 個配置項", len(result))
 		return result, nil
 	}
 
-	// 嘗試解析為 XML
-	var xmlMap map[string]interface{}
-	if err := xml.Unmarshal([]byte(data), &xmlMap); err == nil {
-		return xmlMap, nil
+	// 嘗試解析為 JSON
+	log.Printf("嘗試解析為 JSON 格式...")
+	if err := json.Unmarshal([]byte(data), &result); err == nil {
+		log.Printf("成功解析為 JSON 格式，包含 %d 個配置項", len(result))
+		return result, nil
+	} else {
+		log.Printf("JSON 解析失敗: %v", err)
+	}
+
+	// 最後嘗試作為簡單的 key=value 格式
+	log.Printf("嘗試解析為簡單的 key=value 格式...")
+	lines := strings.Split(data, "\n")
+	result = make(map[string]interface{})
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+
+			// 嘗試轉換值到適當的類型
+			if intVal, err := strconv.Atoi(value); err == nil {
+				result[key] = intVal
+			} else if boolVal, err := strconv.ParseBool(value); err == nil && (value == "true" || value == "false") {
+				result[key] = boolVal
+			} else {
+				result[key] = value
+			}
+		}
+	}
+
+	if len(result) > 0 {
+		log.Printf("成功解析為 key=value 格式，包含 %d 個配置項", len(result))
+		return result, nil
 	}
 
 	// 都失敗了，返回錯誤

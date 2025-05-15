@@ -20,6 +20,10 @@ services:
       - NACOS_PASSWORD=nacos
       - NACOS_DATAID=lottery-service
       - ENABLE_NACOS=true
+      # 設置日誌級別為 info 以減少生產環境日誌量
+      - LOG_LEVEL=info
+      - LOG_DIR=/app/logs
+      - SERVER_MODE=prod
     ports:
       - "9100:9100"  # gRPC 服務端口 (從 50051 修改為 9100)
       - "8080:8080"    # WebSocket 端口
@@ -28,17 +32,24 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 10s
+    volumes:
+      - lottery-logs:/app/logs
     depends_on:
-      - nacos
-      - redis
-      - tidb
-      - rocketmq-namesrv
-      - rocketmq-broker
+      nacos:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      tidb:
+        condition: service_healthy
+      rocketmq-namesrv:
+        condition: service_started
+      rocketmq-broker:
+        condition: service_started
     networks:
       - lottery-network
 
-  # Nacos 服務
+  # Nacos 服務註冊與配置中心
   nacos:
     image: nacos/nacos-server:latest
     container_name: nacos
@@ -49,19 +60,30 @@ services:
       - NACOS_AUTH_ENABLE=true
       - NACOS_AUTH_TOKEN_EXPIRE_SECONDS=18000
       - NACOS_AUTH_TOKEN=SecretKey012345678901234567890123456789012345678901234567890123456789
-      - JVM_XMS=512m
-      - JVM_XMX=512m
-      - JVM_XMN=256m
+      - SPRING_DATASOURCE_PLATFORM=mysql
+      - MYSQL_SERVICE_HOST=tidb
+      - MYSQL_SERVICE_PORT=4000
+      - MYSQL_SERVICE_USER=root
+      - MYSQL_SERVICE_PASSWORD=
+      - MYSQL_SERVICE_DB_NAME=nacos
     volumes:
       - nacos-data:/home/nacos/data
       - nacos-logs:/home/nacos/logs
     ports:
       - "8848:8848"
-      - "9848:9848"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8848/nacos/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      tidb:
+        condition: service_healthy
     networks:
       - lottery-network
 
-  # TiDB 服務
+  # TiDB 數據庫
   tidb:
     image: pingcap/tidb:latest
     container_name: tidb
@@ -69,13 +91,14 @@ services:
     ports:
       - "4000:4000"
       - "10080:10080"
-    command:
-      - --store=mocktikv
-      - --path=/tmp/tidb
-      - --log-file=/logs/tidb.log
     volumes:
       - tidb-data:/tmp/tidb
-      - tidb-logs:/logs
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-P", "4000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
     networks:
       - lottery-network
 
@@ -84,15 +107,20 @@ services:
     image: redis:latest
     container_name: redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass "redis123"
+    command: redis-server --requirepass redis123
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis123", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - lottery-network
 
-  # RocketMQ 名稱服務器
+  # RocketMQ NameServer
   rocketmq-namesrv:
     image: apache/rocketmq:latest
     container_name: rocketmq-namesrv
@@ -101,7 +129,6 @@ services:
       - "9876:9876"
     volumes:
       - rocketmq-namesrv-logs:/home/rocketmq/logs
-      - rocketmq-namesrv-store:/home/rocketmq/store
     command: sh mqnamesrv
     networks:
       - lottery-network
@@ -117,8 +144,8 @@ services:
     volumes:
       - rocketmq-broker-logs:/home/rocketmq/logs
       - rocketmq-broker-store:/home/rocketmq/store
-      - ./rocketmq/broker.conf:/opt/rocketmq/conf/broker.conf
-    command: sh mqbroker -n rocketmq-namesrv:9876 -c /opt/rocketmq/conf/broker.conf
+      - ./rocketmq/broker.conf:/home/rocketmq/conf/broker.conf
+    command: sh mqbroker -c /home/rocketmq/conf/broker.conf
     depends_on:
       - rocketmq-namesrv
     environment:
@@ -126,34 +153,31 @@ services:
     networks:
       - lottery-network
 
-  # RocketMQ Dashboard（管理介面）
+  # RocketMQ Dashboard
   rocketmq-dashboard:
     image: apacherocketmq/rocketmq-dashboard:latest
     container_name: rocketmq-dashboard
     restart: unless-stopped
     ports:
-      - "8180:8080"  # 修改為 8180 避免與 lottery-service 的 8080 端口衝突
+      - "8180:8080"
     environment:
       - JAVA_OPTS=-Drocketmq.namesrv.addr=rocketmq-namesrv:9876
     depends_on:
       - rocketmq-namesrv
+      - rocketmq-broker
     networks:
       - lottery-network
 
-# 定義網絡
-networks:
-  lottery-network:
-    name: lottery-network
-    driver: bridge
-
-# 定義持久化儲存
 volumes:
   nacos-data:
   nacos-logs:
   tidb-data:
-  tidb-logs:
   redis-data:
   rocketmq-namesrv-logs:
-  rocketmq-namesrv-store:
   rocketmq-broker-logs:
-  rocketmq-broker-store: 
+  rocketmq-broker-store:
+  lottery-logs:
+
+networks:
+  lottery-network:
+    driver: bridge 
