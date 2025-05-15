@@ -945,13 +945,6 @@ func (m *GameManager) GetGameStatistics(ctx context.Context) (map[string]interfa
 	}, nil
 }
 
-// pushGameSnapshot 推送遊戲快照到 RocketMQ
-func (m *GameManager) pushGameSnapshot(ctx context.Context) error {
-	// 此處僅做日誌記錄，實際功能已被移除
-	m.logger.Debug("pushGameSnapshot 被調用但功能已被移除")
-	return nil
-}
-
 // GetOnBallDrawnCallback 獲取球抽取事件回調函數
 func (m *GameManager) GetOnBallDrawnCallback() func(string, Ball) {
 	m.stageMutex.RLock()

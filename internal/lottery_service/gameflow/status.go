@@ -4,6 +4,11 @@ import (
 	"time"
 )
 
+// 常數定義
+const (
+	DefaultJackpotAmount int64 = 500000 // 預設JP金額，未來應從配置或資料庫獲取
+)
+
 // GameStatusResponse 對外推送的遊戲狀態格式
 // 參考 gamstatus.md JSON 範例
 
@@ -105,7 +110,7 @@ func BuildGameStatusResponse(game *GameData) *GameStatusResponse {
 
 	jackpot := GameStatusJackpot{
 		Active: game.HasJackpot,
-		Amount: 500000, // TODO: 從資料庫或配置取得
+		Amount: DefaultJackpotAmount,
 	}
 
 	// 如果有Jackpot實例，填充其他欄位
