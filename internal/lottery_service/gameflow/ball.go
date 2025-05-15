@@ -97,6 +97,7 @@ func NewGameData(gameID string, roomID string) *GameData {
 		HasJackpot:     true, // 將所有遊戲設為有 JP
 		IsCancelled:    false,
 		LastUpdateTime: now,
+		SelectedSide:   "", // 明確初始化為空字串，確保不是nil
 	}
 }
 

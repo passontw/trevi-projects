@@ -983,6 +983,7 @@ func (a *DealerServiceAdapter) GetGameStatus(ctx context.Context, req *dealerpb.
 
 	// 從遊戲管理器獲取當前遊戲數據
 	currentGame := a.gameManager.GetCurrentGameByRoom(roomID)
+	a.logger.Info("當前遊戲 GetGameStatus:", zap.String("roomID", roomID), zap.String("gameID", currentGame.GameID), zap.String("selectedSide", string(currentGame.SelectedSide)), zap.String("stage", string(currentGame.CurrentStage)))
 	if currentGame == nil {
 		a.logger.Warn("無法找到指定房間的遊戲",
 			zap.String("roomID", roomID))
@@ -991,7 +992,7 @@ func (a *DealerServiceAdapter) GetGameStatus(ctx context.Context, req *dealerpb.
 
 	// 使用統一方法轉換遊戲數據
 	gameData := a.convertGameDataToPb(currentGame)
-
+	a.logger.Info("轉換後的遊戲數據 GetGameStatus:", zap.String("roomID", roomID), zap.String("gameID", gameData.GameId), zap.String("selectedSide", string(gameData.SelectedSide)), zap.String("stage", gameData.Stage.String()))
 	// 構建最終的響應
 	resp := &dealerpb.GetGameStatusResponse{
 		GameData:       gameData,
@@ -1312,13 +1313,42 @@ func (a *DealerServiceAdapter) convertGameDataToPb(gameData *gameflow.GameData) 
 
 	// 轉換選擇的額外球一側
 	var selectedSide commonpb.ExtraBallSide
-	switch gameData.SelectedSide {
-	case gameflow.ExtraBallSideLeft:
+
+	// 處理 selectedSide，支援多種可能的值格式
+	switch {
+	case gameData.SelectedSide == gameflow.ExtraBallSideLeft || gameData.SelectedSide == "EXTRA_BALL_SIDE_LEFT":
 		selectedSide = commonpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT
-	case gameflow.ExtraBallSideRight:
+		a.logger.Debug("額外球側面設置為左側",
+			zap.String("roomID", gameData.RoomID),
+			zap.String("gameID", gameData.GameID),
+			zap.String("selectedSide", string(gameData.SelectedSide)))
+	case gameData.SelectedSide == gameflow.ExtraBallSideRight || gameData.SelectedSide == "EXTRA_BALL_SIDE_RIGHT":
 		selectedSide = commonpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT
+		a.logger.Debug("額外球側面設置為右側",
+			zap.String("roomID", gameData.RoomID),
+			zap.String("gameID", gameData.GameID),
+			zap.String("selectedSide", string(gameData.SelectedSide)))
 	default:
-		selectedSide = commonpb.ExtraBallSide_EXTRA_BALL_SIDE_UNSPECIFIED
+		// 當SelectedSide為空但遊戲階段已經到達或超過額外球抽取階段時，預設為LEFT
+		isExtraBallStage := gameData.CurrentStage == gameflow.StageExtraBallDrawingStart ||
+			gameData.CurrentStage == gameflow.StageExtraBallDrawingClose ||
+			gameData.CurrentStage == gameflow.StageExtraBallWaitClaim ||
+			gameData.CurrentStage == gameflow.StagePayoutSettlement
+
+		if gameData.SelectedSide == "" && (isExtraBallStage || len(gameData.ExtraBalls) > 0) {
+			a.logger.Warn("遊戲處於額外球相關階段但SelectedSide為空，自動設為LEFT",
+				zap.String("roomID", gameData.RoomID),
+				zap.String("gameID", gameData.GameID),
+				zap.String("stage", string(gameData.CurrentStage)))
+			selectedSide = commonpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT
+		} else {
+			selectedSide = commonpb.ExtraBallSide_EXTRA_BALL_SIDE_UNSPECIFIED
+			a.logger.Debug("額外球側面設置為未指定",
+				zap.String("roomID", gameData.RoomID),
+				zap.String("gameID", gameData.GameID),
+				zap.String("stage", string(gameData.CurrentStage)),
+				zap.String("selectedSide", string(gameData.SelectedSide)))
+		}
 	}
 
 	// 創建基礎 GameData 結構
