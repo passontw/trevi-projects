@@ -453,25 +453,23 @@ func (m *GameManager) GetCurrentGameByRoom(roomID string) *GameData {
 	return nil
 }
 
-// AdvanceStageForRoom 將特定房間的遊戲推進到下一階段
+// AdvanceStageForRoom 將指定房間的遊戲推進到下一階段
 func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, autoAdvance bool) error {
 	m.stageMutex.Lock()
 
-	// 獲取指定房間的遊戲
+	// 從當前遊戲映射中獲取遊戲
 	game, exists := m.currentGames[roomID]
 	if !exists || game == nil {
 		m.stageMutex.Unlock()
 		return ErrGameNotFound
 	}
 
-	// 記錄當前階段
 	previousStage := game.CurrentStage
-	m.logger.Info("準備階段轉換",
+	m.logger.Info("推進遊戲階段",
 		zap.String("roomID", roomID),
 		zap.String("gameID", game.GameID),
 		zap.String("currentStage", string(previousStage)))
 
-	// 如果是 StagePayoutSettlement 階段，進行幸運球檢查並決定下一階段
 	var nextStage GameStage
 	if previousStage == StagePayoutSettlement {
 		// 從 Redis 獲取當前幸運球
@@ -557,6 +555,28 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 			}
 		}
 
+		nextStage = GetNextStage(previousStage, game.HasJackpot)
+	} else if previousStage == StageExtraBallSideSelectBettingClosed {
+		// 從 StageExtraBallSideSelectBettingClosed 階段轉換到 StageExtraBallDrawingStart 階段時
+		// 使用 sidePicker 選擇一側
+		selectedSide, err := m.sidePicker.PickSide()
+		if err != nil {
+			m.logger.Error("選擇額外球一側失敗",
+				zap.String("roomID", roomID),
+				zap.String("gameID", game.GameID),
+				zap.Error(err))
+			// 如果選擇失敗，使用默認左側
+			selectedSide = ExtraBallSideLeft
+		}
+
+		// 設置選擇的一側
+		game.SelectedSide = selectedSide
+		m.logger.Info("額外球一側已選擇",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID),
+			zap.String("selectedSide", string(selectedSide)))
+
+		// 獲取下一階段
 		nextStage = GetNextStage(previousStage, game.HasJackpot)
 	} else {
 		// 其他階段使用標準轉換

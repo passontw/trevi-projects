@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // PlayerCommunicationServiceWrapper 是新 API 到舊 API 的包裝器
@@ -193,34 +194,37 @@ func convertGameDataToNewPb(gameData *gameflow.GameData) *dealerpb.GameData {
 
 	// 轉換所有球
 	// 使用 RegularBalls 作為 DrawnBalls
-	drawnBalls := make([]*dealerpb.Ball, 0, len(gameData.RegularBalls))
+	regularBalls := make([]*dealerpb.Ball, 0, len(gameData.RegularBalls))
 	for _, ball := range gameData.RegularBalls {
-		drawnBalls = append(drawnBalls, convertBallToNewPb(ball))
+		regularBalls = append(regularBalls, convertBallToNewPb(ball))
 	}
 
-	// ExtraBalls需要轉換為map格式
-	extraBallsMap := make(map[string]*dealerpb.Ball)
-	for i, ball := range gameData.ExtraBalls {
-		key := "extra_" + string(rune('a'+i))
-		if i == 0 {
-			key = "left"
-		} else if i == 1 {
-			key = "right"
+	// 轉換額外球
+	extraBalls := make([]*dealerpb.Ball, 0, len(gameData.ExtraBalls))
+	for _, ball := range gameData.ExtraBalls {
+		extraBalls = append(extraBalls, convertBallToNewPb(ball))
+	}
+
+	// 處理頭獎球和幸運球
+	var jackpot *dealerpb.JackpotGame
+	if gameData.Jackpot != nil {
+		jackpot = &dealerpb.JackpotGame{
+			LuckyBalls: []*dealerpb.Ball{},
+			DrawnBalls: []*dealerpb.Ball{},
 		}
-		extraBallsMap[key] = convertBallToNewPb(ball)
-	}
 
-	// 處理頭獎球
-	var jackpotBall *dealerpb.Ball
-	if gameData.Jackpot != nil && len(gameData.Jackpot.DrawnBalls) > 0 {
-		jackpotBall = convertBallToNewPb(gameData.Jackpot.DrawnBalls[0])
-	}
+		// 處理幸運球
+		if len(gameData.Jackpot.LuckyBalls) > 0 {
+			for _, ball := range gameData.Jackpot.LuckyBalls {
+				jackpot.LuckyBalls = append(jackpot.LuckyBalls, convertBallToNewPb(ball))
+			}
+		}
 
-	// 處理幸運球
-	luckyBalls := make([]*dealerpb.Ball, 0)
-	if gameData.Jackpot != nil && len(gameData.Jackpot.LuckyBalls) > 0 {
-		for _, ball := range gameData.Jackpot.LuckyBalls {
-			luckyBalls = append(luckyBalls, convertBallToNewPb(ball))
+		// 處理JP球
+		if len(gameData.Jackpot.DrawnBalls) > 0 {
+			for _, ball := range gameData.Jackpot.DrawnBalls {
+				jackpot.DrawnBalls = append(jackpot.DrawnBalls, convertBallToNewPb(ball))
+			}
 		}
 	}
 
@@ -233,48 +237,64 @@ func convertGameDataToNewPb(gameData *gameflow.GameData) *dealerpb.GameData {
 		updatedAt = gameData.LastUpdateTime.Unix()
 	}
 
+	// 轉換選擇的額外球一側
+	var selectedSide commonpb.ExtraBallSide
+	switch gameData.SelectedSide {
+	case gameflow.ExtraBallSideLeft:
+		selectedSide = commonpb.ExtraBallSide_EXTRA_BALL_SIDE_LEFT
+	case gameflow.ExtraBallSideRight:
+		selectedSide = commonpb.ExtraBallSide_EXTRA_BALL_SIDE_RIGHT
+	default:
+		selectedSide = commonpb.ExtraBallSide_EXTRA_BALL_SIDE_UNSPECIFIED
+	}
+
 	// 返回新的GameData結構，根據 game.proto 中的 GameData 定義
 	return &dealerpb.GameData{
-		Id:          gameData.GameID,
-		RoomId:      gameData.RoomID,
-		Stage:       gameStage,
-		Status:      getGameStatusFromStage(gameStage),
-		DrawnBalls:  drawnBalls,
-		ExtraBalls:  extraBallsMap,
-		JackpotBall: jackpotBall,
-		LuckyBalls:  luckyBalls,
-		CreatedAt:   gameData.StartTime.Unix(),
-		UpdatedAt:   updatedAt,
-		DealerId:    "system", // 使用默認值
+		GameId:         gameData.GameID,
+		RoomId:         gameData.RoomID,
+		Stage:          gameStage,
+		RegularBalls:   regularBalls,
+		ExtraBalls:     extraBalls,
+		SelectedSide:   selectedSide,
+		ExtraBallCount: int32(gameData.ExtraBallCount),
+		HasJackpot:     gameData.HasJackpot,
+		Jackpot:        jackpot,
+		Status:         getGameStatusFromStage(gameStage),
+		CreatedAt:      gameData.StartTime.Unix(),
+		UpdatedAt:      updatedAt,
+		DealerId:       "system", // 使用默認值
 	}
 }
 
 // convertBallToNewPb 將 gameflow.Ball 轉換為新版本的 Proto 結構
 func convertBallToNewPb(ball gameflow.Ball) *dealerpb.Ball {
-	// 生成球ID
-	ballID := uuid.New().String()[:8]
-
-	// 獲取球號顏色
-	color := "white"
-	number := ball.Number
-	if number <= 15 {
-		color = "red"
-	} else if number <= 30 {
-		color = "yellow"
-	} else if number <= 45 {
-		color = "blue"
-	} else if number <= 60 {
-		color = "green"
-	} else {
-		color = "purple"
+	// 創建timestamp
+	timestamp := &timestamppb.Timestamp{
+		Seconds: ball.Timestamp.Unix(),
+		Nanos:   int32(ball.Timestamp.Nanosecond()),
 	}
 
 	return &dealerpb.Ball{
-		Id:      ballID,
-		Number:  int32(number),
-		Color:   color,
-		IsOdd:   number%2 == 1,
-		IsSmall: number <= 20,
+		Number:    int32(ball.Number),
+		Type:      convertBallType(ball.Type),
+		IsLast:    ball.IsLast,
+		Timestamp: timestamp,
+	}
+}
+
+// convertBallType 將 gameflow.BallType 轉換為 dealerpb.BallType
+func convertBallType(ballType gameflow.BallType) dealerpb.BallType {
+	switch ballType {
+	case gameflow.BallTypeRegular:
+		return dealerpb.BallType_BALL_TYPE_REGULAR
+	case gameflow.BallTypeExtra:
+		return dealerpb.BallType_BALL_TYPE_EXTRA
+	case gameflow.BallTypeJackpot:
+		return dealerpb.BallType_BALL_TYPE_JACKPOT
+	case gameflow.BallTypeLucky:
+		return dealerpb.BallType_BALL_TYPE_LUCKY
+	default:
+		return dealerpb.BallType_BALL_TYPE_UNSPECIFIED
 	}
 }
 
@@ -308,7 +328,7 @@ func convertGameStageToCommonPb(stage gameflow.GameStage) commonpb.GameStage {
 	case gameflow.StagePayoutSettlement:
 		return commonpb.GameStage_GAME_STAGE_PAYOUT_SETTLEMENT
 	case gameflow.StageJackpotPreparation:
-		return commonpb.GameStage_GAME_STAGE_JACKPOT_START
+		return commonpb.GameStage_GAME_STAGE_JACKPOT_PREPARATION
 	case gameflow.StageJackpotDrawingStart:
 		return commonpb.GameStage_GAME_STAGE_JACKPOT_DRAWING_START
 	case gameflow.StageJackpotDrawingClosed:
@@ -333,11 +353,11 @@ func getGameStatusFromStage(stage commonpb.GameStage) dealerpb.GameStatus {
 	case stage == commonpb.GameStage_GAME_STAGE_UNSPECIFIED:
 		return dealerpb.GameStatus_GAME_STATUS_UNSPECIFIED
 	case stage == commonpb.GameStage_GAME_STAGE_PREPARATION:
-		return dealerpb.GameStatus_GAME_STATUS_NOT_STARTED
+		return dealerpb.GameStatus_GAME_STATUS_IDLE
 	case stage == commonpb.GameStage_GAME_STAGE_GAME_OVER:
 		return dealerpb.GameStatus_GAME_STATUS_COMPLETED
 	case stage >= commonpb.GameStage_GAME_STAGE_NEW_ROUND && stage < commonpb.GameStage_GAME_STAGE_GAME_OVER:
-		return dealerpb.GameStatus_GAME_STATUS_RUNNING
+		return dealerpb.GameStatus_GAME_STATUS_IN_PROGRESS
 	default:
 		return dealerpb.GameStatus_GAME_STATUS_UNSPECIFIED
 	}

@@ -3,8 +3,11 @@ description:
 globs: 
 alwaysApply: true
 ---
-
-# Your rule content
+---
+description: 
+globs: 
+alwaysApply: false
+---
 
 always 使用繁體中文回覆
 
@@ -191,10 +194,8 @@ always 使用繁體中文回覆
     - 在不同設備類型上進行可用性測試。
 
     保持與最新的響應式設計技術和瀏覽器功能的同步。  
-    參考行業標準指南，並持續關注最新的 UI/UX 趨勢和最佳實踐。
-
-## 參考資源
-- [PostgreSQL Documentation](mdc:https:/www.postgresql.org/docs)
-- [Redis Documentation](mdc:https:/redis.io/documentation)
-- [Go Programming Language](mdc:https:/golang.org/doc)
-- [UI/UX Design Principles](mdc:https:/www.nngroup.com/articles/ux-design)
+    參考行業標準指南，並持續關注最新訂規則數 檔資源
+ion
+- @Redis Documentation
+- @Go Programming Language
+- @UI/UX Design Principles

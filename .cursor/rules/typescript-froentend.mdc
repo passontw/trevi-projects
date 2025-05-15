@@ -259,3 +259,9 @@ alwaysApply: false
 - Keep styles close to components
 - Use proper imports/exports
 - Document complex component logic 
+
+
+### 額外自訂規則
+
+* 調整完如果有確認用不到的變數 函數 檔案或是模組 可以檢查確定之後 刪除
+* 開發遵循 單一責任原則
