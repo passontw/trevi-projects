@@ -10,6 +10,8 @@ services:
     container_name: lottery-service
     restart: unless-stopped
     environment:
+      - NACOS_ADDR=http://nacos:8848
+      # 保留舊版環境變數以確保向後相容
       - NACOS_HOST=nacos
       - NACOS_PORT=8848
       - NACOS_NAMESPACE=public

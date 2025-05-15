@@ -77,14 +77,17 @@ docker-compose logs -f
 
 您可以通過編輯 `.env` 文件或在 `docker-compose.yml` 中設置以下環境變數：
 
-- `NACOS_HOST`: Nacos 服務主機
-- `NACOS_PORT`: Nacos 服務端口
+- `NACOS_ADDR`: Nacos 服務地址（必須使用格式：http://host:port 或 https://host:port）
+- `NACOS_HOST`: Nacos 服務主機（已棄用，請使用 NACOS_ADDR）
+- `NACOS_PORT`: Nacos 服務端口（已棄用，請使用 NACOS_ADDR）
 - `NACOS_NAMESPACE`: Nacos 命名空間
 - `NACOS_GROUP`: Nacos 組
 - `NACOS_USERNAME`: Nacos 用戶名
 - `NACOS_PASSWORD`: Nacos 密碼
 - `NACOS_DATAID`: Nacos 數據 ID
 - `ENABLE_NACOS`: 是否啟用 Nacos
+
+> **注意**: `NACOS_ADDR` 環境變數必須使用標準格式 `http://host:port` 或 `https://host:port`，其他格式將被拒絕並使用默認值 `http://127.0.0.1:8848`。
 
 ## 健康檢查
 
