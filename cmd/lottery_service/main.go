@@ -16,7 +16,6 @@ import (
 	"g38_lottery_service/internal/lottery_service/service"
 	"g38_lottery_service/pkg/databaseManager"
 	"g38_lottery_service/pkg/nacosManager"
-	redis "g38_lottery_service/pkg/redisManager"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -52,7 +51,7 @@ func main() {
 		// 註冊配置模塊
 		config.Module,
 		// 註冊 Redis 模塊
-		redis.Module,
+		config.RedisModule,
 		// 註冊數據庫模塊
 		fx.Provide(func(cfg *config.AppConfig) *databaseManager.MySQLConfig {
 			return &databaseManager.MySQLConfig{

@@ -8,6 +8,14 @@ $ export GOPRIVATE=git.trevi.cc
 
 [詳細解說](./docs/go_private.md)
 
+### Local repo package install 
+
+#### git.trevi.cc/server/go_gamecommon
+
+```
+$ go get git.trevi.cc/server/go_gamecommon@8651c802502d3ce53bf80f81268b350b20e526a4
+```
+
 ## 一、系統概述
 
 賓果抽球遊戲服務是一個基於 Go 語言實現的實時開獎服務，支持賓果球遊戲的完整流程管理。系統通過 WebSocket 與荷官端和遊戲端建立雙向通訊，提供高效、穩定的開獎體驗。服務使用 Uber FX 進行依賴注入，Redis 進行遊戲狀態持久化，TiDB 進行歷史資料儲存。

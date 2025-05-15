@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.4
-FROM golang:1.24.0-bookworm AS builder
+FROM golang:1.24.1-bookworm AS builder
 
 # 設定環境變數
 ENV GO111MODULE=on \

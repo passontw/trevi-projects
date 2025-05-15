@@ -5,15 +5,14 @@ import (
 
 	"g38_lottery_service/internal/lottery_service/mq"
 	"g38_lottery_service/pkg/databaseManager"
-	redis "g38_lottery_service/pkg/redisManager"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
 
 // ProvideRedisRepository 提供 Redis 實現的遊戲儲存庫
-func ProvideRedisRepository(redisManager redis.RedisManager, logger *zap.Logger) *RedisRepository {
-	return NewRedisRepository(redisManager, logger)
+func ProvideRedisRepository(logger *zap.Logger) *RedisRepository {
+	return NewRedisRepository(logger)
 }
 
 // ProvideTiDBRepository 提供 TiDB 實現的持久化儲存庫
