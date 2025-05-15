@@ -1,3 +1,7 @@
+git.trevi.cc/server/go_gamecommon v1.0.1 h1:nBn1cAAnxeFG+0B5oZIppTYRFhAxjEEhsC0RBk4xRFA=
+git.trevi.cc/server/go_gamecommon v1.0.1/go.mod h1:nM6MvuiY9ViOdAc96P9j08MhSooJ+Ec0WZ73BVilXX8=
+git.trevi.cc/server/go_gameservice v0.0.0-20250416073958-c748755615bb h1:iIUQa2ijr8rJKuK54epYJg4TZifRYU6rll3JIDAbiVw=
+git.trevi.cc/server/go_gameservice v0.0.0-20250416073958-c748755615bb/go.mod h1:iBNHkv63YfEkKk9kGHu4efYu35DvODkq3ofGHzqYGTs=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/BurntSushi/toml v1.1.0/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
 github.com/aliyun/alibaba-cloud-sdk-go v1.61.18 h1:zOVTBdCKFd9JbCKz9/nt+FovbjPFmb7mUnp8nH9fQBA=
