@@ -194,8 +194,15 @@ always 使用繁體中文回覆
     - 在不同設備類型上進行可用性測試。
 
     保持與最新的響應式設計技術和瀏覽器功能的同步。  
-    參考行業標準指南，並持續關注最新訂規則數 檔資源
-ion
+    參考行業標準指南，並持續關注最新的 UI/UX 趨勢和最佳實踐。
+
+### 額外自訂規則
+
+* 調整完如果有確認用不到的變數 函數 檔案或是模組 可以檢查確定之後 刪除
+* 開發遵循 單一責任原則
+
+## 參考資源
+- @PostgreSQL Documentation
 - @Redis Documentation
 - @Go Programming Language
 - @UI/UX Design Principles
