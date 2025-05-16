@@ -2,12 +2,11 @@ module g38_lottery_service
 
 go 1.24.1
 
-toolchain go1.24.3
-
 require (
 	git.trevi.cc/server/go_gamecommon v1.0.2-0.20250515080723-8651c802502d
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/nacos-group/nacos-sdk-go v1.1.5
 	github.com/redis/go-redis/v9 v9.8.0
@@ -33,7 +32,7 @@ require (
 	github.com/gopherjs/gopherjs v0.0.0-20200217142428-fce0ec30dd00 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/jmespath/go-jmespath v0.0.0-20180206201540-c2b33e8439af // indirect
+	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
