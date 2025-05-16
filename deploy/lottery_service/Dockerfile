@@ -1,22 +1,34 @@
 # syntax=docker/dockerfile:1.4
 FROM golang:1.24.1-bookworm AS builder
 
+# 增加代理參數
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
 # 設定環境變數
 ENV GO111MODULE=on \
     GOPROXY=https://goproxy.cn,direct \
     GOSUMDB=off \
     CGO_ENABLED=0 \
     GONOSUMDB=* \
-    GOPRIVATE=* \
+    GOPRIVATE=git.trevi.cc/* \
     # 優化 Go 模組下載設定
     GOCACHE=/go/cache \
     GOMODCACHE=/go/mod \
     # 平行下載以提高速度
-    GOMAXPROCS=8
+    GOMAXPROCS=8 \
+    # 設定代理(如果提供)
+    HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY}
 
 # 增加構建參數來接收 Git 相關信息
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
+# 增加Git認證參數
+ARG GIT_USER
+ARG GIT_PASSWORD
 
 # 安裝必要工具 (合併命令減少層數)
 RUN --mount=type=cache,target=/var/cache/apt \
@@ -27,13 +39,19 @@ RUN --mount=type=cache,target=/var/cache/apt \
 # 設定工作目錄
 WORKDIR /go/src/g38_lottery_service
 
+# 配置Git以訪問私有倉庫(如果提供了認證參數)
+RUN if [ -n "$GIT_USER" ] && [ -n "$GIT_PASSWORD" ]; then \
+    git config --global url."https://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "https://git.trevi.cc" && \
+    git config --global url."https://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "git.trevi.cc"; \
+    fi
+
 # 先複製 go.mod 和 go.sum (如果存在)
 COPY go.mod go.sum* ./
 
 # 預下載依賴 - 使用 BuildKit 緩存掛載加速下載
 RUN --mount=type=cache,target=/go/mod \
     --mount=type=cache,target=/go/cache \
-    go mod download -x && \
+    go mod download -x || true && \
     # 直接下載關鍵的依賴項，確保它們被正確快取
     go get -v github.com/apache/rocketmq-client-go/v2@latest && \
     go get -v github.com/apache/rocketmq-client-go/v2/primitive && \
