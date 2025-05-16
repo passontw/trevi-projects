@@ -46,7 +46,7 @@ WORKDIR /go/src/g38_lottery_service
 # 僅使用 HTTP 協議
 RUN if [ -n "$GIT_USER" ] && [ -n "$GIT_PASSWORD" ]; then \
     echo "配置 Git 認證 (僅使用 HTTP)..." && \
-    # 僅使用 HTTP
+    # 僅使用 HTTP - 使用更廣泛的模式匹配
     git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "http://git.trevi.cc" && \
     git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "https://git.trevi.cc" && \
     git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "git.trevi.cc" && \
@@ -57,6 +57,11 @@ RUN if [ -n "$GIT_USER" ] && [ -n "$GIT_PASSWORD" ]; then \
     # 設定更高的超時時間以應對可能的網絡延遲
     git config --global http.lowSpeedLimit 1000 && \
     git config --global http.lowSpeedTime 30 && \
+    # 禁用交互式提示
+    git config --global core.askPass "" && \
+    # 創建 .netrc 文件作為備用認證方法
+    echo "machine git.trevi.cc login ${GIT_USER} password ${GIT_PASSWORD}" > /root/.netrc && \
+    chmod 600 /root/.netrc && \
     # 顯示 Git 設定以供確認
     echo "Git configuration:" && \
     git config --global --list | grep -v password; \
@@ -94,7 +99,14 @@ RUN echo "安裝 protobuf 工具..." && \
 
 # 為了確保私有模組能夠被正確訪問，再次同步依賴
 RUN echo "代碼複製後同步依賴..." && \
-    GOPROXY=direct go mod tidy || echo "mod tidy 警告，但繼續構建..." && \
+    # 檢查 git 認證設定
+    echo "Git 認證設定狀態:" && \
+    git config --global --get-regexp url || echo "未設定 Git URL 重寫" && \
+    # 嘗試使用 .netrc 方式
+    echo "使用帶有 .netrc 認證的 git 命令測試:" && \
+    (git ls-remote http://git.trevi.cc/server/go_gamecommon.git || echo "無法連接，但繼續構建...") && \
+    # 使用環境變數嘗試 go mod tidy
+    GOPROXY=direct GIT_TERMINAL_PROMPT=0 go mod tidy -v || echo "mod tidy 警告，但繼續構建..." && \
     # 顯示模組圖用於調試
     echo "模組依賴關係:" && \
     go mod graph | grep trevi || echo "在依賴關係中找不到 trevi 模組" && \
@@ -104,7 +116,7 @@ RUN echo "代碼複製後同步依賴..." && \
 
 # 構建應用程序 (使用 -ldflags 減小二進制檔案大小)
 RUN echo "使用 -mod=mod 構建應用程序，以確保使用已下載的模組..." && \
-    GOPROXY=direct go build -v -mod=mod -ldflags="-s -w -X 'main.GitHash=${GIT_COMMIT}' -X 'main.BuildTime=${BUILD_TIME}'" -o lottery_service ./cmd/lottery_service/main.go
+    GOPROXY=direct GIT_TERMINAL_PROMPT=0 go build -v -mod=mod -ldflags="-s -w -X 'main.GitHash=${GIT_COMMIT}' -X 'main.BuildTime=${BUILD_TIME}'" -o lottery_service ./cmd/lottery_service/main.go
 
 # 最終階段 - 使用更小的基礎映像
 FROM alpine:3.19
