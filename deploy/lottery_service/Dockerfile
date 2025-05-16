@@ -93,9 +93,7 @@ RUN echo "安裝 protobuf 工具..." && \
     ./scripts/gen-proto-buf.sh || echo "警告: Proto 生成可能有問題，但繼續構建..."
 
 # 為了確保私有模組能夠被正確訪問，再次同步依賴
-RUN --mount=type=cache,target=/go/mod \
-    --mount=type=cache,target=/go/cache \
-    echo "代碼複製後同步依賴..." && \
+RUN echo "代碼複製後同步依賴..." && \
     GOPROXY=direct go mod tidy || echo "mod tidy 警告，但繼續構建..." && \
     # 顯示模組圖用於調試
     echo "模組依賴關係:" && \
@@ -105,9 +103,7 @@ RUN --mount=type=cache,target=/go/mod \
     go list -m all | grep trevi || echo "在依賴列表中找不到 trevi 模組"
 
 # 構建應用程序 (使用 -ldflags 減小二進制檔案大小)
-RUN --mount=type=cache,target=/go/mod \
-    --mount=type=cache,target=/go/cache \
-    echo "使用 -mod=mod 構建應用程序，以確保使用已下載的模組..." && \
+RUN echo "使用 -mod=mod 構建應用程序，以確保使用已下載的模組..." && \
     GOPROXY=direct go build -v -mod=mod -ldflags="-s -w -X 'main.GitHash=${GIT_COMMIT}' -X 'main.BuildTime=${BUILD_TIME}'" -o lottery_service ./cmd/lottery_service/main.go
 
 # 最終階段 - 使用更小的基礎映像
