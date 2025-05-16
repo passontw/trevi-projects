@@ -226,8 +226,8 @@ pipeline {
                             docker build -t ${env.FULL_IMAGE_NAME} . -f ${env.DOCKERFILE_PATH} \\
                                 --build-arg GIT_COMMIT="${gitCommit}" \\
                                 --build-arg BUILD_TIME="${buildTime}" \\
-                                --build-arg GIT_USER="${GIT_USER}" \\
-                                --build-arg GIT_PASSWORD="${GIT_PWD}" \\
+                                --build-arg GIT_USER="jenkins_deploy" \\
+                                --build-arg GIT_PASSWORD="2fhk-fS45whs-nxSS-LE" \\
                                 --no-cache --progress=plain
                         """
                         
