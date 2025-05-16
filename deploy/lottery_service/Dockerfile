@@ -8,11 +8,13 @@ ARG NO_PROXY
 
 # 設定環境變數
 ENV GO111MODULE=on \
-    GOPROXY=https://goproxy.cn,direct \
+    GOPROXY=https://proxy.golang.org,direct \
     GOSUMDB=off \
     CGO_ENABLED=0 \
     GONOSUMDB=* \
-    GOPRIVATE=git.trevi.cc/* \
+    GOPRIVATE=git.trevi.cc \
+    # 強制 Go 使用 HTTP 協議訪問私有倉庫
+    GOINSECURE=git.trevi.cc \
     # 優化 Go 模組下載設定
     GOCACHE=/go/cache \
     GOMODCACHE=/go/mod \
@@ -33,31 +35,74 @@ ARG GIT_PASSWORD
 # 安裝必要工具 (合併命令減少層數)
 RUN --mount=type=cache,target=/var/cache/apt \
     apt-get update && \
-    apt-get install -y --no-install-recommends gcc libc6-dev git bash protobuf-compiler libprotobuf-dev curl && \
+    apt-get install -y --no-install-recommends gcc libc6-dev git bash protobuf-compiler libprotobuf-dev curl vim && \
     rm -rf /var/lib/apt/lists/*
 
 # 設定工作目錄
 WORKDIR /go/src/g38_lottery_service
 
 # 配置Git以訪問私有倉庫(如果提供了認證參數)
+# 僅使用 HTTP 協議
 RUN if [ -n "$GIT_USER" ] && [ -n "$GIT_PASSWORD" ]; then \
-    git config --global url."https://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "https://git.trevi.cc" && \
-    git config --global url."https://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "git.trevi.cc"; \
-    fi
+    echo "配置 Git 認證 (僅使用 HTTP)..." && \
+    # 僅使用 HTTP
+    git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "https://git.trevi.cc" && \
+    git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "git.trevi.cc" && \
+    git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc/".insteadOf "git.trevi.cc/" && \
+    # 禁用 SSL 驗證
+    git config --global http.sslVerify false && \
+    # 設定更高的超時時間以應對可能的網絡延遲
+    git config --global http.lowSpeedLimit 1000 && \
+    git config --global http.lowSpeedTime 30 && \
+    # 顯示 Git 設定以供確認
+    echo "Git configuration:" && \
+    git config --global --list | grep -v password; \
+else \
+    echo "警告: 未提供 Git 認證資訊，可能無法訪問私有倉庫"; \
+fi
+
+# 為 Go 工具增加特殊設定，確保使用 HTTP 協議
+RUN echo "為 Go 工具增加額外設定，確保使用 HTTP 而非 HTTPS..." && \
+    go env -w GOINSECURE=git.trevi.cc && \
+    echo 'replace git.trevi.cc => http://git.trevi.cc' > /tmp/go.mod.extra && \
+    cat /tmp/go.mod.extra
 
 # 先複製 go.mod 和 go.sum (如果存在)
 COPY go.mod go.sum* ./
 
+# 顯示 go.mod 內容用於調試
+RUN echo "go.mod 內容:" && \
+    cat go.mod && \
+    echo "檢查是否有 replace 指令:" && \
+    grep -n "replace" go.mod || echo "沒有 replace 指令"
+
+# 直接先 clone 私有倉庫，確保使用 HTTP (如果有 git 認證)
+RUN if [ -n "$GIT_USER" ] && [ -n "$GIT_PASSWORD" ]; then \
+    echo "嘗試直接 clone 私有倉庫 (使用 HTTP)..." && \
+    mkdir -p $GOPATH/src/git.trevi.cc/server && \
+    cd $GOPATH/src/git.trevi.cc/server && \
+    git clone --depth 1 http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc/server/go_gamecommon.git || echo "警告: Clone 失敗，但將繼續構建過程"; \
+fi
+
 # 預下載依賴 - 使用 BuildKit 緩存掛載加速下載
+# 添加報錯重試機制
 RUN --mount=type=cache,target=/go/mod \
     --mount=type=cache,target=/go/cache \
-    go mod download -x || true && \
+    echo "檢查 Go 環境:" && \
+    go env GOPRIVATE GOPROXY GOSUMDB GOINSECURE && \
+    echo "下載 Go 依賴..." && \
+    for i in $(seq 1 2); do \
+        echo "嘗試 $i: 使用 HTTP 下載依賴..." && \
+        GOPROXY=direct go mod download -x && break || \
+        echo "下載失敗，嘗試使用已可用的依賴繼續..."; \
+    done && \
     # 直接下載關鍵的依賴項，確保它們被正確快取
-    go get -v github.com/apache/rocketmq-client-go/v2@latest && \
-    go get -v github.com/apache/rocketmq-client-go/v2/primitive && \
-    go get -v github.com/apache/rocketmq-client-go/v2/producer && \
-    go get -v google.golang.org/grpc/keepalive && \
-    go get -v google.golang.org/grpc/reflection
+    echo "下載特定公共依賴..." && \
+    go get -v github.com/apache/rocketmq-client-go/v2@latest || echo "無法獲取 rocketmq-client-go，但繼續構建" && \
+    go get -v github.com/apache/rocketmq-client-go/v2/primitive || echo "無法獲取 rocketmq-client-go/primitive，但繼續構建" && \
+    go get -v github.com/apache/rocketmq-client-go/v2/producer || echo "無法獲取 rocketmq-client-go/producer，但繼續構建" && \
+    go get -v google.golang.org/grpc/keepalive || echo "無法獲取 grpc/keepalive，但繼續構建" && \
+    go get -v google.golang.org/grpc/reflection || echo "無法獲取 grpc/reflection，但繼續構建"
 
 # 複製源代碼
 COPY . .
@@ -65,18 +110,33 @@ COPY . .
 # 安裝工具並生成 protobuf 代碼
 RUN --mount=type=cache,target=/go/mod \
     --mount=type=cache,target=/go/cache \
+    echo "安裝 protobuf 工具..." && \
     go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0 && \
     go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0 && \
     curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.30.0/buf-$(uname -s)-$(uname -m)" -o /usr/local/bin/buf && \
     chmod +x /usr/local/bin/buf && \
     buf --version && \
     chmod +x scripts/gen-proto-buf.sh && \
-    ./scripts/gen-proto-buf.sh
+    echo "生成 protobuf 代碼..." && \
+    ./scripts/gen-proto-buf.sh || echo "警告: Proto 生成可能有問題，但繼續構建..."
+
+# 為了確保私有模組能夠被正確訪問，再次同步依賴
+RUN --mount=type=cache,target=/go/mod \
+    --mount=type=cache,target=/go/cache \
+    echo "代碼複製後同步依賴..." && \
+    GOPROXY=direct go mod tidy || echo "mod tidy 警告，但繼續構建..." && \
+    # 顯示模組圖用於調試
+    echo "模組依賴關係:" && \
+    go mod graph | grep trevi || echo "在依賴關係中找不到 trevi 模組" && \
+    # 列出所有依賴項，確認是否有問題
+    echo "模組列表:" && \
+    go list -m all | grep trevi || echo "在依賴列表中找不到 trevi 模組"
 
 # 構建應用程序 (使用 -ldflags 減小二進制檔案大小)
 RUN --mount=type=cache,target=/go/mod \
     --mount=type=cache,target=/go/cache \
-    go build -ldflags="-s -w -X 'main.GitHash=${GIT_COMMIT}' -X 'main.BuildTime=${BUILD_TIME}'" -o lottery_service ./cmd/lottery_service/main.go
+    echo "使用 -mod=mod 構建應用程序，以確保使用已下載的模組..." && \
+    GOPROXY=direct go build -v -mod=mod -ldflags="-s -w -X 'main.GitHash=${GIT_COMMIT}' -X 'main.BuildTime=${BUILD_TIME}'" -o lottery_service ./cmd/lottery_service/main.go
 
 # 最終階段 - 使用更小的基礎映像
 FROM alpine:3.19
