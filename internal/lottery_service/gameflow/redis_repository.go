@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	redis "g38_lottery_service/pkg/redisManager"
-
+	"git.trevi.cc/server/go_gamecommon/cache"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -23,15 +23,13 @@ const (
 
 // RedisRepository 使用 Redis 實現的遊戲數據存儲庫
 type RedisRepository struct {
-	redisClient redis.RedisManager
 	logger      *zap.Logger
 	defaultRoom string // 默認房間 ID
 }
 
 // NewRedisRepository 創建新的 Redis 遊戲數據存儲庫
-func NewRedisRepository(redisClient redis.RedisManager, logger *zap.Logger) *RedisRepository {
+func NewRedisRepository(logger *zap.Logger) *RedisRepository {
 	return &RedisRepository{
-		redisClient: redisClient,
 		logger:      logger.With(zap.String("component", "redis_repository")),
 		defaultRoom: "SG01", // 預設使用 SG01 房間
 	}
@@ -87,9 +85,9 @@ func (r *RedisRepository) SaveGame(ctx context.Context, game *GameData) error {
 	key := r.getCurrentGameKey(roomID)
 
 	// 嘗試刪除現有資料
-	_, err = r.redisClient.Exists(ctx, key)
-	if err == nil {
-		err = r.redisClient.Delete(ctx, key)
+	exists := cache.RedisExists(key)
+	if exists.Err() == nil && exists.Val() > 0 {
+		err = cache.RedisDel(key).Err()
 		if err != nil {
 			r.logger.Warn("刪除現有遊戲資料失敗",
 				zap.Error(err),
@@ -100,7 +98,7 @@ func (r *RedisRepository) SaveGame(ctx context.Context, game *GameData) error {
 	}
 
 	// 保存到 Redis，設為永久保存
-	err = r.redisClient.Set(ctx, key, gameJSON, 0)
+	err = cache.RedisSet(key, gameJSON, 0).Err()
 	if err != nil {
 		return fmt.Errorf("保存遊戲數據到 Redis 失敗: %w", err)
 	}
@@ -112,7 +110,7 @@ func (r *RedisRepository) SaveGame(ctx context.Context, game *GameData) error {
 		zap.String("key", key))
 
 	// 驗證寫入是否成功
-	verifyJSON, err := r.redisClient.Get(ctx, key)
+	verifyJSON, err := cache.RedisGet(key).Result()
 	if err != nil {
 		r.logger.Warn("無法驗證遊戲數據寫入", zap.Error(err), zap.String("roomID", roomID))
 	} else if verifyJSON != string(gameJSON) {
@@ -135,10 +133,10 @@ func (r *RedisRepository) GetCurrentGameByRoom(ctx context.Context, roomID strin
 	r.logger.Debug("嘗試從 Redis 獲取當前遊戲", zap.String("roomID", roomID), zap.String("redisKey", key))
 
 	// 從 Redis 獲取遊戲數據
-	gameJSON, err := r.redisClient.Get(ctx, key)
+	gameJSON, err := cache.RedisGet(key).Result()
 
 	// 如果鍵不存在，返回特定錯誤
-	if redis.IsKeyNotExist(err) {
+	if err == redis.Nil {
 		r.logger.Debug("Redis 中未找到當前遊戲", zap.String("roomID", roomID))
 		return nil, fmt.Errorf("房間 %s 的遊戲不存在: %w", roomID, err)
 	}
@@ -179,7 +177,7 @@ func (r *RedisRepository) DeleteCurrentGame(ctx context.Context) error {
 // DeleteCurrentGameByRoom 從 Redis 刪除特定房間的當前遊戲
 func (r *RedisRepository) DeleteCurrentGameByRoom(ctx context.Context, roomID string) error {
 	key := r.getCurrentGameKey(roomID)
-	err := r.redisClient.Delete(ctx, key)
+	err := cache.RedisDel(key).Err()
 	if err != nil {
 		return fmt.Errorf("從 Redis 刪除當前遊戲失敗: %w", err)
 	}
@@ -201,14 +199,14 @@ func (r *RedisRepository) SaveGameHistory(ctx context.Context, game *GameData) e
 
 	// 保存到 Redis，過期時間設為 30 天
 	historyKey := fmt.Sprintf(redisGameHistoryKeyTpl, game.GameID)
-	err = r.redisClient.Set(ctx, historyKey, gameJSON, 30*24*time.Hour)
+	err = cache.RedisSet(historyKey, gameJSON, 30*24*time.Hour).Err()
 	if err != nil {
 		return fmt.Errorf("保存遊戲歷史記錄到 Redis 失敗: %w", err)
 	}
 
 	// 同時添加到對應房間的歷史記錄列表
 	historyListKey := r.getHistoryListKey(roomID)
-	err = r.redisClient.LPush(ctx, historyListKey, game.GameID)
+	err = cache.RedisLPush(historyListKey, game.GameID).Err()
 	if err != nil {
 		r.logger.Warn("添加遊戲ID到歷史列表失敗",
 			zap.Error(err),
@@ -235,10 +233,10 @@ func (r *RedisRepository) GetLuckyBallsByRoom(ctx context.Context, roomID string
 
 	// 從 Redis 獲取幸運號碼球
 	key := r.getLuckyBallsKey(roomID)
-	ballsJSON, err := r.redisClient.Get(ctx, key)
+	ballsJSON, err := cache.RedisGet(key).Result()
 
 	// 如果鍵不存在，返回空數組而不是錯誤
-	if redis.IsKeyNotExist(err) {
+	if err == redis.Nil {
 		r.logger.Info("Redis 中未找到幸運號碼球，返回空數組", zap.String("roomID", roomID), zap.String("key", key))
 		return []Ball{}, nil
 	}
@@ -293,9 +291,9 @@ func (r *RedisRepository) SaveLuckyBallsToRoom(ctx context.Context, roomID strin
 		zap.Int("ballsCount", len(balls)))
 
 	// 嘗試刪除現有的幸運號碼球資料
-	_, err := r.redisClient.Exists(ctx, key)
-	if err == nil {
-		err = r.redisClient.Delete(ctx, key)
+	exists := cache.RedisExists(key)
+	if exists.Err() == nil && exists.Val() > 0 {
+		err := cache.RedisDel(key).Err()
 		if err != nil {
 			r.logger.Warn("刪除現有幸運號碼球資料失敗",
 				zap.Error(err),
@@ -316,7 +314,7 @@ func (r *RedisRepository) SaveLuckyBallsToRoom(ctx context.Context, roomID strin
 	}
 
 	// 保存到 Redis，設為永久保存
-	err = r.redisClient.Set(ctx, key, ballsJSON, 0)
+	err = cache.RedisSet(key, ballsJSON, 0).Err()
 	if err != nil {
 		return fmt.Errorf("保存幸運號碼球到 Redis 失敗: %w", err)
 	}
@@ -327,7 +325,7 @@ func (r *RedisRepository) SaveLuckyBallsToRoom(ctx context.Context, roomID strin
 		zap.String("roomID", roomID))
 
 	// 驗證寫入是否成功
-	verifyJSON, err := r.redisClient.Get(ctx, key)
+	verifyJSON, err := cache.RedisGet(key).Result()
 	if err != nil {
 		r.logger.Warn("無法驗證幸運號碼球寫入", zap.Error(err), zap.String("roomID", roomID))
 	} else if verifyJSON != string(ballsJSON) {
@@ -351,7 +349,7 @@ func (r *RedisRepository) GetRecentGameHistories(ctx context.Context, limit int)
 func (r *RedisRepository) GetRecentGameHistoriesByRoom(ctx context.Context, roomID string, limit int) ([]*GameData, error) {
 	// 從 Redis 獲取最近的遊戲ID列表
 	historyListKey := r.getHistoryListKey(roomID)
-	gameIDs, err := r.redisClient.LRange(ctx, historyListKey, 0, int64(limit-1))
+	gameIDs, err := cache.RedisLRange(historyListKey, 0, int64(limit-1)).Result()
 	if err != nil {
 		return nil, fmt.Errorf("獲取遊戲歷史ID列表失敗: %w", err)
 	}
@@ -359,10 +357,10 @@ func (r *RedisRepository) GetRecentGameHistoriesByRoom(ctx context.Context, room
 	var games []*GameData
 	for _, gameID := range gameIDs {
 		historyKey := fmt.Sprintf(redisGameHistoryKeyTpl, gameID)
-		gameJSON, err := r.redisClient.Get(ctx, historyKey)
+		gameJSON, err := cache.RedisGet(historyKey).Result()
 
 		// 如果某個遊戲記錄不存在，則跳過
-		if redis.IsKeyNotExist(err) {
+		if err == redis.Nil {
 			continue
 		}
 
@@ -398,7 +396,7 @@ func (r *RedisRepository) GetRecentGameHistoriesByRoom(ctx context.Context, room
 // SaveStageTimeout 保存階段超時時間
 func (r *RedisRepository) SaveStageTimeout(ctx context.Context, gameID string, stage GameStage, timeout int64) error {
 	key := fmt.Sprintf(redisStageTimeoutKeyTpl, gameID, string(stage))
-	err := r.redisClient.Set(ctx, key, timeout, time.Duration(timeout)*time.Millisecond)
+	err := cache.RedisSet(key, timeout, time.Duration(timeout)*time.Millisecond).Err()
 	if err != nil {
 		return fmt.Errorf("保存階段超時時間失敗: %w", err)
 	}
@@ -408,9 +406,9 @@ func (r *RedisRepository) SaveStageTimeout(ctx context.Context, gameID string, s
 // GetStageTimeout 獲取階段超時時間
 func (r *RedisRepository) GetStageTimeout(ctx context.Context, gameID string, stage GameStage) (int64, error) {
 	key := fmt.Sprintf(redisStageTimeoutKeyTpl, gameID, string(stage))
-	timeoutStr, err := r.redisClient.Get(ctx, key)
+	timeoutStr, err := cache.RedisGet(key).Result()
 
-	if redis.IsKeyNotExist(err) {
+	if err == redis.Nil {
 		return 0, nil // 不存在則返回0
 	}
 
@@ -429,7 +427,7 @@ func (r *RedisRepository) GetStageTimeout(ctx context.Context, gameID string, st
 // DeleteStageTimeout 刪除階段超時時間
 func (r *RedisRepository) DeleteStageTimeout(ctx context.Context, gameID string, stage GameStage) error {
 	key := fmt.Sprintf(redisStageTimeoutKeyTpl, gameID, string(stage))
-	err := r.redisClient.Delete(ctx, key)
+	err := cache.RedisDel(key).Err()
 	if err != nil {
 		return fmt.Errorf("刪除階段超時時間失敗: %w", err)
 	}
@@ -441,9 +439,9 @@ func (r *RedisRepository) DeleteStageTimeout(ctx context.Context, gameID string,
 // GetGameByID 從歷史記錄中獲取特定ID的遊戲
 func (r *RedisRepository) GetGameByID(ctx context.Context, gameID string) (*GameData, error) {
 	historyKey := fmt.Sprintf(redisGameHistoryKeyTpl, gameID)
-	gameJSON, err := r.redisClient.Get(ctx, historyKey)
+	gameJSON, err := cache.RedisGet(historyKey).Result()
 
-	if redis.IsKeyNotExist(err) {
+	if err == redis.Nil {
 		return nil, ErrGameNotFound
 	}
 
@@ -475,7 +473,7 @@ func (r *RedisRepository) GetTotalGamesCount(ctx context.Context) (int64, error)
 func (r *RedisRepository) GetTotalGamesCountByRoom(ctx context.Context, roomID string) (int64, error) {
 	// 從 Redis 獲取歷史遊戲ID列表的長度
 	historyListKey := r.getHistoryListKey(roomID)
-	count, err := r.redisClient.LRange(ctx, historyListKey, 0, -1)
+	count, err := cache.RedisLRange(historyListKey, 0, -1).Result()
 	if err != nil {
 		return 0, fmt.Errorf("獲取遊戲歷史總數失敗: %w", err)
 	}

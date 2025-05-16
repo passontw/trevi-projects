@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"g38_lottery_service/pkg/nacosManager"
+	"git.trevi.cc/server/go_gamecommon/nacosmgr"
 
 	"github.com/joho/godotenv"
 	"github.com/nacos-group/nacos-sdk-go/vo"
@@ -182,7 +183,7 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 // ===== Nacos 相關函數 =====
 
 // uploadConfigToNacos 上傳配置到 Nacos
-func uploadConfigToNacos(client nacosManager.NacosClient, dataId, group, content string) (bool, error) {
+func uploadConfigToNacos(client *nacosmgr.NacosClient, dataId, group, content string) (bool, error) {
 	// 獲取原始的 Nacos client 以使用 PublishConfig 功能
 	configClient := client.GetConfigClient()
 	if configClient == nil {
@@ -203,50 +204,28 @@ func uploadConfigToNacos(client nacosManager.NacosClient, dataId, group, content
 	return success, nil
 }
 
-// getNacosConfig 從 Nacos 獲取配置
-func getNacosConfig(nacosIp, nacosPort, dataId string) (string, error) {
-	log.Printf("嘗試從 Nacos 獲取配置: %s:%s, DataId: %s", nacosIp, nacosPort, dataId)
+// DetectAndParseConfig 檢測並解析配置格式 (XML 或 JSON)
+func DetectAndParseConfig(data string) (map[string]interface{}, error) {
+	var result map[string]interface{}
 
-	// 解析端口
-	port, err := strconv.ParseUint(nacosPort, 10, 64)
-	if err != nil {
-		return "", fmt.Errorf("解析 Nacos 端口失敗: %w", err)
+	// 嘗試解析為 JSON
+	if err := json.Unmarshal([]byte(data), &result); err == nil {
+		return result, nil
 	}
 
-	// 創建 Nacos 配置
-	nacosConfig := &nacosManager.NacosConfig{
-		IpAddr:      nacosIp,
-		Port:        port,
-		NamespaceId: "public",
-		Username:    "nacos",
-		Password:    "nacos",
+	// 嘗試解析為 XML
+	var xmlMap map[string]interface{}
+	if err := xml.Unmarshal([]byte(data), &xmlMap); err == nil {
+		return xmlMap, nil
 	}
 
-	// 創建 Nacos 客戶端
-	client, err := nacosManager.NewNacosClient(nacosConfig)
-	if err != nil {
-		return "", fmt.Errorf("創建 Nacos 客戶端失敗: %w", err)
-	}
-
-	// 獲取配置
-	content, err := client.GetConfig(dataId, "DEFAULT_GROUP")
-	if err != nil {
-		return "", fmt.Errorf("從 Nacos 獲取配置失敗: %w", err)
-	}
-
-	if content == "" {
-		return "", fmt.Errorf("從 Nacos 獲取的配置為空")
-	}
-
-	log.Printf("成功從 Nacos 獲取配置: %s, 長度: %d 字節", dataId, len(content))
-	return content, nil
+	// 都失敗了，返回錯誤
+	return nil, fmt.Errorf("無法解析配置: 不支持的格式")
 }
-
-// ===== 配置加載主要函數 =====
 
 // LoadConfig 加載配置，優先使用 .env 中的 Nacos 設定取回配置
 // 當無法從 Nacos 獲取有效配置時，返回錯誤
-func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
+func LoadConfig(nacosClient *nacosmgr.NacosClient) (*AppConfig, error) {
 	// 嘗試加載 .env 文件
 	if err := godotenv.Load(); err != nil {
 		log.Printf("警告: 找不到 .env 文件: %v", err)
@@ -263,14 +242,14 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 		log.Println("Nacos 配置已啟用，正在從 Nacos 獲取配置...")
 
 		// 從 Nacos 獲取主配置
-		content, err := nacosClient.GetConfig(config.Nacos.DataId, config.Nacos.Group)
+		content, err := nacosClient.GetConfig(config.Nacos.Group, config.Nacos.DataId)
 		if err != nil {
 			log.Printf("從 Nacos 獲取配置失敗: %v", err)
 			return nil, fmt.Errorf("無法從 Nacos 獲取配置: %w", err)
 		}
 
 		// 檢測配置格式並解析
-		configMap, err := nacosManager.DetectAndParseConfig(content)
+		configMap, err := DetectAndParseConfig(content)
 		if err != nil {
 			log.Printf("檢測或解析配置格式失敗: %v", err)
 			return nil, fmt.Errorf("無法解析從 Nacos 獲取的配置: %w", err)
@@ -290,7 +269,7 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 
 		if redisDataId != "" {
 			log.Printf("嘗試從 Nacos 獲取 Redis XML 配置 (DataId: %s)...", redisDataId)
-			redisXmlContent, err := nacosClient.GetConfig(redisDataId, config.Nacos.Group)
+			redisXmlContent, err := nacosClient.GetConfig(config.Nacos.Group, redisDataId)
 			if err != nil {
 				log.Printf("警告: 無法從 Nacos 獲取 Redis XML 配置: %v", err)
 			} else if redisXmlContent != "" {
@@ -314,7 +293,7 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 
 		if tidbDataId != "" {
 			log.Printf("嘗試從 Nacos 獲取 TiDB XML 配置 (DataId: %s, 服務名稱: %s)...", tidbDataId, serviceName)
-			tidbXmlContent, err := nacosClient.GetConfig(tidbDataId, config.Nacos.Group)
+			tidbXmlContent, err := nacosClient.GetConfig(config.Nacos.Group, tidbDataId)
 			if err != nil {
 				log.Printf("警告: 無法從 Nacos 獲取 TiDB XML 配置: %v", err)
 			} else if tidbXmlContent != "" {
@@ -338,7 +317,7 @@ func LoadConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
 
 		if rocketMQDataId != "" {
 			log.Printf("嘗試從 Nacos 獲取 RocketMQ XML 配置 (DataId: %s)...", rocketMQDataId)
-			rocketMQXmlContent, err := nacosClient.GetConfig(rocketMQDataId, config.Nacos.Group)
+			rocketMQXmlContent, err := nacosClient.GetConfig(config.Nacos.Group, rocketMQDataId)
 			if err != nil {
 				log.Printf("警告: 無法從 Nacos 獲取 RocketMQ XML 配置: %v", err)
 			} else if rocketMQXmlContent != "" {
@@ -382,10 +361,29 @@ func min(a, b int) int {
 	return b
 }
 
-// createDefaultConfig, 創建默認配置, 但不從環境變量讀取 Redis 配置
+// createDefaultConfig 創建預設配置
 func createDefaultConfig() *AppConfig {
-	// 定義 Nacos 相關設置
 	nacosEnabled := getEnvAsBool("ENABLE_NACOS", true)
+
+	// 獲取 Nacos 主機和端口
+	var nacosHost string
+	var nacosPort uint64
+
+	// 使用 NacosAddr 進行配置
+	if Args.parsed {
+		// 如果已經解析過命令行參數，則使用 Args
+		host, port, _ := GetNacosHostAndPort()
+		nacosHost = host
+		if p, err := strconv.ParseUint(port, 10, 64); err == nil {
+			nacosPort = p
+		} else {
+			nacosPort = 8848 // 默認端口
+		}
+	} else {
+		// 直接從環境變量獲取
+		nacosHost = getEnv("NACOS_HOST", "127.0.0.1")
+		nacosPort = uint64(getEnvAsInt("NACOS_PORT", 8848))
+	}
 
 	return &AppConfig{
 		AppName: getEnv("APP_NAME", "g38_lottery_service"),
@@ -405,11 +403,11 @@ func createDefaultConfig() *AppConfig {
 			ShutdownTimeoutSeconds: getEnvAsInt("SHUTDOWN_TIMEOUT", 30), // 優雅關閉默認 30 秒
 		},
 		Redis: RedisConfig{
-			Host:     "", // 空值，強制從 Nacos 讀取
-			Port:     0,  // 0值，強制從 Nacos 讀取
-			Username: "",
-			Password: "",
-			DB:       0,
+			Host:     getEnv("REDIS_HOST", "127.0.0.1"),
+			Port:     getEnvAsInt("REDIS_PORT", 6379),
+			Username: getEnv("REDIS_USERNAME", ""),
+			Password: getEnv("REDIS_PASSWORD", ""),
+			DB:       getEnvAsInt("REDIS_DB", 0),
 		},
 		Database: DatabaseConfig{
 			Driver:   getEnv("DB_DRIVER", "mysql"),
@@ -426,8 +424,8 @@ func createDefaultConfig() *AppConfig {
 		},
 		Nacos: NacosConfig{
 			Enabled:     nacosEnabled,
-			Host:        getEnv("NACOS_HOST", "127.0.0.1"),
-			Port:        uint64(getEnvAsInt("NACOS_PORT", 8848)),
+			Host:        nacosHost,
+			Port:        nacosPort,
 			Namespace:   getEnv("NACOS_NAMESPACE", "public"),
 			Group:       getEnv("NACOS_GROUP", "DEFAULT_GROUP"),
 			DataId:      getEnv("NACOS_DATAID", "lotterysvr.xml"),
@@ -475,6 +473,7 @@ func restoreWebSocketPorts(config *AppConfig, dealerWsPort int, grpcPort int, ap
 }
 
 // preserveNacosConnectionInfo 保留 Nacos 連接信息
+// 在從 Nacos 獲取配置後調用，確保不會覆蓋當前的連接信息
 func preserveNacosConnectionInfo(config *AppConfig) {
 	// 保存原始的WebSocket端口和gRPC端口設置
 	dealerWsPort := config.Server.DealerWsPort
@@ -484,19 +483,36 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 	log.Printf("保存端口值以進行還原: DealerWsPort=%d, GrpcPort=%d, ApiPort=%d",
 		dealerWsPort, grpcPort, apiPort)
 
-	// 設置Nacos連接信息
-	config.Nacos = NacosConfig{
-		Enabled:     true,
-		Host:        getEnv("NACOS_HOST", "127.0.0.1"),
-		Port:        uint64(getEnvAsInt("NACOS_PORT", 8848)),
-		Namespace:   getEnv("NACOS_NAMESPACE", "public"),
-		Group:       getEnv("NACOS_GROUP", "DEFAULT_GROUP"),
-		DataId:      getEnv("NACOS_DATAID", "lotterysvr.xml"),
-		Username:    getEnv("NACOS_USERNAME", "nacos"),
-		Password:    getEnv("NACOS_PASSWORD", "nacos"),
-		ServiceIP:   getEnv("SERVICE_IP", "127.0.0.1"),
-		ServicePort: getEnvAsInt("SERVICE_PORT", 8080),
+	// 獲取 Nacos 主機和端口
+	var nacosHost string
+	var nacosPort uint64
+
+	// 使用 NacosAddr 進行配置
+	if Args.parsed {
+		// 如果已經解析過命令行參數，則使用 Args
+		host, port, _ := GetNacosHostAndPort()
+		nacosHost = host
+		if p, err := strconv.ParseUint(port, 10, 64); err == nil {
+			nacosPort = p
+		} else {
+			nacosPort = 8848 // 默認端口
+		}
+	} else {
+		// 直接從環境變量獲取
+		nacosHost = getEnv("NACOS_HOST", "127.0.0.1")
+		nacosPort = uint64(getEnvAsInt("NACOS_PORT", 8848))
 	}
+
+	// 保留當前的 Nacos 連接信息
+	config.Nacos.Host = nacosHost
+	config.Nacos.Port = nacosPort
+	config.Nacos.Namespace = getEnv("NACOS_NAMESPACE", "public")
+	config.Nacos.Group = getEnv("NACOS_GROUP", "DEFAULT_GROUP")
+	config.Nacos.DataId = getEnv("NACOS_DATAID", "lotterysvr.xml")
+	config.Nacos.Username = getEnv("NACOS_USERNAME", "nacos")
+	config.Nacos.Password = getEnv("NACOS_PASSWORD", "nacos")
+	config.Nacos.ServiceIP = getEnv("SERVICE_IP", "127.0.0.1")
+	config.Nacos.ServicePort = getEnvAsInt("SERVICE_PORT", 8080)
 
 	// 恢復端口設置
 	restoreWebSocketPorts(config, dealerWsPort, grpcPort, apiPort)
@@ -1019,15 +1035,136 @@ func mapJsonMapToAppConfig(configMap map[string]interface{}, config *AppConfig) 
 	return nil
 }
 
+// ParseConfig 從 XML 字節數據解析應用配置
+func ParseConfig(data []byte) (*AppConfig, error) {
+	// 這裡我們簡單地將 XML 解析為 AppConfig
+	// 實際實現可能需要根據您特定的 XML 格式進行調整
+
+	// 首先嘗試檢測是 XML 還是 JSON 格式
+	configMap, err := detectAndParseConfig(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("解析配置失敗: %w", err)
+	}
+
+	// 創建默認配置
+	config := createDefaultConfig()
+
+	// 將解析的配置映射到 AppConfig 結構
+	if err := mapJsonMapToAppConfig(configMap, config); err != nil {
+		return nil, fmt.Errorf("映射配置到應用配置失敗: %w", err)
+	}
+
+	return config, nil
+}
+
+// detectAndParseConfig 檢測並解析配置格式 (XML 或 JSON)
+func detectAndParseConfig(data string) (map[string]interface{}, error) {
+	var result map[string]interface{}
+
+	// 檢查是否為 XML 格式的內容
+	if strings.HasPrefix(strings.TrimSpace(data), "<?xml") {
+		log.Printf("檢測到 XML 格式配置，嘗試解析...")
+
+		// 創建 XML 配置解析器
+		type XMLConfig struct {
+			XMLName xml.Name
+			Items   []xml.Name `xml:",any"`
+			Content string     `xml:",innerxml"`
+		}
+
+		var xmlConfig XMLConfig
+		if err := xml.Unmarshal([]byte(data), &xmlConfig); err != nil {
+			log.Printf("XML 初步解析失敗: %v", err)
+			return nil, fmt.Errorf("XML 解析失敗: %w", err)
+		}
+
+		// 手動解析 XML 內容為 map
+		result = make(map[string]interface{})
+
+		// 使用正則表達式匹配所有標籤和值
+		pattern := `<([^>/]+)>([^<]+)</([^>]+)>`
+		re := regexp.MustCompile(pattern)
+		matches := re.FindAllStringSubmatch(data, -1)
+
+		for _, match := range matches {
+			if len(match) >= 3 {
+				key := strings.TrimSpace(match[1])
+				value := strings.TrimSpace(match[2])
+				log.Printf("從 XML 提取鍵值對: %s = %s", key, value)
+
+				// 嘗試轉換值到適當的類型
+				if intVal, err := strconv.Atoi(value); err == nil {
+					result[key] = intVal
+				} else if boolVal, err := strconv.ParseBool(value); err == nil && (value == "true" || value == "false") {
+					result[key] = boolVal
+				} else {
+					result[key] = value
+				}
+			}
+		}
+
+		if len(result) == 0 {
+			log.Printf("警告: XML 解析後未找到任何鍵值對")
+			return nil, fmt.Errorf("XML 解析後未找到有效配置項")
+		}
+
+		log.Printf("成功從 XML 解析了 %d 個配置項", len(result))
+		return result, nil
+	}
+
+	// 嘗試解析為 JSON
+	log.Printf("嘗試解析為 JSON 格式...")
+	if err := json.Unmarshal([]byte(data), &result); err == nil {
+		log.Printf("成功解析為 JSON 格式，包含 %d 個配置項", len(result))
+		return result, nil
+	} else {
+		log.Printf("JSON 解析失敗: %v", err)
+	}
+
+	// 最後嘗試作為簡單的 key=value 格式
+	log.Printf("嘗試解析為簡單的 key=value 格式...")
+	lines := strings.Split(data, "\n")
+	result = make(map[string]interface{})
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+
+			// 嘗試轉換值到適當的類型
+			if intVal, err := strconv.Atoi(value); err == nil {
+				result[key] = intVal
+			} else if boolVal, err := strconv.ParseBool(value); err == nil && (value == "true" || value == "false") {
+				result[key] = boolVal
+			} else {
+				result[key] = value
+			}
+		}
+	}
+
+	if len(result) > 0 {
+		log.Printf("成功解析為 key=value 格式，包含 %d 個配置項", len(result))
+		return result, nil
+	}
+
+	// 都失敗了，返回錯誤
+	return nil, fmt.Errorf("無法解析配置: 不支持的格式")
+}
+
 // ===== 依賴注入相關函數 =====
 
 // ProvideAppConfig 提供應用配置，用於 fx 依賴注入
-func ProvideAppConfig(nacosClient nacosManager.NacosClient) (*AppConfig, error) {
+func ProvideAppConfig(nacosClient *nacosmgr.NacosClient) (*AppConfig, error) {
 	return LoadConfig(nacosClient)
 }
 
 // RegisterService 在 Nacos 註冊服務
-func RegisterService(config *AppConfig, nacosClient nacosManager.NacosClient) error {
+func RegisterService(config *AppConfig, nacosClient *nacosmgr.NacosClient) error {
 	if !config.Server.RegisterService || !config.Nacos.Enabled || nacosClient == nil {
 		log.Println("服務註冊未啟用或 Nacos 客戶端不可用")
 		return nil
@@ -1050,8 +1187,13 @@ func RegisterService(config *AppConfig, nacosClient nacosManager.NacosClient) er
 }
 
 // registerServiceInstance 註冊服務實例
-func registerServiceInstance(config *AppConfig, nacosClient nacosManager.NacosClient) (bool, error) {
-	return nacosClient.RegisterInstance(vo.RegisterInstanceParam{
+func registerServiceInstance(config *AppConfig, nacosClient *nacosmgr.NacosClient) (bool, error) {
+	namingClient := nacosClient.GetNamingClient()
+	if namingClient == nil {
+		return false, fmt.Errorf("無法獲取 Nacos 命名服務客戶端")
+	}
+
+	return namingClient.RegisterInstance(vo.RegisterInstanceParam{
 		Ip:          config.Server.ServiceIP,
 		Port:        uint64(config.Server.ServicePort),
 		ServiceName: config.Server.ServiceName,

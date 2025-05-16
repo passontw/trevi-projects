@@ -47,6 +47,7 @@ build
 deployments/tidb/data
 
 deployments/tidb/logs
+logs
 
 deployments/tidb/nacos
 

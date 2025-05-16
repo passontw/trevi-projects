@@ -278,7 +278,7 @@
 
 ```json
 {
-  "reason": "test"
+  "reason": "SG01"
 }
 ```
 

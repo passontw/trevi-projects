@@ -1,5 +1,21 @@
 # 賓果抽球遊戲服務技術與規則報告
 
+## Golang 環境設定
+
+```
+$ export GOPRIVATE=git.trevi.cc
+```
+
+[詳細解說](./docs/go_private.md)
+
+### Local repo package install 
+
+#### git.trevi.cc/server/go_gamecommon
+
+```
+$ go get git.trevi.cc/server/go_gamecommon@8651c802502d3ce53bf80f81268b350b20e526a4
+```
+
 ## 一、系統概述
 
 賓果抽球遊戲服務是一個基於 Go 語言實現的實時開獎服務，支持賓果球遊戲的完整流程管理。系統通過 WebSocket 與荷官端和遊戲端建立雙向通訊，提供高效、穩定的開獎體驗。服務使用 Uber FX 進行依賴注入，Redis 進行遊戲狀態持久化，TiDB 進行歷史資料儲存。
@@ -500,10 +516,11 @@ go build -o ./build/g38_lottery_service ./cmd/lottery_service/main.go
 
 #### Nacos 相關配置
 
-| 參數名稱 | 說明 | 默認值 |
-|--------|------|-------|
-| `--nacos_host` | Nacos 服務器主機地址 | 10.1.7.31 |
-| `--nacos_port` | Nacos 服務器端口 | 8848 |
+| 參數 | 描述 | 示例值 |
+| ---- | ---- | ---- |
+| `--nacos_addr` | Nacos 服務器地址（必須使用格式：http://host:port 或 https://host:port）| http://10.1.7.31:8848 |
+| `--nacos_host` | Nacos 服務器主機地址（已棄用，請使用 nacos_addr） | 10.1.7.31 |
+| `--nacos_port` | Nacos 服務器端口（已棄用，請使用 nacos_addr） | 8848 |
 | `--nacos_namespace` | Nacos 命名空間 | g38_develop_game_service |
 | `--nacos_group` | Nacos 組名 | DEFAULT_GROUP |
 | `--nacos_username` | Nacos 用戶名 | nacos |
@@ -512,6 +529,8 @@ go build -o ./build/g38_lottery_service ./cmd/lottery_service/main.go
 | `--nacos_redis_dataid` | Nacos Redis 配置數據 ID | redisconfig.xml |
 | `--nacos_tidb_dataid` | Nacos TiDB 配置數據 ID | dbconfig.xml |
 | `--enable_nacos` | 是否啟用 Nacos 配置 | true |
+
+> **注意**: `nacos_addr` 參數必須使用標準格式 `http://host:port` 或 `https://host:port`，其他格式將被拒絕並使用默認值 `http://127.0.0.1:8848`。
 
 #### 服務設定
 
@@ -528,13 +547,15 @@ go build -o ./build/g38_lottery_service ./cmd/lottery_service/main.go
 # 使用默認配置運行
 ./build/g38_lottery_service
 
-# 指定 Nacos 主機和端口運行
+# 指定 Nacos 地址運行（新版，推薦）
+./build/g38_lottery_service --nacos_addr="http://10.1.7.31:8848"
+
+# 指定 Nacos 主機和端口運行（舊版）
 ./build/g38_lottery_service --nacos_host="10.1.7.31" --nacos_port="8848"
 
 # 完整配置運行示例
 ./build/g38_lottery_service \
-  --nacos_host="10.1.7.31" \
-  --nacos_port="8848" \
+  --nacos_addr="http://10.1.7.31:8848" \
   --nacos_namespace="g38_develop_game_service" \
   --nacos_group="DEFAULT_GROUP" \
   --nacos_username="nacos" \
