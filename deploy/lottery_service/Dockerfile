@@ -82,9 +82,7 @@ RUN echo "go.mod 內容:" && \
 COPY . .
 
 # 安裝工具並生成 protobuf 代碼
-RUN --mount=type=cache,target=/go/mod \
-    --mount=type=cache,target=/go/cache \
-    echo "安裝 protobuf 工具..." && \
+RUN echo "安裝 protobuf 工具..." && \
     GOPROXY=direct go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0 && \
     GOPROXY=direct go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0 && \
     curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.30.0/buf-$(uname -s)-$(uname -m)" -o /usr/local/bin/buf && \
