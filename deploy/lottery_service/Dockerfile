@@ -8,7 +8,8 @@ ARG NO_PROXY
 
 # 設定環境變數
 ENV GO111MODULE=on \
-    GOPROXY=https://proxy.golang.org,direct \
+    # 修改 GOPROXY 設置，如果代理失敗直接使用直連模式
+    GOPROXY=direct \
     GOSUMDB=off \
     CGO_ENABLED=0 \
     GONOSUMDB=* \
@@ -46,8 +47,10 @@ WORKDIR /go/src/g38_lottery_service
 RUN if [ -n "$GIT_USER" ] && [ -n "$GIT_PASSWORD" ]; then \
     echo "配置 Git 認證 (僅使用 HTTP)..." && \
     # 僅使用 HTTP
+    git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "http://git.trevi.cc" && \
     git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "https://git.trevi.cc" && \
     git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc".insteadOf "git.trevi.cc" && \
+    git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc/".insteadOf "https://git.trevi.cc/" && \
     git config --global url."http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc/".insteadOf "git.trevi.cc/" && \
     # 禁用 SSL 驗證
     git config --global http.sslVerify false && \
@@ -75,35 +78,6 @@ RUN echo "go.mod 內容:" && \
     cat go.mod && \
     echo "檢查是否有 replace 指令:" && \
     grep -n "replace" go.mod || echo "沒有 replace 指令"
-
-# 直接先 clone 私有倉庫，確保使用 HTTP (如果有 git 認證)
-RUN if [ -n "$GIT_USER" ] && [ -n "$GIT_PASSWORD" ]; then \
-    echo "嘗試直接 clone 私有倉庫 (使用 HTTP)..." && \
-    mkdir -p $GOPATH/src/git.trevi.cc/server && \
-    cd $GOPATH/src/git.trevi.cc/server && \
-    git clone --depth 1 http://${GIT_USER}:${GIT_PASSWORD}@git.trevi.cc/server/go_gamecommon.git || echo "警告: Clone 失敗，但將繼續構建過程"; \
-fi
-
-# 預下載依賴 - 使用 BuildKit 緩存掛載加速下載
-# 添加報錯重試機制
-RUN --mount=type=cache,target=/go/mod \
-    --mount=type=cache,target=/go/cache \
-    echo "檢查 Go 環境:" && \
-    go env GOPRIVATE GOPROXY GOSUMDB GOINSECURE && \
-    echo "下載 Go 依賴..." && \
-    for i in $(seq 1 2); do \
-        echo "嘗試 $i: 使用 HTTP 下載依賴..." && \
-        GOPROXY=direct go mod download -x && break || \
-        echo "下載失敗，嘗試使用已可用的依賴繼續..."; \
-    done && \
-    # 直接下載關鍵的依賴項，確保它們被正確快取
-    echo "下載特定公共依賴..." && \
-    go get -v github.com/apache/rocketmq-client-go/v2@latest || echo "無法獲取 rocketmq-client-go，但繼續構建" && \
-    go get -v github.com/apache/rocketmq-client-go/v2/primitive || echo "無法獲取 rocketmq-client-go/primitive，但繼續構建" && \
-    go get -v github.com/apache/rocketmq-client-go/v2/producer || echo "無法獲取 rocketmq-client-go/producer，但繼續構建" && \
-    go get -v google.golang.org/grpc/keepalive || echo "無法獲取 grpc/keepalive，但繼續構建" && \
-    go get -v google.golang.org/grpc/reflection || echo "無法獲取 grpc/reflection，但繼續構建"
-
 # 複製源代碼
 COPY . .
 
@@ -111,8 +85,8 @@ COPY . .
 RUN --mount=type=cache,target=/go/mod \
     --mount=type=cache,target=/go/cache \
     echo "安裝 protobuf 工具..." && \
-    go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0 && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0 && \
+    GOPROXY=direct go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0 && \
+    GOPROXY=direct go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0 && \
     curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.30.0/buf-$(uname -s)-$(uname -m)" -o /usr/local/bin/buf && \
     chmod +x /usr/local/bin/buf && \
     buf --version && \
