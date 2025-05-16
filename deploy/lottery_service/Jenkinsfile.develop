@@ -228,9 +228,6 @@ pipeline {
                                 --build-arg BUILD_TIME="${buildTime}" \\
                                 --build-arg GIT_USER="${GIT_USER}" \\
                                 --build-arg GIT_PASSWORD="${GIT_PWD}" \\
-                                --build-arg HTTP_PROXY="${env.HTTP_PROXY}" \\
-                                --build-arg HTTPS_PROXY="${env.HTTPS_PROXY}" \\
-                                --build-arg NO_PROXY="${env.NO_PROXY}" \\
                                 --no-cache --progress=plain
                         """
                         
