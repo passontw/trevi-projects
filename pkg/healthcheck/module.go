@@ -53,3 +53,9 @@ func WithRedisChecks(name string, pingFunc func(ctx context.Context) error) fx.O
 		})
 	})
 }
+
+// CombinedHealthModule 提供完整的健康檢查服務，包括健康檢查管理器和健康檢查服務器
+var CombinedHealthModule = fx.Options(
+	Module,
+	HealthServerModule,
+)

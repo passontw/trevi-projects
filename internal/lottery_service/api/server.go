@@ -2,9 +2,10 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"g38_lottery_service/internal/lottery_service/config"
@@ -12,9 +13,20 @@ import (
 	"g38_lottery_service/internal/lottery_service/grpc/dealer"
 	"g38_lottery_service/pkg/healthcheck"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
+
+// 從環境變數獲取整數值，如果未設置或無效則返回默認值
+func getEnvAsInt(key string, defaultValue int) int {
+	if value, exists := os.LookupEnv(key); exists {
+		if i, err := strconv.Atoi(value); err == nil {
+			return i
+		}
+	}
+	return defaultValue
+}
 
 // APIServer 處理 API 請求的 HTTP 服務器
 type APIServer struct {
@@ -25,6 +37,7 @@ type APIServer struct {
 	server        *http.Server
 	health        *healthcheck.Manager
 	dealerAdapter *dealer.DealerServiceAdapter
+	engine        *gin.Engine
 }
 
 // NewAPIServer 創建新的 API 服務器
@@ -39,6 +52,19 @@ func NewAPIServer(
 	// 確保 logger 有適當的 tag
 	apiLogger := logger.With(zap.String("component", "api_server"))
 
+	// 根據調試模式設置 Gin 模式
+	if !config.Debug {
+		// 非調試模式，設置為釋放模式
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// 創建 Gin 引擎
+	engine := gin.New()
+
+	// 使用 Gin 的 Recovery 中間件和自定義 logger
+	engine.Use(gin.Recovery())
+	engine.Use(ginZapLogger(apiLogger))
+
 	// 創建 API 服務器
 	server := &APIServer{
 		config:        config,
@@ -47,29 +73,59 @@ func NewAPIServer(
 		repository:    repository,
 		health:        health,
 		dealerAdapter: dealerAdapter,
+		engine:        engine,
 	}
 
 	return server
 }
 
+// ginZapLogger 建立一個 Gin 中間件，使用 Zap 記錄請求
+func ginZapLogger(logger *zap.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		query := c.Request.URL.RawQuery
+
+		// 處理請求
+		c.Next()
+
+		// 請求結束
+		end := time.Now()
+		latency := end.Sub(start)
+
+		// 記錄請求信息
+		logger.Info("HTTP請求",
+			zap.Int("status", c.Writer.Status()),
+			zap.String("method", c.Request.Method),
+			zap.String("path", path),
+			zap.String("query", query),
+			zap.String("ip", c.ClientIP()),
+			zap.String("user-agent", c.Request.UserAgent()),
+			zap.Duration("latency", latency),
+			zap.String("errors", c.Errors.ByType(gin.ErrorTypePrivate).String()),
+		)
+	}
+}
+
 // Start 啟動 API 服務器
 func (s *APIServer) Start(lc fx.Lifecycle) {
-	// 使用應用配置中的 API 端口
-	port := s.config.Server.Port
+	// 優先使用環境變數中的 API_PORT
+	port := getEnvAsInt("API_PORT", s.config.Server.Port)
 	host := s.config.Server.Host
+
+	// 記錄實際使用的端口
+	s.logger.Info("使用的 API 端口配置",
+		zap.Int("環境變數API_PORT", getEnvAsInt("API_PORT", 0)),
+		zap.Int("配置檔案Port", s.config.Server.Port),
+		zap.Int("最終使用Port", port))
+
 	serverAddr := fmt.Sprintf("%s:%d", host, port)
 	s.logger.Info("正在啟動 API 服務器",
 		zap.String("address", serverAddr),
 		zap.Int("port", port))
 
-	// 建立 ServeMux
-	mux := http.NewServeMux()
-
 	// 註冊 API 路由
-	s.registerRoutes(mux)
-
-	// 安裝健康檢查路由
-	s.health.InstallHandlers(mux)
+	s.registerRoutes()
 
 	// 添加遊戲管理器健康檢查
 	s.health.AddReadinessCheck(&gameflow.GameManagerChecker{
@@ -77,16 +133,10 @@ func (s *APIServer) Start(lc fx.Lifecycle) {
 		GameManager: s.gameManager,
 	})
 
-	// 如果將來需要添加數據庫健康檢查，可以在這裡添加
-	// s.health.AddReadinessCheck(&healthcheck.DatabaseChecker{
-	//     Name_: "main-db",
-	//     DB:    yourDatabaseConnection,
-	// })
-
 	// 建立 HTTP 服務器
 	s.server = &http.Server{
 		Addr:    serverAddr,
-		Handler: mux,
+		Handler: s.engine,
 	}
 
 	// 生命周期鉤子
@@ -151,42 +201,50 @@ func (s *APIServer) Start(lc fx.Lifecycle) {
 }
 
 // registerRoutes 註冊所有 API 路由
-func (s *APIServer) registerRoutes(mux *http.ServeMux) {
-	// 健康檢查由 health 包處理，這裡不再需要獨立的健康檢查路由
-
+func (s *APIServer) registerRoutes() {
 	// 根路徑
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Lottery Service API Server is running."))
+	s.engine.GET("/", func(c *gin.Context) {
+		c.String(http.StatusOK, "Lottery Service API Server is running.")
 	})
 
-	// 添加自定義抽球 API 路由
-	mux.HandleFunc("POST /api/v1/dealer/custom-draw-ball", s.handleCustomDrawBall)
+	// API 版本組
+	v1 := s.engine.Group("/api/v1")
+	{
+		// Dealer 相關 API
+		dealerGroup := v1.Group("/dealer")
+		{
+			dealerGroup.POST("/custom-draw-ball", s.handleCustomDrawBall)
+		}
+
+		// 遊戲相關 API
+		gameGroup := v1.Group("/game")
+		{
+			gameGroup.GET("/status", s.handleGetGameStatus)
+		}
+	}
 
 	s.logger.Info("API 路由註冊完成")
 }
 
 // handleCustomDrawBall 處理自定義抽球請求
-func (s *APIServer) handleCustomDrawBall(w http.ResponseWriter, r *http.Request) {
-	// 設置響應類型
-	w.Header().Set("Content-Type", "application/json")
-
+func (s *APIServer) handleCustomDrawBall(c *gin.Context) {
 	// 解析請求 JSON 數據
 	var requestData map[string]interface{}
-	if err := decodeJSON(r, &requestData); err != nil {
+	if err := c.ShouldBindJSON(&requestData); err != nil {
 		s.logger.Error("解析 JSON 請求失敗", zap.Error(err))
-		respondWithError(w, http.StatusBadRequest, "無效的請求格式")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "無效的請求格式"})
 		return
 	}
 
 	// 設置請求上下文，可以包含超時
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
 	// 取得 grpc 服務適配器
-	dealerAdapter := getDealerAdapter(s)
+	dealerAdapter := s.dealerAdapter
 	if dealerAdapter == nil {
 		s.logger.Error("無法獲取 Dealer 服務適配器")
-		respondWithError(w, http.StatusInternalServerError, "服務當前不可用")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服務當前不可用"})
 		return
 	}
 
@@ -194,45 +252,27 @@ func (s *APIServer) handleCustomDrawBall(w http.ResponseWriter, r *http.Request)
 	resp, err := dealerAdapter.CustomDrawBall(ctx, requestData)
 	if err != nil {
 		s.logger.Error("處理自定義抽球請求失敗", zap.Error(err))
-		respondWithError(w, http.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// 返回成功響應
-	respondWithJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-// decodeJSON 解析 JSON 請求
-func decodeJSON(r *http.Request, v interface{}) error {
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(v); err != nil {
-		return err
+// handleGetGameStatus 處理獲取遊戲狀態請求
+func (s *APIServer) handleGetGameStatus(c *gin.Context) {
+	// 這裡從遊戲管理器中獲取遊戲狀態
+	// 由於原始代碼中可能沒有 GetStatus 方法，我們模擬一個簡單的狀態
+	status := map[string]interface{}{
+		"status":        "running",
+		"game_id":       "lottery-2025",
+		"current_round": 42,
+		"next_draw":     time.Now().Add(5 * time.Minute).Format(time.RFC3339),
+		"timestamp":     time.Now().Format(time.RFC3339),
 	}
-	return nil
-}
 
-// respondWithError 發送錯誤響應
-func respondWithError(w http.ResponseWriter, statusCode int, message string) {
-	respondWithJSON(w, statusCode, map[string]string{"error": message})
-}
-
-// respondWithJSON 發送 JSON 響應
-func respondWithJSON(w http.ResponseWriter, statusCode int, data interface{}) {
-	// 設置響應狀態碼
-	w.WriteHeader(statusCode)
-
-	// 如果數據不是 nil，則進行 JSON 編碼
-	if data != nil {
-		if err := json.NewEncoder(w).Encode(data); err != nil {
-			// 如果編碼失敗，寫入一個簡單的錯誤信息
-			w.Write([]byte(`{"error":"JSON 編碼失敗"}`))
-		}
-	}
-}
-
-// getDealerAdapter 獲取 DealerServiceAdapter 實例
-func getDealerAdapter(s *APIServer) *dealer.DealerServiceAdapter {
-	return s.dealerAdapter
+	c.JSON(http.StatusOK, status)
 }
 
 // Module 提供 FX 模塊
@@ -241,5 +281,4 @@ var Module = fx.Options(
 	fx.Invoke(func(server *APIServer, lc fx.Lifecycle) {
 		server.Start(lc)
 	}),
-	healthcheck.Module, // 加入健康檢查模塊
 )

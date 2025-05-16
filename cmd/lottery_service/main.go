@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"g38_lottery_service/internal/lottery_service/api"
@@ -14,6 +11,7 @@ import (
 	"g38_lottery_service/internal/lottery_service/grpc"
 	"g38_lottery_service/internal/lottery_service/mq"
 	"g38_lottery_service/internal/lottery_service/service"
+	"g38_lottery_service/pkg/healthcheck"
 
 	"git.trevi.cc/server/go_gamecommon/cache"
 	"git.trevi.cc/server/go_gamecommon/db"
@@ -31,11 +29,12 @@ var (
 )
 
 var (
-	appConfig       *config.AppConfig
-	redisConfig     *cache.RedisConfig
-	dbConfigs       []db.DBConfig
-	dnsresolver     *msgqueue.DnsResolver
-	rocketmqconfigs *msgqueue.RocketMQConfig
+	appConfig            *config.AppConfig
+	lotteryServiceConfig *config.LotteryServiceNacosConfig
+	redisConfig          *cache.RedisConfig
+	dbConfigs            []db.DBConfig
+	dnsresolver          *msgqueue.DnsResolver
+	rocketmqconfigs      *msgqueue.RocketMQConfig
 )
 
 // 載入配置
@@ -130,6 +129,27 @@ func loadConfig() {
 		log.Error("解析配置失敗", zap.Error(err))
 		log.Error("配置內容可能格式不正確", zap.String("content_snippet", configContent[:min(100, len(configContent))]))
 		panic(err)
+	}
+
+	// 載入彩票服務配置
+	log.Info("正在從 Nacos 獲取彩票服務配置", zap.String("dataId", "lotterysvr.xml"))
+	lotteryContent, err := nacosclient.GetConfig(config.Args.NacosGroup, "lotterysvr.xml")
+	if err != nil {
+		log.Error("獲取彩票服務配置失敗", zap.Error(err))
+		log.Error("將使用默認配置值")
+	} else {
+		// 解析彩票服務配置
+		lotteryServiceConfig, err = config.ParseLotteryServiceConfig([]byte(lotteryContent))
+		if err != nil {
+			log.Error("解析彩票服務配置失敗", zap.Error(err))
+			log.Error("將使用默認配置值")
+		} else {
+			// 將彩票服務配置應用到主配置
+			err = lotteryServiceConfig.ApplyToAppConfig(appConfig)
+			if err != nil {
+				log.Error("應用彩票服務配置失敗", zap.Error(err))
+			}
+		}
 	}
 
 	// 載入 Redis 配置
@@ -274,55 +294,58 @@ func main() {
 	}
 	defer dbMgr.Close()
 
-	// 構建應用程序
+	// 創建健康檢查模組配置
+	healthModuleConfig := healthcheck.CombinedModuleConfig{
+		// 健康檢查端口
+		HealthPort: 8088,
+		// 優雅關閉超時（秒）
+		ShutdownTimeout: 30 * time.Second,
+		// 是否處理系統信號
+		HandleSignals: true,
+	}
+
+	// 使用 fx 啟動應用
 	app := fx.New(
 		// 提供配置
-		fx.Supply(appConfig),
-		fx.Supply(dnsresolver),
-
-		// 提供數據庫管理器
-		fx.Supply(dbMgr),
-
-		// 註冊模塊
-		mq.Module,
-		gameflow.Module,
+		fx.Provide(func() *config.AppConfig {
+			return appConfig
+		}),
+		fx.Provide(func() *zap.Logger {
+			return log.GetLogger()
+		}),
+		fx.Provide(func() *db.DBMgr {
+			return dbMgr
+		}),
+		fx.Provide(func() *msgqueue.DnsResolver {
+			return dnsresolver
+		}),
+		// 註冊業務邏輯模塊
 		service.Module,
+		gameflow.Module,
+		// 註冊 gRPC 模塊
 		grpc.Module,
+		// 註冊 API 模塊
 		api.Module,
-
-		// 提供日誌
-		fx.Provide(
-			func() *zap.Logger {
-				return log.GetLogger() // 使用全局日誌
-			},
-		),
+		// 註冊 MQ 模塊
+		mq.Module,
+		// 註冊健康檢查模塊（使用新的綜合模組）
+		healthcheck.NewCombinedModule(healthcheck.ModuleParams{
+			Config: healthModuleConfig,
+			Logger: log.GetLogger(),
+		}),
 	)
 
 	// 啟動應用
-	startCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := app.Start(startCtx); err != nil {
-		log.Fatal("啟動應用失敗", zap.Error(err))
+	if err := app.Start(context.Background()); err != nil {
+		log.Error("應用啟動失敗", zap.Error(err))
+		return
 	}
 
-	// 應用啟動成功後列印構建信息
 	log.Info("彩票服務初始化成功",
 		zap.String("BuildTime", BuildTime),
 		zap.String("GitHash", GitHash))
 
-	// 等待系統信號
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-
-	log.Info("服務即將關閉...")
-
-	// 關閉應用
-	stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := app.Stop(stopCtx); err != nil {
-		log.Fatal("優雅關閉應用失敗", zap.Error(err))
-	}
-
-	log.Info("應用已優雅關閉")
+	// 等待應用停止
+	<-app.Done()
+	log.Info("應用已完全關閉")
 }

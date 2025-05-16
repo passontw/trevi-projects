@@ -41,7 +41,6 @@ type ServerConfig struct {
 	ServiceID              string `json:"serviceId"`
 	ServiceIP              string `json:"serviceIp"`
 	ServicePort            int    `json:"servicePort"`
-	DealerWsPort           int    `json:"dealerWsPort"`   // 荷官 WebSocket 端口
 	GrpcPort               int    `json:"grpcPort"`       // gRPC 服務端口
 	GrpcMaxConnectionAge   int    `json:"grpcMaxConnAge"` // gRPC 最大連接存活時間（秒）
 	RegisterService        bool   `json:"registerService"`
@@ -396,7 +395,6 @@ func createDefaultConfig() *AppConfig {
 			ServiceID:              getEnv("SERVICE_ID", "lottery-service-1"),
 			ServiceIP:              getEnv("SERVICE_IP", "127.0.0.1"),
 			ServicePort:            getEnvAsInt("SERVICE_PORT", 8080),
-			DealerWsPort:           getEnvAsInt("DEALER_WS_PORT", 9000),   // 默認荷官 WebSocket 端口
 			GrpcPort:               getEnvAsInt("GRPC_PORT", 9100),        // 默認 gRPC 端口
 			GrpcMaxConnectionAge:   getEnvAsInt("GRPC_MAX_CONN_AGE", 600), // gRPC 最大連接存活時間（秒），默認 10 分鐘
 			RegisterService:        getEnvAsBool("REGISTER_SERVICE", true),
@@ -445,16 +443,8 @@ func createDefaultConfig() *AppConfig {
 	}
 }
 
-// restoreWebSocketPorts 恢復 WebSocket 端口和 gRPC 端口
-func restoreWebSocketPorts(config *AppConfig, dealerWsPort int, grpcPort int, apiPort int) {
-	// 檢查荷官WebSocket端口是否需要恢復
-	if config.Server.DealerWsPort == 0 {
-		log.Printf("Nacos 中未配置有效的 DEALER_WS_PORT，恢復為原值: %d", dealerWsPort)
-		config.Server.DealerWsPort = dealerWsPort
-	} else if config.Server.DealerWsPort != dealerWsPort {
-		log.Printf("已從 Nacos 更新荷官 WebSocket 端口: %d -> %d", dealerWsPort, config.Server.DealerWsPort)
-	}
-
+// restorePorts 恢復 gRPC 和 API 端口
+func restorePorts(config *AppConfig, grpcPort int, apiPort int) {
 	// 檢查 gRPC 端口是否需要恢復
 	if config.Server.GrpcPort == 0 {
 		log.Printf("Nacos 中未配置有效的 GRPC_PORT，恢復為原值: %d", grpcPort)
@@ -475,13 +465,12 @@ func restoreWebSocketPorts(config *AppConfig, dealerWsPort int, grpcPort int, ap
 // preserveNacosConnectionInfo 保留 Nacos 連接信息
 // 在從 Nacos 獲取配置後調用，確保不會覆蓋當前的連接信息
 func preserveNacosConnectionInfo(config *AppConfig) {
-	// 保存原始的WebSocket端口和gRPC端口設置
-	dealerWsPort := config.Server.DealerWsPort
+	// 保存原始的gRPC端口設置
 	grpcPort := config.Server.GrpcPort
 	apiPort := config.Server.Port
 
-	log.Printf("保存端口值以進行還原: DealerWsPort=%d, GrpcPort=%d, ApiPort=%d",
-		dealerWsPort, grpcPort, apiPort)
+	log.Printf("保存端口值以進行還原: GrpcPort=%d, ApiPort=%d",
+		grpcPort, apiPort)
 
 	// 獲取 Nacos 主機和端口
 	var nacosHost string
@@ -515,10 +504,10 @@ func preserveNacosConnectionInfo(config *AppConfig) {
 	config.Nacos.ServicePort = getEnvAsInt("SERVICE_PORT", 8080)
 
 	// 恢復端口設置
-	restoreWebSocketPorts(config, dealerWsPort, grpcPort, apiPort)
+	restorePorts(config, grpcPort, apiPort)
 
-	log.Printf("Nacos 初始配置設置完成，最終設置: DealerWsPort=%d, GrpcPort=%d, ApiPort=%d",
-		config.Server.DealerWsPort, config.Server.GrpcPort, config.Server.Port)
+	log.Printf("Nacos 初始配置設置完成，最終設置: GrpcPort=%d, ApiPort=%d",
+		config.Server.GrpcPort, config.Server.Port)
 }
 
 // mapJsonToAppConfig 將 JSON 映射到 AppConfig 結構
@@ -545,16 +534,6 @@ func mapJsonToAppConfig(jsonMap map[string]interface{}, config *AppConfig) error
 				log.Printf("成功設置 API_PORT 為: %d", port)
 			} else {
 				log.Printf("無法解析 API_PORT 值: %v", v)
-			}
-		},
-		"DEALER_WS_PORT": func(v interface{}) {
-			log.Printf("Nacos 配置中的 DEALER_WS_PORT 原始值: %v (類型: %T)", v, v)
-
-			if port, ok := parseIntValue(v); ok {
-				config.Server.DealerWsPort = port
-				log.Printf("成功設置 DEALER_WS_PORT 為: %d", port)
-			} else {
-				log.Printf("無法解析 DEALER_WS_PORT 值: %v", v)
 			}
 		},
 		"GRPC_PORT": func(v interface{}) {
@@ -1000,8 +979,7 @@ func parseRocketMQXmlConfig(xmlContent string, cfg *AppConfig) error {
 // mapJsonMapToAppConfig 將 map[string]interface{} 格式的配置映射到 AppConfig 結構
 // 這是為了支持XML和JSON兩種格式的配置解析
 func mapJsonMapToAppConfig(configMap map[string]interface{}, config *AppConfig) error {
-	// 保存原始的WebSocket端口設置，以便後續還原
-	dealerWsPort := config.Server.DealerWsPort
+	// 保存原始的gRPC端口設置，以便後續還原
 	grpcPort := config.Server.GrpcPort
 	apiPort := config.Server.Port
 
@@ -1010,12 +988,6 @@ func mapJsonMapToAppConfig(configMap map[string]interface{}, config *AppConfig) 
 		log.Printf("從配置獲取的 API_PORT: %v (類型: %T)", apiPortValue, apiPortValue)
 	} else {
 		log.Printf("配置中未找到 API_PORT 設定")
-	}
-
-	if dealerPort, ok := configMap["DEALER_WS_PORT"]; ok {
-		log.Printf("從配置獲取的 DEALER_WS_PORT: %v (類型: %T)", dealerPort, dealerPort)
-	} else {
-		log.Printf("配置中未找到 DEALER_WS_PORT 設定")
 	}
 
 	if grpcPortValue, ok := configMap["GRPC_PORT"]; ok {
@@ -1029,8 +1001,8 @@ func mapJsonMapToAppConfig(configMap map[string]interface{}, config *AppConfig) 
 		return fmt.Errorf("映射配置到應用配置失敗: %w", err)
 	}
 
-	// 恢復 WebSocket 端口設置（如果配置中未提供或無效）
-	restoreWebSocketPorts(config, dealerWsPort, grpcPort, apiPort)
+	// 恢復 gRPC 端口設置（如果配置中未提供或無效）
+	restorePorts(config, grpcPort, apiPort)
 
 	return nil
 }
