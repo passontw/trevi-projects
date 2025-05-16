@@ -105,6 +105,9 @@ RUN echo "代碼複製後同步依賴..." && \
     # 嘗試使用 .netrc 方式
     echo "使用帶有 .netrc 認證的 git 命令測試:" && \
     (git ls-remote http://git.trevi.cc/server/go_gamecommon.git || echo "無法連接，但繼續構建...") && \
+    # 確認 go.mod 中的 replace 指令
+    echo "檢查 go.mod 中的 replace 指令:" && \
+    grep "replace git.trevi.cc/server/go_gamecommon" go.mod && \
     # 使用環境變數嘗試 go mod tidy
     GOPROXY=direct GIT_TERMINAL_PROMPT=0 go mod tidy -v || echo "mod tidy 警告，但繼續構建..." && \
     # 顯示模組圖用於調試
