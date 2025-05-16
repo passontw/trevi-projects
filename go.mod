@@ -64,4 +64,4 @@ require (
 	stathat.com/c/consistent v1.0.0 // indirect
 )
 
-replace git.trevi.cc/server/go_gamecommon => git.trevi.cc/server/go_gamecommon v1.0.1
+replace git.trevi.cc/server/go_gamecommon => git.trevi.cc/server/go_gamecommon v1.0.2-0.20250515080723-8651c802502d
