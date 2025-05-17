@@ -16,6 +16,59 @@ $ export GOPRIVATE=git.trevi.cc
 $ go get git.trevi.cc/server/go_gamecommon@8651c802502d3ce53bf80f81268b350b20e526a4
 ```
 
+## 使用 air 進行開發
+
+本專案使用 [air](https://github.com/cosmtrek/air) 工具來實現熱重載，支援動態切換開發兩個服務（lottery_service 和 host_service）。
+
+### 安裝 air
+
+```bash
+make install-air
+# 或直接運行
+go install github.com/cosmtrek/air@latest
+```
+
+### 切換開發不同服務
+
+有三種方式可以切換開發不同的服務：
+
+1. **使用 Makefile 命令（推薦）**：
+   ```bash
+   # 開發彩票服務
+   make run-lottery
+   
+   # 開發主持人服務
+   make run-host
+   
+   # 交互式選擇服務
+   make switch
+   ```
+
+2. **直接使用腳本**：
+   ```bash
+   # 開發彩票服務
+   ./scripts/run_lottery.sh
+   
+   # 開發主持人服務
+   ./scripts/run_host.sh
+   
+   # 交互式選擇服務
+   ./scripts/switch_service.sh
+   ```
+
+3. **使用環境變量**：
+   ```bash
+   # 開發彩票服務
+   export AIR_SERVICE=lottery_service && air
+   
+   # 開發主持人服務
+   export AIR_SERVICE=host_service && air
+   ```
+
+### 配置說明
+
+air 配置文件 `.air.toml` 已設定為根據 `AIR_SERVICE` 環境變量切換服務。預設服務為 `lottery_service`。
+
 ## 一、系統概述
 
 賓果抽球遊戲服務是一個基於 Go 語言實現的實時開獎服務，支持賓果球遊戲的完整流程管理。系統通過 WebSocket 與荷官端和遊戲端建立雙向通訊，提供高效、穩定的開獎體驗。服務使用 Uber FX 進行依賴注入，Redis 進行遊戲狀態持久化，TiDB 進行歷史資料儲存。

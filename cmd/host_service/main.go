@@ -9,7 +9,6 @@ import (
 
 	"g38_lottery_service/internal/host_service/api"
 	"g38_lottery_service/internal/host_service/config"
-	"g38_lottery_service/internal/host_service/websocket"
 	"g38_lottery_service/pkg/healthcheck"
 
 	"git.trevi.cc/server/go_gamecommon/log"
@@ -74,9 +73,8 @@ func main() {
 		),
 
 		// 註冊模塊
-		config.Module,    // 配置模塊
-		api.Module,       // HTTP API 模塊
-		websocket.Module, // WebSocket 模塊
+		config.Module, // 配置模塊
+		api.Module,    // 整合 HTTP 和 WebSocket 模塊
 
 		// 註冊健康檢查模塊
 		healthcheck.NewCombinedModule(healthcheck.ModuleParams{

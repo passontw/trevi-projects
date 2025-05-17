@@ -1,7 +1,8 @@
-package websocket
+package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -13,17 +14,17 @@ import (
 	"go.uber.org/zap"
 )
 
-// WebSocketServer WebSocket 服務器結構
-type WebSocketServer struct {
+// Server 整合 HTTP 和 WebSocket 的服務器結構
+type Server struct {
 	server   *http.Server
-	upgrader websocket.Upgrader
 	logger   *zap.Logger
 	config   *config.AppConfig
+	upgrader websocket.Upgrader
 	clients  map[*websocket.Conn]bool
 }
 
-// NewWebSocketServer 創建 WebSocket 服務器
-func NewWebSocketServer(lc fx.Lifecycle, config *config.AppConfig, logger *zap.Logger) *WebSocketServer {
+// NewServer 創建整合的服務器
+func NewServer(lc fx.Lifecycle, config *config.AppConfig, logger *zap.Logger) *Server {
 	// WebSocket 升級器
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
@@ -34,21 +35,26 @@ func NewWebSocketServer(lc fx.Lifecycle, config *config.AppConfig, logger *zap.L
 		},
 	}
 
-	// 創建 WebSocket 服務器
-	wsServer := &WebSocketServer{
-		upgrader: upgrader,
+	// 創建服務器實例
+	server := &Server{
 		logger:   logger,
 		config:   config,
+		upgrader: upgrader,
 		clients:  make(map[*websocket.Conn]bool),
 	}
 
-	// 創建 HTTP 處理函數
+	// 創建路由器
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET "+config.Websocket.Path, wsServer.handleWebSocket)
+
+	// 設置根路由 - Hello World 範例
+	mux.HandleFunc("GET /", server.handleRoot)
+
+	// 設置 WebSocket 路由
+	mux.HandleFunc("GET /ws", server.handleWebSocket)
 
 	// 創建 HTTP 服務器
-	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Websocket.Port)
-	wsServer.server = &http.Server{
+	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
+	server.server = &http.Server{
 		Addr:    addr,
 		Handler: mux,
 	}
@@ -56,33 +62,52 @@ func NewWebSocketServer(lc fx.Lifecycle, config *config.AppConfig, logger *zap.L
 	// 註冊生命周期鉤子
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			// 啟動 WebSocket 服務器
+			// 啟動服務器
 			go func() {
-				logger.Info("啟動 WebSocket 服務器",
+				logger.Info("啟動整合服務器",
 					zap.String("addr", addr),
-					zap.String("path", config.Websocket.Path))
-				if err := wsServer.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					logger.Error("WebSocket 服務器錯誤", zap.Error(err))
+					zap.String("httpPath", "/"),
+					zap.String("wsPath", "/ws"))
+				if err := server.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					logger.Error("服務器錯誤", zap.Error(err))
 				}
 			}()
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			// 關閉 WebSocket 服務器
+			// 關閉服務器
 			shutdownTimeout := time.Duration(config.Server.ShutdownTimeout) * time.Second
 			shutdownCtx, cancel := context.WithTimeout(ctx, shutdownTimeout)
 			defer cancel()
 
-			logger.Info("關閉 WebSocket 服務器")
-			return wsServer.server.Shutdown(shutdownCtx)
+			logger.Info("關閉服務器")
+			return server.server.Shutdown(shutdownCtx)
 		},
 	})
 
-	return wsServer
+	return server
 }
 
-// handleWebSocket 處理 WebSocket 連接
-func (s *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+// handleRoot HTTP GET 請求處理函數
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	resp := map[string]interface{}{
+		"code":    200,
+		"message": "Hello World from Host Service!",
+		"data":    map[string]interface{}{"service": s.config.AppName, "version": s.config.Server.Version},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(resp)
+
+	s.logger.Info("處理 HTTP 請求",
+		zap.String("path", "/"),
+		zap.String("method", "GET"),
+		zap.String("remoteAddr", r.RemoteAddr))
+}
+
+// handleWebSocket WebSocket 連接處理函數
+func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// 升級 HTTP 連接為 WebSocket 連接
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -141,9 +166,20 @@ func (s *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// Module WebSocket 服務模組
-var Module = fx.Module("websocket",
+// BroadcastMessage 向所有連接的客戶端廣播消息
+func (s *Server) BroadcastMessage(message interface{}) {
+	for client := range s.clients {
+		if err := client.WriteJSON(message); err != nil {
+			s.logger.Error("廣播消息失敗", zap.Error(err))
+			client.Close()
+			delete(s.clients, client)
+		}
+	}
+}
+
+// Module HTTP 和 WebSocket 服務模組
+var Module = fx.Module("api",
 	fx.Provide(
-		NewWebSocketServer,
+		NewServer,
 	),
 )
