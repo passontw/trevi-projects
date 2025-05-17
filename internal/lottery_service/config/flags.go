@@ -59,16 +59,35 @@ func InitFlags() {
 
 	// 嘗試先載入 .env 文件
 	log.Println("嘗試載入 .env 文件...")
-	if err := godotenv.Load(); err != nil {
-		log.Printf("警告: 找不到或無法載入 .env 文件: %v", err)
+
+	// 指定可能的 .env 文件位置的優先順序
+	envFiles := []string{
+		".env",                       // 項目根目錄
+		"./cmd/lottery_service/.env", // 彩票服務目錄
+		"./cmd/host_service/.env",    // 主持人服務目錄
+		fmt.Sprintf("./cmd/%s/.env", os.Getenv("AIR_SERVICE")), // 根據 AIR_SERVICE 環境變量動態選擇
+	}
+
+	// 嘗試載入 .env 文件（按優先順序）
+	var envLoaded bool
+	for _, envFile := range envFiles {
+		if _, err := os.Stat(envFile); err == nil {
+			if err := godotenv.Load(envFile); err == nil {
+				log.Printf("成功載入 .env 文件: %s", envFile)
+				// 輸出已載入的重要環境變數
+				logEnvVar("NACOS_ADDR")
+				logEnvVar("NACOS_NAMESPACE")
+				logEnvVar("NACOS_GROUP")
+				logEnvVar("NACOS_DATAID")
+				envLoaded = true
+				break
+			}
+		}
+	}
+
+	if !envLoaded {
+		log.Printf("警告: 找不到或無法載入 .env 文件")
 		log.Println("將使用命令行參數和環境變數")
-	} else {
-		log.Println("成功載入 .env 文件")
-		// 輸出已載入的重要環境變數
-		logEnvVar("NACOS_ADDR")
-		logEnvVar("NACOS_NAMESPACE")
-		logEnvVar("NACOS_GROUP")
-		logEnvVar("NACOS_DATAID")
 	}
 
 	// Nacos 相關配置

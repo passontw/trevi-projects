@@ -27,6 +27,7 @@ const (
 	// 派彩與JP流程階段
 	StagePayoutSettlement        GameStage = "PAYOUT_SETTLEMENT"
 	StageJackpotPreparation      GameStage = "JACKPOT_PREPARATION"
+	StageJackpotStandby          GameStage = "JACKPOT_STANDBY"
 	StageJackpotDrawingStart     GameStage = "JACKPOT_DRAWING_START"
 	StageJackpotDrawingClosed    GameStage = "JACKPOT_DRAWING_CLOSED"
 	StageJackpotSettlement       GameStage = "JACKPOT_SETTLEMENT"
@@ -62,7 +63,8 @@ var naturalStageTransition = map[GameStage]GameStage{
 	StageExtraBallDrawingStart:            StageExtraBallDrawingClose,
 	StageExtraBallDrawingClose:            StagePayoutSettlement,
 	StagePayoutSettlement:                 StageJackpotPreparation, // 默認轉換，實際中會根據是否有JP條件判斷
-	StageJackpotPreparation:               StageJackpotDrawingStart,
+	StageJackpotPreparation:               StageJackpotStandby,
+	StageJackpotStandby:                   StageJackpotDrawingStart,
 	StageJackpotDrawingStart:              StageJackpotDrawingClosed,
 	StageJackpotDrawingClosed:             StageJackpotSettlement,
 	StageJackpotSettlement:                StageLuckyPreparation,
@@ -172,6 +174,14 @@ func GetStageConfig(stage GameStage) StageConfig {
 			AllowCanceling: true,
 		},
 		StageJackpotPreparation: {
+			Timeout:        -1,   // 無限，等待荷官手動觸發
+			RequireDealer:  true, // 需要荷官確認
+			RequireGame:    false,
+			AllowDrawBall:  false,
+			MaxBalls:       0,
+			AllowCanceling: true,
+		},
+		StageJackpotStandby: {
 			Timeout:        -1,   // 無限，等待荷官手動觸發
 			RequireDealer:  true, // 需要荷官確認
 			RequireGame:    false,

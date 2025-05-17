@@ -65,6 +65,7 @@ func NewGameManager(repo GameRepository, logger *zap.Logger, messageProducer *mq
 		StageExtraBallDrawingClose,
 		StagePayoutSettlement,
 		StageJackpotPreparation,
+		StageJackpotStandby,
 		StageJackpotDrawingStart,
 		StageJackpotDrawingClosed,
 		StageJackpotSettlement,
@@ -553,6 +554,29 @@ func (m *GameManager) AdvanceStageForRoom(ctx context.Context, roomID string, au
 					zap.String("jackpotID", game.Jackpot.ID),
 					zap.Int("jackpotAmount", int(game.Jackpot.Amount)))
 			}
+		}
+
+		nextStage = GetNextStage(previousStage, game.HasJackpot)
+	} else if previousStage == StageJackpotStandby {
+		// StageJackpotStandby 階段的處理邏輯
+		// 此階段是在 StageJackpotPreparation 之後，StageJackpotDrawingStart 之前的等待階段
+		// 在此階段，JP 已經初始化，玩家可以準備參與 JP 遊戲
+		m.logger.Info("從 StageJackpotStandby 階段轉移",
+			zap.String("roomID", roomID),
+			zap.String("gameID", game.GameID))
+
+		// 確認 Jackpot 狀態
+		if game.HasJackpot && game.Jackpot != nil {
+			m.logger.Info("Jackpot 遊戲準備開始",
+				zap.String("roomID", roomID),
+				zap.String("gameID", game.GameID),
+				zap.String("jackpotID", game.Jackpot.ID))
+		} else {
+			m.logger.Warn("Jackpot 標記為啟用但 Jackpot 資料不完整",
+				zap.String("roomID", roomID),
+				zap.String("gameID", game.GameID),
+				zap.Bool("hasJackpot", game.HasJackpot),
+				zap.Bool("jackpotNil", game.Jackpot == nil))
 		}
 
 		nextStage = GetNextStage(previousStage, game.HasJackpot)
@@ -1514,4 +1538,97 @@ func (m *GameManager) checkAndUpdateExpiredStages(ctx context.Context) {
 	}
 
 	m.stageMutex.RUnlock()
+}
+
+// UpdateLuckyBalls 更新幸運號碼球
+func (m *GameManager) UpdateLuckyBalls(ctx context.Context, roomID string, ball Ball) error {
+	// 防止並發訪問時的競爭條件
+	m.stageMutex.Lock()
+	defer m.stageMutex.Unlock()
+
+	// 獲取當前遊戲
+	game, exists := m.currentGames[roomID]
+	if !exists || game == nil {
+		return fmt.Errorf("找不到指定房間的遊戲: %s", roomID)
+	}
+
+	// 確認當前階段是否支持抽取幸運號碼球
+	if game.CurrentStage != StageDrawingLuckyBallsStart {
+		return fmt.Errorf("當前階段 %s 不能抽取幸運號碼球，需要在 %s 階段",
+			game.CurrentStage, StageDrawingLuckyBallsStart)
+	}
+
+	// 確認 Jackpot 已初始化
+	if game.Jackpot == nil {
+		return fmt.Errorf("Jackpot 未初始化，無法添加幸運號碼球")
+	}
+
+	// 檢查是否已有7顆幸運號碼球
+	if len(game.Jackpot.LuckyBalls) >= 7 {
+		return fmt.Errorf("已達到幸運號碼球的最大數量(7顆)")
+	}
+
+	// 檢查球號是否重複
+	if IsBallDuplicate(ball.Number, game.Jackpot.LuckyBalls) {
+		return fmt.Errorf("幸運號碼球 %d 已存在", ball.Number)
+	}
+
+	// 檢查球號是否與其他球重複
+	if IsBallDuplicateAcrossAllTypes(ball.Number, game) {
+		return fmt.Errorf("球號 %d 已在其他類型的球中使用", ball.Number)
+	}
+
+	// 添加幸運號碼球
+	ball.Type = BallTypeLucky // 確保球類型為幸運號碼球
+	ball.Timestamp = time.Now()
+
+	// 設置是否為最後一顆球
+	ball.IsLast = len(game.Jackpot.LuckyBalls) == 6 // 如果是第7顆球，則為最後一顆
+
+	// 加入球到 Jackpot 的幸運號碼球列表中
+	game.Jackpot.LuckyBalls = append(game.Jackpot.LuckyBalls, ball)
+	game.LastUpdateTime = time.Now()
+
+	// 調用球抽取事件回調
+	if m.onBallDrawn != nil {
+		m.onBallDrawn(roomID, ball)
+	}
+
+	// 如果是最後一顆球且設置了自動推進
+	if ball.IsLast {
+		// 保存遊戲數據
+		if err := m.repo.SaveGameHistory(ctx, game); err != nil {
+			m.logger.Error("保存遊戲歷史記錄失敗",
+				zap.String("gameID", game.GameID),
+				zap.Error(err))
+			// 繼續執行而不返回錯誤
+		}
+
+		// 嘗試自動推進到下一階段
+		// 抽取完最後一顆幸運號碼球後，應該推進到 StageDrawingLuckyBallsClosed 階段
+		if err := m.AdvanceStageForRoom(ctx, roomID, true); err != nil {
+			m.logger.Error("自動推進階段失敗",
+				zap.String("gameID", game.GameID),
+				zap.String("fromStage", string(game.CurrentStage)),
+				zap.Error(err))
+			// 繼續執行而不返回錯誤
+		}
+	}
+
+	// 保存遊戲狀態
+	err := m.repo.SaveGameHistory(ctx, game)
+	if err != nil {
+		m.logger.Error("保存遊戲歷史記錄失敗",
+			zap.String("gameID", game.GameID),
+			zap.Error(err))
+		return fmt.Errorf("保存遊戲歷史記錄失敗: %w", err)
+	}
+
+	m.logger.Info("成功添加幸運號碼球",
+		zap.String("gameID", game.GameID),
+		zap.Int("ballNumber", ball.Number),
+		zap.Int("luckyBallCount", len(game.Jackpot.LuckyBalls)),
+		zap.Bool("isLast", ball.IsLast))
+
+	return nil
 }

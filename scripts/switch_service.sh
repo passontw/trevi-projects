@@ -19,14 +19,38 @@ case $choice in
   1)
     echo -e "${GREEN}啟動彩票服務...${NC}"
     export AIR_SERVICE=lottery_service
+    
+    # 複製環境變數檔案
+    if [ -f "./cmd/lottery_service/.env" ]; then
+      cp ./cmd/lottery_service/.env ./.env
+      echo -e "${GREEN}已複製環境變數檔案: ./cmd/lottery_service/.env -> ./.env${NC}"
+    else
+      echo -e "${YELLOW}警告: 找不到環境變數檔案 ./cmd/lottery_service/.env${NC}"
+    fi
     ;;
   2)
     echo -e "${GREEN}啟動主持人服務...${NC}"
     export AIR_SERVICE=host_service
+    
+    # 複製環境變數檔案
+    if [ -f "./cmd/host_service/.env" ]; then
+      cp ./cmd/host_service/.env ./.env
+      echo -e "${GREEN}已複製環境變數檔案: ./cmd/host_service/.env -> ./.env${NC}"
+    else
+      echo -e "${YELLOW}警告: 找不到環境變數檔案 ./cmd/host_service/.env${NC}"
+    fi
     ;;
   *)
     echo -e "${YELLOW}無效選項，默認啟動彩票服務${NC}"
     export AIR_SERVICE=lottery_service
+    
+    # 複製環境變數檔案
+    if [ -f "./cmd/lottery_service/.env" ]; then
+      cp ./cmd/lottery_service/.env ./.env
+      echo -e "${GREEN}已複製環境變數檔案: ./cmd/lottery_service/.env -> ./.env${NC}"
+    else
+      echo -e "${YELLOW}警告: 找不到環境變數檔案 ./cmd/lottery_service/.env${NC}"
+    fi
     ;;
 esac
 

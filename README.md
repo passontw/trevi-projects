@@ -18,14 +18,40 @@ $ go get git.trevi.cc/server/go_gamecommon@8651c802502d3ce53bf80f81268b350b20e52
 
 ## 使用 air 進行開發
 
-本專案使用 [air](https://github.com/cosmtrek/air) 工具來實現熱重載，支援動態切換開發兩個服務（lottery_service 和 host_service）。
+本專案使用 [air](https://github.com/air-verse/air) 工具來實現熱重載，支援動態切換開發兩個服務（lottery_service 和 host_service）。
 
 ### 安裝 air
 
 ```bash
 make install-air
 # 或直接運行
-go install github.com/cosmtrek/air@latest
+go install github.com/air-verse/air@latest
+```
+
+### 環境變數設定
+
+各服務的環境變數可以放置在以下位置（按優先順序）：
+
+1. 專案根目錄 (`./.env`)
+2. 彩票服務目錄 (`./cmd/lottery_service/.env`)
+3. 主持人服務目錄 (`./cmd/host_service/.env`)
+4. 根據 `AIR_SERVICE` 環境變數自動選擇對應的服務目錄 (`./cmd/$AIR_SERVICE/.env`)
+
+系統會依照上述順序尋找 `.env` 文件，找到第一個可用的文件後就會載入。不需要手動複製文件到根目錄。
+
+範例 `.env` 文件內容：
+
+```bash
+# Nacos 設定
+NACOS_ADDR=http://localhost:8848
+NACOS_NAMESPACE=public
+NACOS_GROUP=DEFAULT_GROUP
+NACOS_USERNAME=nacos
+NACOS_PASSWORD=nacos
+
+# 服務設定
+SERVICE_PORT=8080
+LOG_LEVEL=debug
 ```
 
 ### 切換開發不同服務
@@ -68,6 +94,36 @@ go install github.com/cosmtrek/air@latest
 ### 配置說明
 
 air 配置文件 `.air.toml` 已設定為根據 `AIR_SERVICE` 環境變量切換服務。預設服務為 `lottery_service`。
+
+## 使用 gRPC UI 進行開發
+
+本專案使用 [grpcui](https://github.com/fullstorydev/grpcui) 工具來實現 gRPC 服務的 Web UI 介面，方便開發和測試。
+
+### 安裝 grpcui
+
+```bash
+make install-grpcui
+# 或直接運行
+go install github.com/fullstorydev/grpcui/cmd/grpcui@latest
+```
+
+### 啟動 gRPC UI
+
+有兩種方式可以啟動 gRPC UI：
+
+1. **使用默認設定**：
+   ```bash
+   make grpcui
+   ```
+   這將使用默認的 host (127.0.0.1) 和 port (9100) 連接 gRPC 服務。
+
+2. **自定義 host 和 port**：
+   ```bash
+   make grpcui GRPC_HOST=192.168.1.100 GRPC_PORT=9200
+   ```
+   這將使用指定的 host 和 port 連接 gRPC 服務。
+
+啟動後，瀏覽器會自動打開 gRPC UI 介面，您可以通過網頁界面與 gRPC 服務進行交互。
 
 ## 一、系統概述
 
